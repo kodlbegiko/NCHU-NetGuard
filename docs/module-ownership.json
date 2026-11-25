@@ -52,7 +52,9 @@
     "src/HistoryAnalyticsView.swift": 4,
     "src/SettingsView.swift": 4,
     "src/ManagementView.swift": 4,
-    "src/AutomationView.swift": 4
+    "src/AutomationView.swift": 4,
+    "src/SmokeTest.swift": 8,
+    "scripts/smoke_test.py": 8
   },
   "targets": {
     "NetGuardCore": [
