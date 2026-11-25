@@ -68,3 +68,10 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 - Completed an engineering review of the eight v1 model semantics, documenting missing aspirational fields and separating observation/planning data from actual authorized execution. Added size, text, date, collection and expiry checks plus five semantic Swift tests. No approval or formal freeze is inferred.
 - Added a machine-readable ownership manifest for all 17 current core source files, plus three Python architectural guards. This is not separate SwiftPM targets or an enforced CODEOWNERS permission scheme; shared legacy runtime is still serialized.
 - Staged work on test/r4-semantic-review; exact integrated HEAD CI and owner approval are required before scoped freeze. Broad parallel unlock and real network mutation remain blocked. No paid services.
+
+## Twelfth iteration
+
+- Full Foundation CI passed on 374d2e950b61eb14762b81fdb5a966ae8e948481 (run 45628342914): 58 Swift and 12 Python tests, macOS compilation and bundle verification, no failures. This evidence applies to the preceding integration commit only.
+- Added UI-independent QuickPanelState/QuickPanelBudget and three unit tests. Unknown/disconnected or external networks do not display a campus balance; native remaining values use GiB and are explicitly local estimates. Native speed text requires a recent measured active-interface sample.
+- Added a native SwiftUI menu-bar quick panel using NSHostingController, with separate download/upload budgets, status, refresh, important-work mode, disclosure of forecast/provider/alert settings, and a return to the legacy management panel. Opt-in session preview via the status-bar context menu; the legacy panel stays the startup default until device UX verification. No separate networking or quota logic in the SwiftUI view.
+- No screenshot/runtime/VoiceOver evidence yet, no claim of UX-01–08 completion, feature parity, scoped contract freeze or broad parallel unlock. Actual provider policy and host mutation remain blocked. No paid services or distribution.
