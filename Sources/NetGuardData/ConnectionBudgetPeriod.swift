@@ -36,7 +36,7 @@ public struct ConnectionBudgetPeriod: Equatable, Sendable {
         } else { startMonth = month }
         guard let next = calendar.date(byAdding: .month, value: 1, to: startMonth) else { throw HistoryStoreError.invalidRecord }
         let start = try anchor(startMonth)
-        guard let end = calendar.date(byAdding: .day, value: -1, to: anchor(next)) else { throw HistoryStoreError.invalidRecord }
+        guard let end = calendar.date(byAdding: .day, value: -1, to: try anchor(next)) else { throw HistoryStoreError.invalidRecord }
         return try Self(startDay: ProcessHistoryStore.hour(at: start).day, endDay: ProcessHistoryStore.hour(at: end).day, decimalGB: decimalGB)
     }
 
