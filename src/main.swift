@@ -3238,6 +3238,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 }
 
+// Local compatibility check exits before constructing AppKit or the production delegate.
+if CommandLine.arguments.dropFirst().contains("--netguard-host-check") {
+    exit(HostProbeCheck.run())
+}
 let app = NSApplication.shared
 // Fixture mode bypasses the production delegate entirely.
 let delegate: NSApplicationDelegate = CommandLine.arguments.dropFirst().contains("--netguard-smoke")
