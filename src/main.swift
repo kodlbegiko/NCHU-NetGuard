@@ -1,6 +1,7 @@
 import Cocoa
 import Foundation
 import WebKit
+import SwiftUI
 import IOKit
 import SystemConfiguration
 
@@ -138,6 +139,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var popover: NSPopover!
     var webView: WKWebView!
+    var nativePanelEnabled = false
+    let quickPanelModel = QuickPanelModel()
+    var activeSpeedMeasured = false
     
     var secondTimer: Timer?
     var serverSyncTimer: Timer?
@@ -780,6 +784,17 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         let panelHeight = max(280, min(570, availableHeight - 70))
         popover.contentSize = NSSize(width: 380, height: panelHeight)
         popover.behavior = .transient
+        if nativePanelEnabled {
+            webView = nil
+            popover.contentViewController = NSHostingController(rootView: QuickPanel(
+                model: quickPanelModel,
+                refresh: { [weak self] in self?.manualRefresh() },
+                toggleFocus: { [weak self] in self?.toggleFocusMode() },
+                toggleAlerts: { [weak self] in self?.handleToggleAlert(); self?.pushDataToWebUI() },
+                openAdvanced: { [weak self] in self?.switchPanel(native: false) }
+            ))
+            return
+        }
         
         let config = WKWebViewConfiguration()
         let controller = WKUserContentController()
@@ -797,6 +812,44 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             return
         }
         webView.loadFileURL(htmlURL, allowingReadAccessTo: htmlURL.deletingLastPathComponent())
+    }
+
+    func updateQuickPanel() {
+        let scope = sampledScopes[activeInterface] ?? .unknown
+        let compatible = (scope == .dorm && isDormNetwork) || (scope == .campusWifi && isCampusWifi)
+        let (_, dl, ul) = getEffectiveUsedBytes()
+        _ = TrafficHistoryManager.shared.loadHistory()
+        let diagnostic = DiagnosticsEngine.findings(DiagnosticInput(
+            connected: isConnected, scope: scope,
+            persistenceHealthy: !persistenceBlocked && TrafficHistoryManager.shared.healthy && !persistenceStatus.contains("失敗"),
+            sampleGapCount: sampleGapCount,
+            providerFresh: providerObservation?.isFresh(for: getTodayString(), now: Date()) == true && providerObservation?.status == .listed
+        )).first?.summary ?? "狀態未知"
+        let fresh = lastSampleUptime.map { ProcessInfo.processInfo.systemUptime - $0 <= 5 } ?? false
+        let speed = activeSpeedMeasured && fresh && workflowPowerGuard.allowsSampling
+            ? "↓ " + formatSpeed(currentDownSpeed) + "   ↑ " + formatSpeed(currentUpSpeed) : "未量測"
+        let state = QuickPanelState(networkName: scope == .unknown ? "網路歸屬未確認" : networkTypeName,
+            connectionKnown: isConnected && workflowPowerGuard.allowsSampling,
+            scope: compatible ? scope : .unknown,
+            received: dl, sent: ul, receiveLimit: dlQuotaBytes, sendLimit: ulQuotaBytes,
+            speedText: speed, diagnostic: diagnostic, forecast: forecastPresentation().message,
+            provider: providerStatusText, focusEnabled: workflowPowerGuard.focusEnabled, alertsEnabled: isAlertEnabled)
+        if quickPanelModel.state != state { quickPanelModel.state = state }
+    }
+
+    func switchPanel(native: Bool) {
+        guard nativePanelEnabled != native else { return }
+        popover?.performClose(nil)
+        nativePanelEnabled = native
+        setupPopoverUI()
+        pushDataToWebUI()
+        if let button = statusItem.button {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
+    }
+
+    @objc func toggleNativePanelPreview() {
+        switchPanel(native: !nativePanelEnabled)
     }
 
     @objc func statusBarButtonClicked(_ sender: NSStatusBarButton) {
@@ -818,6 +871,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     func pushDataToWebUI() {
+        if nativePanelEnabled {
+            updateQuickPanel()
+            return
+        }
         let (totalUsed, dlUsed, ulUsed) = getEffectiveUsedBytes()
         let remTotal = max(0, totalQuotaBytes - totalUsed)
         let remDl = max(0, dlQuotaBytes - dlUsed)
@@ -1120,7 +1177,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         if let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: []),
            let jsonStr = String(data: jsonData, encoding: .utf8) {
             let js = "if (window.updateStats) { window.updateStats(\(jsonStr)); }"
-            webView.evaluateJavaScript(js, completionHandler: nil)
+            webView?.evaluateJavaScript(js, completionHandler: nil)
         }
     }
 
@@ -1381,6 +1438,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         predictionScope = .unknown
         predictionIdentity = []
         scopedAccumulator.reset()
+        activeSpeedMeasured = false
         let samples = readScopedInterfaces()
         sampledScopes = Dictionary(uniqueKeysWithValues: samples.map { ($0.counters.interfaceID, $0.scope) })
         let uptime = ProcessInfo.processInfo.systemUptime
@@ -1556,6 +1614,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         lastSampleUptime = uptime
         currentDownSpeed = 0
         currentUpSpeed = 0
+        activeSpeedMeasured = false
         if samples.isEmpty || deltas.values.contains(where: { $0.delta.quality == .unknown }) {
             sampleGapCount += 1
         }
@@ -1563,6 +1622,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             let rx = Double(value.delta.received)
             let tx = Double(value.delta.sent)
             if name == activeInterface {
+                activeSpeedMeasured = true
                 currentDownSpeed = rx / elapsed
                 currentUpSpeed = tx / elapsed
             }
@@ -1885,6 +1945,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         let titleItem = NSMenuItem(title: "⚙️ 網路流量監控 設定 (\(networkTypeName))", action: nil, keyEquivalent: "")
         titleItem.isEnabled = false
         menu.addItem(titleItem)
+        let nativeItem = NSMenuItem(title: nativePanelEnabled ? "返回完整管理面板" : "試用原生快速面板（預覽）", action: #selector(toggleNativePanelPreview), keyEquivalent: "")
+        nativeItem.target = self
+        menu.addItem(nativeItem)
         menu.addItem(NSMenuItem.separator())
         
         let netModeMenu = NSMenu()
