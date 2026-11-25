@@ -26,6 +26,7 @@ struct ManagementView: View {
     let setProcessBackground: (Bool) -> Void
     let reloadHistory: () -> Void
     let testDNS: () -> Void
+    let clearTrafficEvents: () -> Void
     let startConnectionSession: (String, String) -> Void
     let stopConnectionSession: () -> Void
     let saveConnectionArchive: () -> Void
@@ -53,6 +54,8 @@ struct ManagementView: View {
     @State private var historyDayIndex = 0
     @State private var historyHour = -1
     @State private var confirmDeleteHistory = false
+    @State private var showTrafficEvents = false
+    @State private var confirmClearTrafficEvents = false
 
     private func visibleProcesses(_ rows: [ProcessSampleRow]) -> [ProcessSampleRow] {
         ProcessSamplePresentation.visible(rows, query: processQuery,
@@ -193,6 +196,8 @@ struct ManagementView: View {
                             Text(snapshot.dnsStatus).font(.caption)
                             Button("測試 DNS（example.com）", action: testDNS)
                             Text("手動向 dig 預設解析器查詢 example.com；不代表所有網站或 macOS 系統解析器均正常。").font(.caption2).foregroundStyle(.secondary)
+                            Divider()
+                            trafficEventsPanel(snapshot.trafficEvents)
                             Divider()
                             ForEach(snapshot.findings, id: \.rawValue) { finding in
                                 Label(finding.summary, systemImage: "info.circle")
@@ -476,6 +481,51 @@ struct ManagementView: View {
             }
             .environment(\.timeZone, TimeZone(identifier: "Asia/Taipei")!)
             .disabled(model.connectionArchiveBusy)
+        }
+    }
+
+
+    private func trafficEventsPanel(_ events: [TrafficObservationEvent]) -> some View {
+        DisclosureGroup("流量事件（本次執行）", isExpanded: $showTrafficEvents) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("持續高流量：合計速率至少 5 MiB/s 持續 10 秒；突增：至少 1 MiB/s 且達前段觀測中位數 4 倍。這些是本機觀測規則，不代表惡意流量或違規。")
+                    .font(.caption2).foregroundStyle(.secondary)
+                if events.isEmpty {
+                    Text("尚無符合規則的觀測事件；不代表網路安全或完整覆蓋。").font(.caption)
+                }
+                ForEach(events) { event in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(event.kind.title).fontWeight(.medium)
+                            Spacer()
+                            Text(event.date, style: .time).font(.caption)
+                        }
+                        Text(event.date, style: .date).font(.caption2).foregroundStyle(.secondary)
+                        if let rate = event.bytesPerSecond {
+                            Text(String(format: "合計速率 %.2f MiB/s", rate / 1_048_576)).font(.caption)
+                        }
+                        if let reference = event.referenceBytesPerSecond {
+                            Text(String(format: "前段中位數 %.2f MiB/s", reference / 1_048_576)).font(.caption)
+                        }
+                        if let duration = event.duration {
+                            Text(String(format: "連續觀測 %.0f 秒", duration)).font(.caption)
+                        }
+                        if event.kind == .observationGap {
+                            Text("無法確認中斷期間的流量，不補算未知用量。").font(.caption)
+                        }
+                    }
+                    Divider()
+                }
+                Button("清除本次事件", role: .destructive) { confirmClearTrafficEvents = true }
+                    .disabled(events.isEmpty)
+                Text("最多保留 100 筆於記憶體；不寫入磁碟、不通知或阻斷連線。").font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .alert("清除本次流量事件？", isPresented: $confirmClearTrafficEvents) {
+            Button("取消", role: .cancel) {}
+            Button("清除", role: .destructive, action: clearTrafficEvents)
+        } message: {
+            Text("清除事件及偵測基準，不變更流量帳本。")
         }
     }
 
