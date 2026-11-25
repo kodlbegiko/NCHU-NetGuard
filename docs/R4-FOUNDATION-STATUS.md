@@ -251,3 +251,8 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 
 - Added DestinationEvidence.swift: numeric IPv4/IPv6 address-space classification, mapped IPv4 handling and bounded, duplicate-rejecting, overflow-checked directional measured-flow aggregation. Four regression tests and module ownership/aliases. Public/private address space does not prove actual path, reachability or billing; the special-use range list is conservative and not exhaustive. No live flow source, actual LAN/Internet byte split or modification to the physical ledger. UI explicitly reports the split as unmeasured.
 - Prior integrated CI 45644908290 was queued at last check. Candidate remains staged until prior CI and exact candidate verification. No paid services, packet capture, new privileges or release.
+
+## Forty-fifth iteration
+
+- Added TCPFlowEvidence.swift, strict experimental numeric IPv4 established TCP hierarchy parser and adjacent matched monotonic delta accumulator; three synthetic fixture tests. Explicit local `make flow-check` samples twice via fixed read-only nettop/ps invocations, outputs only directional address-class aggregates or inconclusive status. Not part of normal monitoring, no raw output persisted, no generated traffic, no admin request, no packet capture. Actual CSV format, tuple reuse, completeness, IPv6/UDP and VPN overlap remain unresolved; no claim of real LAN/Internet separation.
+- Prior integrated CI 45644908290 still queued at last check. Iterations 44–45 staged pending prior CI and candidate validation. No paid services or release.
