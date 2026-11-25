@@ -25,4 +25,78 @@ final class RecoveryModuleTests: XCTestCase {
         XCTAssertEqual(transaction.persisted(success: true), .finish(.committed))
         XCTAssertEqual(adapter.writes, 1)
     }
+
+    func testJournalBackedFaultInjectionMatrix() throws {
+        let before = OwnedNetworkConfiguration(revision: 1, settings: ["fixture": "old"])
+        let cases: [(Set<RecoverySimulationFault>, RecoveryOutcome, Int)] = [
+            ([], .committed, 1),
+            ([.preparedNotWritten], .rejected, 0),
+            ([.preparedUnknown], .rejected, 0),
+            ([.externalBeforeApply], .safeMode, 0),
+            ([.applyUnknown], .safeMode, 1),
+            ([.appliedNotWritten], .rolledBack, 2),
+            ([.appliedUnknown], .safeMode, 1),
+            ([.verificationUnavailable], .rolledBack, 2),
+            ([.externalBeforeVerify], .safeMode, 1),
+            ([.committedNotWritten], .rolledBack, 2),
+            ([.committedUnknown], .safeMode, 1),
+            ([.verificationUnavailable, .rollbackUnknown], .safeMode, 2),
+            ([.verificationUnavailable, .rollbackVerificationUnavailable], .safeMode, 2),
+            ([.verificationUnavailable, .rolledBackNotWritten], .safeMode, 2),
+            ([.verificationUnavailable, .rolledBackUnknown], .safeMode, 2)
+        ]
+        for (faults, outcome, writes) in cases {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let store = RecoveryJournalStore(url: directory.appendingPathComponent("journal.json"))
+            let plan = RecoveryPlan(transactionID: UUID(), expected: before, desired: ["fixture":"new"])
+            let result = RecoverySimulator.execute(plan: plan, observed: before, authorized: true,
+                                                   store: store, faults: faults)
+            XCTAssertEqual(result.outcome, outcome, "\(faults)")
+            XCTAssertEqual(result.simulatedWrites, writes, "\(faults)")
+            XCTAssertEqual(result.events.last, .finish(outcome))
+            if let mutation = result.events.firstIndex(where: {
+                if case .mutation = $0 { return true }; return false
+            }) {
+                XCTAssertTrue(result.events[..<mutation].contains(.persistence(.prepared, .persisted)))
+            }
+            if outcome == .rolledBack {
+                XCTAssertEqual(result.configuration.settings, before.settings)
+                XCTAssertEqual(try store.load()?.restored, result.configuration)
+            }
+        }
+    }
+
+    func testRestartNeverInfersUnknownApplyOwnership() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = RecoveryJournalStore(url: directory.appendingPathComponent("journal.json"))
+        let before = OwnedNetworkConfiguration(revision: 1, settings: ["fixture":"old"])
+        let plan = RecoveryPlan(transactionID: UUID(), expected: before, desired: ["fixture":"new"])
+        let interrupted = RecoverySimulator.execute(plan: plan, observed: before, authorized: true,
+                                                        store: store, faults: [.applyUnknown])
+        XCTAssertEqual(interrupted.outcome, .safeMode)
+        let recovery = RecoverySimulator.restart(observed: interrupted.configuration, store: store)
+        XCTAssertEqual(recovery.outcome, .safeMode)
+        XCTAssertEqual(recovery.simulatedWrites, 0)
+    }
+
+    func testRestartFromPersistedAppliedEvidenceRestores() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = RecoveryJournalStore(url: directory.appendingPathComponent("journal.json"))
+        let before = OwnedNetworkConfiguration(revision: 1, settings: ["fixture":"old"])
+        let plan = RecoveryPlan(transactionID: UUID(), expected: before, desired: ["fixture":"new"])
+        let interrupted = RecoverySimulator.execute(plan: plan, observed: before, authorized: true,
+                                                        store: store, faults: [.appliedUnknown])
+        XCTAssertEqual(interrupted.outcome, .safeMode)
+        let recovery = RecoverySimulator.restart(observed: interrupted.configuration, store: store)
+        XCTAssertEqual(recovery.outcome, .rolledBack)
+        XCTAssertEqual(recovery.simulatedWrites, 1)
+        XCTAssertEqual(recovery.configuration.settings, before.settings)
+        XCTAssertEqual(try store.load()?.restored, recovery.configuration)
+    }
 }
