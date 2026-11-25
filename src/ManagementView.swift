@@ -19,6 +19,7 @@ struct ManagementView: View {
     let setFocus: (Bool) -> Void
     let setHistoryEnabled: (Bool) -> Void
     let reloadHistory: () -> Void
+    let testDNS: () -> Void
     let setHistoryRetention: (Int) -> Void
     let deleteHistory: () -> Void
     @State private var tab = 0
@@ -151,6 +152,12 @@ struct ManagementView: View {
                                 Text("尚無工作階段資料").foregroundStyle(.secondary)
                             }
                         } else if tab == 2 {
+                            Text("連線品質").font(.headline)
+                            Text(snapshot.echoStatus).font(.caption)
+                            Text(snapshot.dnsStatus).font(.caption)
+                            Button("測試 DNS（example.com）", action: testDNS)
+                            Text("手動向 dig 預設解析器查詢 example.com；不代表所有網站或 macOS 系統解析器均正常。").font(.caption2).foregroundStyle(.secondary)
+                            Divider()
                             ForEach(snapshot.findings, id: \.rawValue) { finding in
                                 Label(finding.summary, systemImage: "info.circle")
                                     .fixedSize(horizontal: false, vertical: true)
