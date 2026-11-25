@@ -51,4 +51,38 @@ final class TrafficEventDetectorTests: XCTestCase {
         detector.clear()
         XCTAssertTrue(detector.recent().isEmpty)
     }
+
+    func testRuleValidationAndRoundTrip() throws {
+        XCTAssertNil(TrafficEventRules(highMiB: 0, highSeconds: 10, surgeMiB: 1, surgeMultiplier: 4))
+        XCTAssertNil(TrafficEventRules(highMiB: 5, highSeconds: 121, surgeMiB: 1, surgeMultiplier: 4))
+        XCTAssertNil(TrafficEventRules(highMiB: 5, highSeconds: 10, surgeMiB: 1, surgeMultiplier: 1))
+        let rules = try XCTUnwrap(TrafficEventRules(highMiB: 2, highSeconds: 5, surgeMiB: 3, surgeMultiplier: 6))
+        XCTAssertEqual(TrafficEventRules.validatedDecode(try JSONEncoder().encode(rules)), rules)
+        XCTAssertNil(TrafficEventRules.validatedDecode(Data(#"{"highMiB":0,"highSeconds":10,"surgeMiB":1,"surgeMultiplier":4}"#.utf8)))
+        XCTAssertNil(TrafficEventRules.validatedDecode(Data(repeating: 32, count: 4097)))
+    }
+
+    func testRuleChangesResetContinuityWithoutErasingEvents() throws {
+        var detector = TrafficEventDetector()
+        for time in 0...10 { sample(&detector, Double(time), rate: 6_000_000) }
+        XCTAssertEqual(detector.recent().count, 1)
+        let rules = try XCTUnwrap(TrafficEventRules(highMiB: 2, highSeconds: 5, surgeMiB: 1, surgeMultiplier: 4))
+        detector.configure(rules)
+        for time in 11...15 { sample(&detector, Double(time), rate: 3_000_000) }
+        XCTAssertEqual(detector.recent().count, 1)
+        sample(&detector, 16, rate: 3_000_000)
+        XCTAssertEqual(detector.recent().count, 2)
+        XCTAssertEqual(detector.recent().first?.duration, 5)
+    }
+
+    func testConfiguredSurgeRequiresAbsoluteAndRelativeThresholds() throws {
+        var detector = TrafficEventDetector()
+        detector.configure(try XCTUnwrap(TrafficEventRules(highMiB: 20, highSeconds: 10, surgeMiB: 2, surgeMultiplier: 6)))
+        for time in 0..<20 { sample(&detector, Double(time), rate: 500_000) }
+        sample(&detector, 20, rate: 2_500_000)
+        XCTAssertTrue(detector.recent().isEmpty)
+        sample(&detector, 21, rate: 3_100_000)
+        XCTAssertEqual(detector.recent().map(\.kind), [.surge])
+    }
+
 }
