@@ -3,12 +3,15 @@ import Foundation
 
 final class ManagementModel: ObservableObject {
     @Published var snapshot: ManagementSnapshot?
+    @Published var automation: AutomationSnapshot?
 }
 
 struct ManagementView: View {
     @ObservedObject var model: ManagementModel
     let refresh: () -> Void
     let openProvider: () -> Void
+    let setAlerts: (Bool) -> Void
+    let setFocus: (Bool) -> Void
     @State private var tab = 0
 
     var body: some View {
@@ -25,6 +28,7 @@ struct ManagementView: View {
                 Text("網路連線").tag(0)
                 Text("應用程式").tag(1)
                 Text("診斷").tag(2)
+                Text("自動化").tag(3)
             }.pickerStyle(.segmented)
             if let snapshot = model.snapshot {
                 ScrollView {
@@ -60,7 +64,7 @@ struct ManagementView: View {
                                 }
                                 Divider()
                             }
-                        } else {
+                        } else if tab == 2 {
                             ForEach(snapshot.findings, id: \.rawValue) { finding in
                                 Label(finding.summary, systemImage: "info.circle")
                                     .fixedSize(horizontal: false, vertical: true)
@@ -69,6 +73,10 @@ struct ManagementView: View {
                             Text(snapshot.providerStatus).font(.caption).foregroundStyle(.secondary)
                             Button("開啟校方榜單頁面", action: openProvider)
                             Text("目前不執行網路設定復原或程序控制。").font(.caption).foregroundStyle(.secondary)
+                        } else if let automation = model.automation {
+                            AutomationView(state: automation, setAlerts: setAlerts, setFocus: setFocus)
+                        } else {
+                            Text("正在讀取自動化狀態").foregroundStyle(.secondary)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
