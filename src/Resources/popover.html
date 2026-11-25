@@ -693,6 +693,9 @@
       background: var(--capsule-danger-badge-bg);
       color: var(--capsule-danger-badge-text);
     }
+    summary:focus-visible, button:focus-visible { outline: 2px solid #408cff; outline-offset: 2px; }
+    [hidden] { display: none !important; }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
   </style>
 </head>
 <body>
@@ -703,18 +706,19 @@
       <div class="icon-bubble" id="header-icon">🌐</div>
       <div style="min-width: 0; flex: 1;">
         <div style="display: flex; align-items: center; gap: 6px;">
-          <h2 class="header-title" id="header-title">興大二村 宿網</h2>
-          <span class="mode-tag" id="mode-tag">有線宿網</span>
+          <h2 class="header-title" id="header-title">NetGuard</h2>
+          <span class="mode-tag" id="mode-tag">辨識中</span>
         </div>
-        <p style="font-size: 10px; color: var(--text-muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="date-label">今日日期: 2026-09-23</p>
+        <p style="font-size: 10px; color: var(--text-muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="date-label">等待資料</p>
       </div>
     </div>
     <div class="badge" id="latency-badge" style="flex-shrink: 0; margin-left: 6px;">
       <span class="pulse-dot"></span>
-      <span id="latency-text">2.1 ms</span>
+      <span id="latency-text">未量測</span>
     </div>
   </div>
 
+  <div id="overview-state" role="status" style="font-size:12px;margin:0 0 10px;color:var(--text-sub);">正在辨識網路，尚無可靠資料。</div>
   <!-- High-Priority P2P Hazard Alert Banner -->
   <div id="p2p-alert-banner" style="display: none; margin-bottom: 8px; padding: 7px 11px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 10px; animation: pulseGlow 2s infinite;">
     <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
@@ -744,13 +748,13 @@
   </div>
 
   <!-- Mode 1: 宿網/校園網配額視圖 (Quota View) -->
-  <div id="dorm-view">
+  <div id="dorm-view" style="display:none;">
     <!-- Main Quota Gauge: Primary Download Quota -->
     <div class="card" style="margin-bottom: 8px; position: relative; overflow: hidden;">
       <div style="position: absolute; right: -25px; top: -25px; width: 110px; height: 110px; background: radial-gradient(circle, rgba(16, 185, 129, 0.12) 0%, transparent 70%); pointer-events: none;"></div>
 
       <div style="display: flex; justify-content: space-between; align-items: baseline;">
-        <span style="font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-sub); font-weight: 600;" id="hero-quota-title">今日下載額度剩餘</span>
+        <span style="font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-sub); font-weight: 600;" id="hero-quota-title">今日下載剩餘（估計）</span>
         <span style="font-size: 12px; font-weight: 700; color: var(--capsule-safe-badge-text); font-variant-numeric: tabular-nums;" id="usage-pct">已載 0.0%</span>
       </div>
 
@@ -769,7 +773,7 @@
       </div>
 
       <!-- 智能耗盡預估與安全等級膠囊 -->
-      <div id="runout-capsule" class="runout-capsule safe">
+      <div id="runout-capsule" class="runout-capsule safe" hidden>
         <div class="runout-left">
           <span style="font-size: 12px; flex-shrink: 0;">⏱️</span>
           <span id="runout-text" class="runout-text">網速平穩，流量充足安全</span>
@@ -816,13 +820,13 @@
     <div class="card" style="margin-bottom: 8px;">
       <div style="display: flex; justify-content: space-between; align-items: baseline;">
         <span style="font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-sub); font-weight: 600;">今日外部網路傳輸總量</span>
-        <span style="font-size: 10.5px; font-weight: 600; color: var(--capsule-safe-badge-text); background: var(--capsule-safe-bg); padding: 2px 6px; border-radius: 6px;">🟢 暢連無上限</span>
+        <span style="font-size: 10.5px; font-weight: 600; color: var(--capsule-safe-badge-text); background: var(--capsule-safe-bg); padding: 2px 6px; border-radius: 6px;">配額未確認</span>
       </div>
       <div style="display: flex; align-items: baseline; gap: 6px; margin: 4px 0 6px 0;">
         <span style="font-size: 34px; font-weight: 800; letter-spacing: -0.8px; color: var(--speed-text); font-variant-numeric: tabular-nums;" id="ext-total">0 B</span>
       </div>
       <div style="font-size: 10px; color: var(--text-muted); background: var(--bubble-bg); padding: 5px 8px; border-radius: 6px; margin: 6px 0 8px 0; border: 1px solid var(--bubble-border);">
-        💡 目前處於外部網路/熱點，不受 11GB 配額限制，放心暢遊！
+        外部或未確認網路：實際配額依網路服務提供者規範，以下為本機估計。
       </div>
       <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-sub);">
         <span id="ext-sub-summary" style="font-variant-numeric: tabular-nums;">下載: 0 B  •  上傳: 0 B</span>
@@ -846,15 +850,16 @@
     </div>
   </div>
 
+  <details id="details-panel" style="margin-top:10px;">
+    <summary style="cursor:pointer;padding:10px;font-size:13px;font-weight:600;border:1px solid var(--card-border);border-radius:8px;">詳細資訊與進階設定</summary>
   <!-- Top App Consumers -->
   <div class="card" style="margin-top: 8px;">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-      <span style="font-size: 11px; font-weight: 700; color: var(--text-main);">📱 今日最耗流量 App 排行</span>
+      <span style="font-size: 11px; font-weight: 700; color: var(--text-main);">應用程式採樣排行（估計）</span>
       <span style="font-size: 9.5px; color: var(--text-muted); font-weight: 500;" id="top-status">點開即時採樣</span>
     </div>
     <div id="apps-container">
-      <div class="app-row"><span>1. Google Chrome</span><span>18.7 MB</span></div>
-      <div class="app-row"><span>2. Antigravity IDE</span><span>8.1 MB</span></div>
+      <div class="app-row"><span>等待採樣</span></div>
     </div>
   </div>
 
@@ -1034,12 +1039,13 @@
     </div>
   </div>
 
+  </details>
   <!-- Action Bar -->
   <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--card-border);">
     <div style="display: flex; gap: 4px; align-items: center;">
       <button class="btn" onclick="callNative('refresh')">🔄 校準</button>
-      <button class="btn btn-panic" id="panic-btn" onclick="callNative('panicFreeze')">流量提醒</button>
-      <button class="btn" id="wifi-toggle-btn" onclick="callNative('switchToWifi')">網路設定（暫停）</button>
+      <button class="btn btn-panic" id="panic-btn" hidden disabled>流量提醒</button>
+      <button class="btn" id="wifi-toggle-btn" hidden disabled>網路設定（暫停）</button>
       <button class="btn" onclick="callNative('openTop100')">🌐 查詢</button>
     </div>
     <div>
@@ -1087,6 +1093,7 @@
 
     function updateStats(data) {
       if (!data) return;
+      document.getElementById('overview-state').textContent = data.observationStatus || '網路狀態未知';
 
       var isQuotaRestricted = (data.isQuotaRestricted === true || data.isDorm === true || data.isCampusWifi === true);
       if (isQuotaRestricted) {
@@ -1109,7 +1116,7 @@
         document.getElementById('ext-view').style.display = 'block';
         document.getElementById('header-icon').innerText = '⚡';
         document.getElementById('header-title').innerText = (data.networkTypeName || '外部網路');
-        document.getElementById('mode-tag').innerText = '自由無上限';
+        document.getElementById('mode-tag').innerText = '配額未確認';
         document.getElementById('mode-tag').className = 'mode-tag ext';
 
         if (data.extTotalStr) document.getElementById('ext-total').innerText = data.extTotalStr;
@@ -1121,9 +1128,10 @@
         if (data.speedStr) document.getElementById('ext-speed-indicator').innerText = '⚡ ' + data.speedStr;
       }
 
+      // Quota numbers are provisional estimates, not provider-confirmed balances.
       // Hero Card: Focus on Download Quota (下載額度)
       var heroTitle = document.getElementById('hero-quota-title');
-      if (heroTitle) heroTitle.innerText = '今日下載額度剩餘';
+      if (heroTitle) heroTitle.innerText = '今日下載剩餘（估計）';
       if (data.remDlStr) document.getElementById('rem-total').innerText = data.remDlStr;
       if (data.quotaDlGB) {
         var totalLim = document.getElementById('total-quota-limit');
