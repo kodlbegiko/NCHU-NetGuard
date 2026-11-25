@@ -8,10 +8,10 @@ Status: proposed allocation; broad parallel implementation remains locked. No re
 | 1 Traffic | TrafficAccounting.swift, ScopedAccounting.swift |
 | 2 Network | Diagnostics.swift, NetworkQuality.swift, AppTrafficSample.swift, future NetworkEngine/ and PlatformAdapters/ read-only network discovery |
 | 3 Security/recovery | ProbeRunner.swift, RecoveryTransaction.swift, RecoveryJournalStore.swift, SimulatedNetworkAdapter.swift, future authorization layer |
-| 4 UX | src/QuickPanel.swift, src/HistoryAnalyticsView.swift, src/Resources/popover.html, future Apps/NetGuardApp/; UX-01–08 |
+| 4 UX | src/QuickPanel.swift, src/HistoryAnalyticsView.swift, src/SettingsView.swift, src/Resources/popover.html, future Apps/NetGuardApp/; UX-01–08 |
 | 5 Policy/forecast | PolicyEngine.swift, PredictionEngine.swift, future policy/forecast modules |
 | 6 Workflows/power | WorkflowPowerGuard.swift, future workflow/power adapters |
-| 7 Data/provider | HistoryStore.swift, HistoryAnalytics.swift, UsageMigration.swift, ProviderObservation.swift, scripts/traffic_monitor.py, future DataStore/ and CampusProviders/ |
+| 7 Data/provider | HistoryStore.swift, HistoryAnalytics.swift, HistoryChartProjection.swift, UsageMigration.swift, ProviderObservation.swift, scripts/traffic_monitor.py, future DataStore/ and CampusProviders/ |
 | 8 QA/CI | Tests/, tests/, .github/workflows/, evidence and integration checks |
 
 Shared legacy src/main.swift and Makefile: Agent 0 serializes modifications. Agents propose narrowly scoped patches to Agent 0, not concurrent edits. Test changes accompany their owned module and require QA review. Every branch states scope and base SHA, contract version, test results, migration/rollback impact and unresolved issues.
