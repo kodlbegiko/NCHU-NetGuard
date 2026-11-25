@@ -18,6 +18,7 @@ struct ManagementView: View {
     let setAlerts: (Bool) -> Void
     let setFocus: (Bool) -> Void
     let setHistoryEnabled: (Bool) -> Void
+    let setProcessBackground: (Bool) -> Void
     let reloadHistory: () -> Void
     let testDNS: () -> Void
     let setHistoryRetention: (Int) -> Void
@@ -94,6 +95,11 @@ struct ManagementView: View {
                             }
                             Text("自動切換與分流尚未開放。").font(.caption).foregroundStyle(.secondary)
                         } else if tab == 1 {
+                            Toggle("本次執行允許背景程序監控", isOn: Binding(
+                                get: { snapshot.processBackgroundEnabled }, set: setProcessBackground))
+                            Text(snapshot.processObservationStatus).font(.caption)
+                            Text("預設關閉；背景監控會增加本機探測成本。是否儲存歷史需另外同意。")
+                                .font(.caption2).foregroundStyle(.secondary)
                             Picker("統計類型", selection: $processMode) {
                                 Text("目前快照").tag(0)
                                 Text("本次觀測用量").tag(1)
@@ -103,7 +109,7 @@ struct ManagementView: View {
                             if processMode == 0 {
                                 Text(snapshot.processStatus).font(.caption).foregroundStyle(.secondary)
                             } else if processMode == 1 {
-                                Text("僅累計面板開啟期間可辨識的程序增量，不是完整今日用量。").font(.caption).foregroundStyle(.secondary)
+                                Text("僅累計獲准觀測期間可辨識的程序增量，不是完整今日用量。").font(.caption).foregroundStyle(.secondary)
                             }
                             TextField(processMode == 0 ? "搜尋目前前 20 個程序" : "搜尋已觀測程序", text: $processQuery)
                                 .textFieldStyle(.roundedBorder)
@@ -132,6 +138,7 @@ struct ManagementView: View {
                                 processHistoryPanel
                             } else if let report = snapshot.sessionUsage {
                                 Text("有效配對採樣區間：\(report.measuredIntervals)").font(.caption)
+                                Text(String(format: "至少一個程序成功配對的區間合計 %.0f 秒；非所有程序的完整覆蓋", report.matchedIntervalSeconds)).font(.caption2).foregroundStyle(.secondary)
                                 if snapshot.focusEnabled { Text("重要工作模式：累計暫停").font(.caption) }
                                 if report.capacityReached { Text("已達紀錄上限，部分增量未計入").font(.caption) }
                                 if report.rows.isEmpty { Text("尚無可歸屬的非零增量").foregroundStyle(.secondary) }
@@ -270,6 +277,7 @@ struct ManagementView: View {
             }
             if let report = snapshot.agentUsage {
                 Text("有效配對區間：\(report.measuredIntervals)").font(.caption)
+                Text(String(format: "有 AI 程序配對的區間合計 %.0f 秒", report.matchedIntervalSeconds)).font(.caption2).foregroundStyle(.secondary)
                 if report.capacityReached { Text("部分增量未計入").font(.caption) }
                 let rows = visibleProcesses(report.rows.map { ProcessSampleRow(name: $0.name, bytes: $0.total) })
                 let indexed = Dictionary(uniqueKeysWithValues: report.rows.map { ($0.name, $0) })
