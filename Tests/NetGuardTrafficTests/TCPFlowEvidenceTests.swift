@@ -79,4 +79,33 @@ final class TCPFlowEvidenceTests: XCTestCase {
         XCTAssertNil(accumulator.coverage)
     }
 
+
+    func testUDPRequiresExplicitPeerAndSeparateProtocol() throws {
+        let udp = "udp4 192.168.1.2:50000<->8.8.8.8:443,100,50,en0,,\n"
+        let text = header + parent + udp
+        XCTAssertEqual(parse(text)?.count, 0)
+        let rows = try XCTUnwrap(TCPFlowParser.parse(text, before: starts, after: starts, transport: .udp))
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows.first?.transport, .udp)
+        XCTAssertEqual(rows.first?.interface, "en0")
+        XCTAssertEqual(TCPFlowParser.parse(text.replacingOccurrences(of: "8.8.8.8:443", with: "*:*"), before: starts, after: starts, transport: .udp)?.count, 0)
+        XCTAssertEqual(TCPFlowParser.parse(text.replacingOccurrences(of: "en0,,", with: "en0,Listen,"), before: starts, after: starts, transport: .udp)?.count, 0)
+    }
+
+    func testUDP6DeltasAndTransportBoundary() throws {
+        let udp = "udp6 [fd00::1]:50000<->[2606:4700::1111]:443,100,50,utun2,Connected,\n"
+        let first = try XCTUnwrap(TCPFlowParser.parse(header + parent + udp, before: starts, after: starts, transport: .udp))
+        let next = try XCTUnwrap(TCPFlowParser.parse(header + parent + udp.replacingOccurrences(of: ",100,50,", with: ",140,80,"), before: starts, after: starts, transport: .udp))
+        XCTAssertEqual(first.count, 1)
+        XCTAssertEqual(first.first?.interface, "utun2")
+        var accumulator = TCPFlowAccumulator()
+        XCTAssertNil(accumulator.ingest(first, uptime: 1))
+        XCTAssertEqual(accumulator.ingest(next, uptime: 2)?[.publicCandidate]?.total, 70)
+        XCTAssertNil(accumulator.ingest(parse(header + parent + flow()), uptime: 3))
+        XCTAssertNil(accumulator.coverage)
+        XCTAssertNil(accumulator.ingest(next, uptime: 4))
+        XCTAssertNil(accumulator.ingest(first + (parse(header + parent + flow()) ?? []), uptime: 5))
+        XCTAssertNil(accumulator.coverage)
+    }
+
 }
