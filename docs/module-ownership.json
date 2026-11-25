@@ -21,7 +21,8 @@
     "QuickPanelState.swift": 0,
     "HistoryAnalytics.swift": 7,
     "HistoryChartProjection.swift": 7,
-    "ManagementSnapshot.swift": 0
+    "ManagementSnapshot.swift": 0,
+    "AutomationSnapshot.swift": 0
   },
   "shared_paths": {
     "src/main.swift": 0,
@@ -36,6 +37,7 @@
     "src/QuickPanel.swift": 4,
     "src/HistoryAnalyticsView.swift": 4,
     "src/SettingsView.swift": 4,
-    "src/ManagementView.swift": 4
+    "src/ManagementView.swift": 4,
+    "src/AutomationView.swift": 4
   }
 }
