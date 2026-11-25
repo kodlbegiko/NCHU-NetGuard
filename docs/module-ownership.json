@@ -18,7 +18,8 @@
     "HistoryStore.swift": 7,
     "ProviderObservation.swift": 7,
     "UsageMigration.swift": 7,
-    "QuickPanelState.swift": 0
+    "QuickPanelState.swift": 0,
+    "HistoryAnalytics.swift": 7
   },
   "shared_paths": {
     "src/main.swift": 0,
@@ -30,6 +31,7 @@
     ".github/workflows/": 8,
     "Tests/": 8,
     "tests/": 8,
-    "src/QuickPanel.swift": 4
+    "src/QuickPanel.swift": 4,
+    "src/HistoryAnalyticsView.swift": 4
   }
 }
