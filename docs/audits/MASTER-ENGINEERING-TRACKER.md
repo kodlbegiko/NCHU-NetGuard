@@ -50,3 +50,5 @@ Acceptance targets and dependencies follow ROADMAP.md, UX-PRINCIPLES.md, AGENTS.
 - R4-POLICY: tri-state connection and normal quota tier remain editable without silently dropping an existing condition; mutation rejects unsupported or invalid source rule sets. Regression added.
 
 - R5-QA: CI now generates Swift coverage and reports weighted production Sources line counts, missing source inventory and the unchanged 90% target. Missing files or insufficient coverage cannot imply the target was met. Foundation CI does not gate on the target yet; release remains gated. Synthetic Python regression covers weighted counts, absent source, invalid count and duplicate file. Exact CI evidence pending.
+
+- Verified cumulative checkpoint: 517fb31ffcd58ef8482af8f4d483bf96c2a40cad, CI 45724245114 success, 222 Swift and 35 Python tests, zero failures, both bundles and both four-view smoke checks pass. TCP observational compatibility only; host parser and UDP inconclusive. This run does not cover later commits or qualify as device, coverage, or complete security acceptance.

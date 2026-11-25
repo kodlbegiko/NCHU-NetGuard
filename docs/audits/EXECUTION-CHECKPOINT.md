@@ -1,14 +1,12 @@
 # Execution checkpoint
 
-- Authoritative cumulative branch: fix/r4-closure-integration.
-- Code HEAD before this documentation checkpoint: 70f10e4c3f0cecf083d77a1b71104118e4c0d505.
-- Last fully passing exact code SHA: efa91e6c7a3e79e7a9d81bfbeb21225c1e9acc86.
-- Baseline CI: https://github.com/kodlbegiko/NCHU-NetGuard/actions/runs/45653469349.
-- Prior code HEAD CI: https://github.com/kodlbegiko/NCHU-NetGuard/actions/runs/45656182923 (in_progress, no conclusion).
-- A new documentation commit is not covered by old CI. Verify the current branch SHA and its own run.
-- New implementation commits: provider gate 17e80468; recovery exact restoration e05ea4c4; route partition 140823d7; rules preview 70f10e4c.
-- All are accumulated without force push; earlier integration CI cancelled on new pushes per existing workflow. Do not interpret cancelled as passing.
-- User Mac working tree not inspected. Linux container cannot resolve GitHub for direct Git. Connector can update the branch non-forced; local macOS compiler/device evidence unavailable.
-- Next work: inspect exact CI and fix compile/test failures; finish consumer inventory via local checkout or bounded connector batches; audit actual route/scope identity, provider error classification, recovery failure-injection matrix; integrate rule preview into native UI only as inert read-only preview.
-- Remaining work is listed in MASTER-ENGINEERING-TRACKER.md and R4-P0-P1-MASTER-TRACKER.md; do not relabel unimplemented items as externally blocked.
-- Main, release, deployment, paid service, real host network changes and privileged extension activation remain outside current authorization.
+- Authoritative cumulative branch: fix/r4-closure-integration; draft PR #3.
+- Code HEAD before this documentation checkpoint: 11c6d741b4eead9aade0e1e996afb8f46d521840.
+- Last fully passing exact code SHA: 517fb31ffcd58ef8482af8f4d483bf96c2a40cad.
+- CI: https://github.com/kodlbegiko/NCHU-NetGuard/actions/runs/45724245114 (success). 222 Swift + 35 Python tests, zero failures. Legacy and SwiftPM app builds and four-view fixture smoke passed; TCP compatibility evidence OK, host parser and UDP inconclusive (non-gating, not device acceptance).
+- New route candidates fee2ee0a, lossless rule editing e330e3a, coverage instrumentation 11c6d74 are NOT included in that successful CI. Verify the new HEAD separately.
+- Prior failed CI 45723912849: SQLite NOFOLLOW normal symlinked system parent incompatibility and missing unknown provider label. Fixed in 517fb31; tests retained and rerun.
+- Existing partial implementation evidence and unmet acceptance are listed in MASTER-ENGINEERING-TRACKER.md. No work package is declared Done or formally unlocked.
+- User Mac working tree not inspected; Linux connector execution cannot provide real macOS hardware, official provider accounting, authorized device rollback, or 168-hour soak evidence.
+- Continue exact HEAD CI, route candidate compatibility, coverage gaps, real-device harness, secure process identity, actual contract consumers, safe scoped provider reconciliation, unified data/restore, remaining policy/UI and R6 development. Unimplemented tasks are not externally blocked.
+- Main unchanged; no merge, release, deployment, paid service, real network mutation, or privileged extension activation.
