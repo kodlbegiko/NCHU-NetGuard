@@ -16,6 +16,7 @@ struct ManagementView: View {
     @State private var selectedInterface: String? = nil
     @State private var processQuery = ""
     @State private var processOrder = 0
+    @State private var processMode = 0
 
     private func visibleProcesses(_ rows: [ProcessSampleRow]) -> [ProcessSampleRow] {
         ProcessSamplePresentation.visible(rows, query: processQuery,
@@ -80,26 +81,59 @@ struct ManagementView: View {
                             }
                             Text("自動切換與分流尚未開放。").font(.caption).foregroundStyle(.secondary)
                         } else if tab == 1 {
-                            Text(snapshot.processStatus).font(.caption).foregroundStyle(.secondary)
-                            TextField("搜尋目前前 20 個程序", text: $processQuery)
+                            Picker("統計類型", selection: $processMode) {
+                                Text("目前快照").tag(0)
+                                Text("本次觀測用量").tag(1)
+                            }.pickerStyle(.segmented)
+                            if processMode == 0 {
+                                Text(snapshot.processStatus).font(.caption).foregroundStyle(.secondary)
+                            } else {
+                                Text("僅累計面板開啟期間可辨識的程序增量，不是完整今日用量。").font(.caption).foregroundStyle(.secondary)
+                            }
+                            TextField(processMode == 0 ? "搜尋目前前 20 個程序" : "搜尋已觀測程序", text: $processQuery)
                                 .textFieldStyle(.roundedBorder)
                             Picker("排序", selection: $processOrder) {
                                 Text("流量由大到小").tag(0)
                                 Text("流量由小到大").tag(1)
                                 Text("名稱").tag(2)
                             }.pickerStyle(.segmented)
-                            if snapshot.processes.isEmpty {
-                                Text("沒有可顯示的近期程序採樣").foregroundStyle(.secondary)
-                            } else if visibleProcesses(snapshot.processes).isEmpty {
-                                Text("沒有符合搜尋的程序").foregroundStyle(.secondary)
-                            }
-                            ForEach(visibleProcesses(snapshot.processes)) { item in
-                                HStack {
-                                    Text(item.name).lineLimit(2)
-                                    Spacer()
-                                    Text(String(format: "%.2f MiB", Double(item.bytes) / 1_048_576)).monospacedDigit()
+                            if processMode == 0 {
+                                if snapshot.processes.isEmpty {
+                                    Text("沒有可顯示的近期程序採樣").foregroundStyle(.secondary)
+                                } else if visibleProcesses(snapshot.processes).isEmpty {
+                                    Text("沒有符合搜尋的程序").foregroundStyle(.secondary)
                                 }
-                                Divider()
+                                ForEach(visibleProcesses(snapshot.processes)) { item in
+                                    HStack {
+                                        Text(item.name).lineLimit(2)
+                                        Spacer()
+                                        Text(String(format: "%.2f MiB", Double(item.bytes) / 1_048_576)).monospacedDigit()
+                                    }
+                                    Divider()
+                                }
+                            } else if let report = snapshot.sessionUsage {
+                                Text("有效配對採樣區間：\(report.measuredIntervals)").font(.caption)
+                                if snapshot.focusEnabled { Text("重要工作模式：累計暫停").font(.caption) }
+                                if report.capacityReached { Text("已達紀錄上限，部分增量未計入").font(.caption) }
+                                if report.rows.isEmpty { Text("尚無可歸屬的非零增量").foregroundStyle(.secondary) }
+                                let ordered = visibleProcesses(report.rows.map { ProcessSampleRow(name: $0.name, bytes: $0.total) })
+                                let indexed = Dictionary(uniqueKeysWithValues: report.rows.map { ($0.name, $0) })
+                                ForEach(ordered) { item in
+                                    if let row = indexed[item.name] {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            HStack {
+                                                Text(row.name).lineLimit(2)
+                                                Spacer()
+                                                Text(String(format: "%.2f MiB", Double(row.total) / 1_048_576)).monospacedDigit()
+                                            }
+                                            Text(String(format: "下載 %.2f · 上傳 %.2f MiB", Double(row.received) / 1_048_576, Double(row.sent) / 1_048_576))
+                                                .font(.caption).foregroundStyle(.secondary)
+                                        }
+                                        Divider()
+                                    }
+                                }
+                            } else {
+                                Text("尚無工作階段資料").foregroundStyle(.secondary)
                             }
                         } else if tab == 2 {
                             ForEach(snapshot.findings, id: \.rawValue) { finding in
