@@ -175,3 +175,8 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 
 - Added validated personal daily category budget, optional local preferences and native settings progress; no changes to campus quota, alert or route semantics. Added explicit rate units for status bar and quick panel text. Three tests added. No individual network/subscription attribution or verified remaining balance; all-zero unverified categories stay unknown. Local preferences and native UI require exact-HEAD CI and device testing.
 - Preceding run 45637141431 completed successfully (Python, Swift, app compile and bundle). Candidate includes iterations 27–29, eligible for non-forced fast-forward integration and fresh exact-HEAD CI. No paid service, release or host mutation.
+
+## Thirtieth iteration
+
+- Added QualityDiagnostics.swift (strict completed ICMP counts/RTT parser, bounded echo window, DNS response parser), four regression tests, module ownership and source aliases. ProbeRunner permits explicit probe-specific normal exit codes; default remains zero. Native diagnostics displays recent ICMP reply counts and non-response ratio, plus user-triggered DNS status/timing. No broad packet-loss or system DNS success claim.
+- Preceding CI run 45638694157 passed static/Python and Swift tests at last check, app build pending. Candidate staged until preceding full CI is confirmed. Exact candidate tests, app compilation, device output and performance remain unverified. No paid service, release or network mutation.
