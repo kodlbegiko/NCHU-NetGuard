@@ -74,4 +74,6 @@ public typealias AgentAttribution = NetGuardObservation.AgentAttribution
 public typealias DefaultRouteParser = NetGuardObservation.DefaultRouteParser
 public typealias DualStackEvidence = NetGuardObservation.DualStackEvidence
 public typealias InterfaceAddressEvidence = NetGuardObservation.InterfaceAddressEvidence
+public typealias ConnectionSessionMeter = NetGuardTraffic.ConnectionSessionMeter
+public typealias ConnectionSessionReading = NetGuardTraffic.ConnectionSessionReading
 #endif
