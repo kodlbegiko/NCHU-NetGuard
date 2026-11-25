@@ -19,7 +19,9 @@ struct HistoryCSVDocument: FileDocument {
 
 struct HistoryAnalyticsView: View {
     let records: [HistoryDay]
+    let scopedRecords: [NetworkScope: [HistoryDay]]
     let today: String
+    @State private var scope: NetworkScope? = nil
     let storageHealthy: Bool
     @State private var days = 7
     @State private var exporting = false
@@ -27,7 +29,7 @@ struct HistoryAnalyticsView: View {
     @State private var exportMessage = ""
 
     private var report: HistoryPeriod? {
-        try? HistoryAnalytics.period(endingBefore: today, days: days, records: records)
+        try? HistoryAnalytics.period(endingBefore: today, days: days, records: scope.map { scopedRecords[$0] ?? [] } ?? records)
     }
     private func gib(_ bytes: Double) -> String {
         String(format: "%.2f GiB", bytes / 1_073_741_824)
@@ -43,13 +45,24 @@ struct HistoryAnalyticsView: View {
                 Spacer()
                 Button {
                     if let report {
-                        document = HistoryCSVDocument(csv: report.csv())
+                        document = HistoryCSVDocument(csv: report.csv(scope: scope))
                         exporting = true
                     }
                 } label: {
                     Label("匯出 CSV", systemImage: "square.and.arrow.up")
                 }
                 .disabled(report == nil || !storageHealthy)
+            }
+            Picker("網路類型", selection: $scope) {
+                Text("全部紀錄（含舊資料）").tag(nil as NetworkScope?)
+                Text("宿網").tag(Optional(NetworkScope.dorm))
+                Text("校園 Wi-Fi").tag(Optional(NetworkScope.campusWifi))
+                Text("外部網路").tag(Optional(NetworkScope.external))
+                Text("未分類").tag(Optional(NetworkScope.unknown))
+            }
+            if scope != nil {
+                Text("僅顯示新版有分類的非零觀測；未出現的日期不代表零流量。")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Picker("期間", selection: $days) {
                 Text("7 天").tag(7)
