@@ -52,7 +52,7 @@ class FoundationTests(unittest.TestCase):
         provider.assert_called_once_with("140.120.1.2")
 
     @patch.object(monitor, "get_top100_data", return_value={"status": "unavailable"})
-    @patch.object(monitor, "load_state", return_value={"dorm_in": 10, "dorm_out": 5})
+    @patch.object(monitor, "load_state", return_value={"dorm_in": 10, "dorm_out": 5, "observed_scopes": ["dorm"], "scoped_history_eligible": True, "measured_sample_count": 1})
     @patch.object(monitor, "run_probe", side_effect=["interface: en0", "140.120.1.2"])
     def test_explicit_scope_reports_local_bucket_not_provider_balance(self, _route, _state, _provider):
         result = monitor.query_traffic("dorm")
@@ -60,6 +60,27 @@ class FoundationTests(unittest.TestCase):
         self.assertTrue(result["scope_user_selected"])
         self.assertIsNone(result["rem_total"])
         self.assertFalse(result["quota_units_verified"])
+
+    @patch.object(monitor, "run_probe", side_effect=["interface: en0", "192.0.2.1"])
+    def test_scope_zero_requires_positive_observation_evidence(self, _route):
+        state = {"ext_in": 0, "ext_out": 0}
+        with patch.object(monitor, "load_state", return_value=state):
+            self.assertEqual(monitor.query_traffic("external")["status"], "local_usage_unknown")
+        state.update(observed_scopes=["external"], scoped_history_eligible=True, measured_sample_count=1)
+        with patch.object(monitor, "run_probe", side_effect=["interface: en0", "192.0.2.1"]), patch.object(monitor, "load_state", return_value=state):
+            self.assertEqual(monitor.query_traffic("external")["used_total"], 0)
+
+    def test_provider_failure_categories_are_redacted(self):
+        errors = [(TimeoutError("private path"), "timeout"),
+                  (monitor.ssl.SSLError("private cert"), "tls_error"),
+                  (monitor.urllib.error.HTTPError("https://example.invalid", 429, "", {}, None), "rate_limited"),
+                  (monitor.urllib.error.HTTPError("https://example.invalid", 302, "", {}, None), "redirect_rejected")]
+        for error, code in errors:
+            with patch.object(monitor.urllib.request, "build_opener", side_effect=error):
+                result = monitor.get_top100_data("192.0.2.1")
+                self.assertEqual(result["error_code"], code)
+                self.assertIsNone(result["in_top1000"])
+                self.assertNotIn("private", json.dumps(result))
 
     def test_redirect_rejected(self):
         self.assertIsNone(monitor.NoRedirect().redirect_request(None, None, 302, "", {}, "http://example.invalid"))

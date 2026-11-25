@@ -25,3 +25,9 @@ class RankingParserTests(unittest.TestCase):
     def test_invalid_units_and_cross_row_unknown(self):
         for html in [row("192.0.2.1", "NaN GB"), "<tr><td>1</td><td>fixture</td><td>192.0.2.1</td></tr><tr><td>1 GB</td><td>2 MB</td><td>1 GB</td></tr>"]:
             self.assertIsNone(monitor.parse_ranking(html, "192.0.2.1")["in_top1000"])
+
+    def test_missing_row_distinguished_from_unrecognized_page(self):
+        self.assertEqual(monitor.parse_ranking(row("192.0.2.2"), "192.0.2.1")["error_code"], "not_listed")
+        self.assertEqual(monitor.parse_ranking("<html>unrecognized</html>", "192.0.2.1")["error_code"], "unrecognized_ranking")
+        self.assertEqual(monitor.parse_ranking(row("192.0.2.1") * 2, "192.0.2.1")["error_code"], "ambiguous_identity")
+        self.assertEqual(monitor.parse_ranking(row("192.0.2.1", "NaN GB"), "192.0.2.1")["error_code"], "malformed_row")

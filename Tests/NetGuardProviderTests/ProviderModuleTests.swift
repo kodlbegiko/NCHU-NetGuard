@@ -37,6 +37,13 @@ final class ProviderModuleTests: XCTestCase {
             XCTAssertFalse(observation.isUsableRanking(for: "2026-11-25", now: now))
         }
     }
+    func testTypedFailureNeverLooksLikeFreshRanking() throws {
+        let raw = Data(#"{"status":"unavailable","error_code":"rate_limited"}"#.utf8)
+        let value = try JSONDecoder().decode(ProviderObservation.self, from: raw)
+        XCTAssertEqual(value.errorCode, .rateLimited)
+        XCTAssertFalse(value.isUsableRanking(for: "2026-11-25", now: Date()))
+        XCTAssertTrue(value.displayStatus(for: "2026-11-25", now: Date()).contains("限流"))
+    }
     func testStandaloneProviderDecodesAndRejectsStaleObservation() throws {
         let raw = Data(#"{"status":"listed","requested_date":"2026-11-25","retrieved_at":"2026-11-25T12:00:00Z","rank":7,"download_display":"2 GB","upload_display":"1 GB","total_display":"3 GB","units_verified":false}"#.utf8)
         let value = try JSONDecoder().decode(ProviderObservation.self, from: raw)

@@ -30,6 +30,7 @@ public typealias JournalValidationError = NetGuardRecovery.JournalValidationErro
 public typealias RecoveryJournalStore = NetGuardRecovery.RecoveryJournalStore
 public typealias SimulatedNetworkAdapter = NetGuardRecovery.SimulatedNetworkAdapter
 public typealias ProviderStatus = NetGuardProvider.ProviderStatus
+public typealias ProviderErrorCode = NetGuardProvider.ProviderErrorCode
 public typealias ProviderObservation = NetGuardProvider.ProviderObservation
 public typealias ProviderPollGate = NetGuardProvider.ProviderPollGate
 public typealias SampleQuality = NetGuardTraffic.SampleQuality

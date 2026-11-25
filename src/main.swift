@@ -2822,6 +2822,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                     let usable = observation?.isUsableRanking(for: expectedDay, now: Date()) == true
                     // A valid absent ranking is an observation, not a safe state.
                     let observedAbsent = observation?.status == .notFoundOrUnrecognized &&
+                        observation?.errorCode == .notListed &&
                         observation?.isFresh(for: expectedDay, now: Date()) == true
                     guard self.providerPollGate.finish(requestID, usable: usable || observedAbsent) else { return }
                     self.providerObservation = observation

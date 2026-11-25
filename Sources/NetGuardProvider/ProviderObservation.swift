@@ -5,6 +5,16 @@ public enum ProviderStatus: String, Codable, Sendable {
          notApplicable = "not_applicable", invalidIdentity = "invalid_identity"
 }
 
+public enum ProviderErrorCode: String, Codable, Sendable {
+    case invalidIdentity = "invalid_identity", responseLimit = "response_limit",
+         ambiguousIdentity = "ambiguous_identity", notListed = "not_listed",
+         unrecognizedRanking = "unrecognized_ranking", malformedRow = "malformed_row",
+         unexpectedResponse = "unexpected_response", invalidEncoding = "invalid_encoding",
+         rateLimited = "rate_limited", redirectRejected = "redirect_rejected",
+         httpError = "http_error", tlsError = "tls_error", timeout,
+         networkError = "network_error"
+}
+
 public struct ProviderObservation: Codable, Equatable, Sendable {
     public let status: ProviderStatus
     public let requestedDate: String?
@@ -14,14 +24,16 @@ public struct ProviderObservation: Codable, Equatable, Sendable {
     public let uploadDisplay: String?
     public let totalDisplay: String?
     public let unitsVerified: Bool?
+    public let errorCode: ProviderErrorCode?
 
-    public init(status: ProviderStatus, requestedDate: String?, retrievedAt: String?, rank: Int?, downloadDisplay: String?, uploadDisplay: String?, totalDisplay: String?, unitsVerified: Bool?) {
+    public init(status: ProviderStatus, requestedDate: String?, retrievedAt: String?, rank: Int?, downloadDisplay: String?, uploadDisplay: String?, totalDisplay: String?, unitsVerified: Bool?, errorCode: ProviderErrorCode? = nil) {
         self.status = status; self.requestedDate = requestedDate; self.retrievedAt = retrievedAt; self.rank = rank
-        self.downloadDisplay = downloadDisplay; self.uploadDisplay = uploadDisplay; self.totalDisplay = totalDisplay; self.unitsVerified = unitsVerified
+        self.downloadDisplay = downloadDisplay; self.uploadDisplay = uploadDisplay; self.totalDisplay = totalDisplay; self.unitsVerified = unitsVerified; self.errorCode = errorCode
     }
 
     enum CodingKeys: String, CodingKey {
         case status, rank
+        case errorCode = "error_code"
         case requestedDate = "requested_date"
         case retrievedAt = "retrieved_at"
         case downloadDisplay = "download_display"
@@ -45,6 +57,14 @@ public struct ProviderObservation: Codable, Equatable, Sendable {
     /// The ranking source provides no verified billing unit or measurement timestamp.
     /// A fresh HTTP response must not be mistaken for fresh accounting data.
     public func displayStatus(for day: String, now: Date) -> String {
+        if status == .unavailable {
+            switch errorCode {
+            case .tlsError: return "校方資料未知：TLS 驗證失敗"
+            case .rateLimited: return "校方資料未知：服務限流"
+            case .timeout: return "校方資料未知：請求逾時"
+            default: return "校方資料暫時無法取得"
+            }
+        }
         guard isFresh(for: day, now: now) else { return "校方資料未知或已過期" }
         guard isUsableRanking(for: day, now: now), let rank,
               let downloadDisplay, let uploadDisplay else { return "校方榜單未確認，不能判定安全" }
@@ -57,7 +77,7 @@ public extension ProviderObservation {
     /// Fresh retrieval is not proof of billing freshness. All diagnostic
     /// consumers must use this stricter predicate instead of status alone.
     func isUsableRanking(for day: String, now: Date) -> Bool {
-        guard isFresh(for: day, now: now), status == .listed, let rank,
+        guard isFresh(for: day, now: now), status == .listed, errorCode == nil, let rank,
               (1...999_999).contains(rank), unitsVerified == false,
               let downloadDisplay, let uploadDisplay, let totalDisplay else { return false }
         return [downloadDisplay, uploadDisplay, totalDisplay].allSatisfy {

@@ -16,6 +16,7 @@ import stat
 import sqlite3
 from pathlib import Path
 import urllib.request
+import urllib.error
 import ssl
 import json
 import time
@@ -180,60 +181,90 @@ class RankingParser(HTMLParser):
 
 
 def parse_ranking(html, ip_addr):
-    """Provisional legacy six-column format; no authoritative byte conversion."""
+    """Provisional six-column format; absence is never a safety decision."""
+    def unknown(code, status="not_found_or_unrecognized"):
+        return {"status": status, "in_top1000": None, "error_code": code}
     try:
-        target = str(ipaddress.ip_address(ip_addr))
+        target = ipaddress.ip_address(ip_addr)
     except ValueError:
-        return {"status": "invalid_identity", "in_top1000": None}
+        return unknown("invalid_identity", "invalid_identity")
+    if not isinstance(html, str) or len(html) > 2_000_000:
+        return unknown("response_limit", "unavailable")
     parser = RankingParser()
     parser.feed(html)
-    matches = []
-    identity_rows = [row for row in parser.rows if len(row) >= 3 and row[2] == target]
-    if len(identity_rows) != 1:
-        return {"status": "not_found_or_unrecognized", "in_top1000": None}
-    for row in identity_rows:
-        if len(row) != 6 or not re.fullmatch(r"[1-9][0-9]{0,5}", row[0]):
+    parser.close()
+    identity_rows = []
+    recognized = 0
+    for row in parser.rows:
+        if len(row) < 3:
             continue
-        values = []
-        for field in row[3:]:
-            match = re.fullmatch(r"([0-9]{1,12}(?:\.[0-9]{1,6})?)\s*(B|KB|MB|GB|TB)", field, re.I)
-            if not match:
-                break
-            values.append(field)
-        if len(values) == 3:
-            matches.append({"status": "listed", "in_top1000": True,
-                            "rank": int(row[0]), "download_display": values[0],
-                            "upload_display": values[1], "total_display": values[2],
-                            "units_verified": False})
-    if len(matches) != 1:
-        return {"status": "not_found_or_unrecognized", "in_top1000": None}
-    return matches[0]
+        try:
+            address = ipaddress.ip_address(row[2])
+        except ValueError:
+            continue
+        if address == target:
+            identity_rows.append(row)
+        if len(row) == 6 and re.fullmatch(r"[1-9][0-9]{0,5}", row[0]) and all(
+                re.fullmatch(r"[0-9]{1,12}(?:\.[0-9]{1,6})? *(?:B|KB|MB|GB|TB)", value, re.I)
+                for value in row[3:]):
+            recognized += 1
+    if len(identity_rows) > 1:
+        return unknown("ambiguous_identity")
+    if not identity_rows:
+        return unknown("not_listed" if recognized else "unrecognized_ranking")
+    row = identity_rows[0]
+    if len(row) != 6 or not re.fullmatch(r"[1-9][0-9]{0,5}", row[0]) or not all(
+            re.fullmatch(r"[0-9]{1,12}(?:\.[0-9]{1,6})? *(?:B|KB|MB|GB|TB)", value, re.I)
+            for value in row[3:]):
+        return unknown("malformed_row")
+    return {"status": "listed", "in_top1000": True,
+            "rank": int(row[0]), "download_display": row[3],
+            "upload_display": row[4], "total_display": row[5],
+            "units_verified": False}
 
 
 def get_top100_data(ip_addr):
     today = get_today_string()
     url = f"https://top100.nchu.edu.tw/nchubody2.php?date={today}"
-    ctx = ssl.create_default_context()
+    def failed(code):
+        return {"in_top1000": None, "status": "unavailable", "error_code": code}
     try:
+        ctx = ssl.create_default_context()
         req = urllib.request.Request(url, headers={"User-Agent": "NCHU-NetGuard/4.0"})
         opener = urllib.request.build_opener(NoRedirect(), urllib.request.HTTPSHandler(context=ctx))
         with opener.open(req, timeout=3) as response:
-            final = urlparse(response.geturl())
-            if final.scheme != "https" or final.hostname != "top100.nchu.edu.tw" or response.status != 200:
-                return {"in_top1000": None, "status": "unavailable"}
+            if response.geturl() != url or response.status != 200:
+                return failed("unexpected_response")
             raw = response.read(2_000_001)
             if len(raw) > 2_000_000:
-                return {"in_top1000": None, "status": "unavailable"}
+                return failed("response_limit")
             try:
                 html = raw.decode("utf-8")
             except UnicodeDecodeError:
-                html = raw.decode("big5", errors="strict")
+                try:
+                    html = raw.decode("big5", errors="strict")
+                except UnicodeDecodeError:
+                    return failed("invalid_encoding")
             result = parse_ranking(html, ip_addr)
             result["requested_date"] = today
             result["retrieved_at"] = datetime.now(timezone.utc).isoformat()
             return result
+    except urllib.error.HTTPError as exc:
+        return failed("rate_limited" if exc.code == 429 else ("redirect_rejected" if 300 <= exc.code < 400 else "http_error"))
+    except urllib.error.URLError as exc:
+        if isinstance(exc.reason, ssl.SSLError):
+            return failed("tls_error")
+        if isinstance(exc.reason, TimeoutError):
+            return failed("timeout")
+        return failed("network_error")
+    except ssl.SSLError:
+        return failed("tls_error")
+    except TimeoutError:
+        return failed("timeout")
+    except OSError:
+        return failed("network_error")
     except Exception:
-        return {"in_top1000": None, "status": "unavailable"}
+        return failed("unexpected_response")
 
 def format_bytes(b):
     if b >= 1024 * 1024 * 1024:
@@ -296,6 +327,17 @@ def query_traffic(scope=None):
     selected = scope or "external"
     prefix = {"dorm": "dorm", "campus_wifi": "wifi", "external": "ext"}.get(selected)
     if prefix is None:
+        return unknown
+    # A present zero counter is not proof of a measured interval. Older state
+    # without an affirmative coverage marker stays unknown, including explicit scope.
+    observed = state.get("observed_scopes")
+    scope_label = {"dorm": "dorm", "campus_wifi": "campusWifi", "external": "external"}[selected]
+    measured = state.get("measured_sample_count")
+    if (state.get("scoped_history_eligible") is not True or
+            type(measured) is not int or not 0 < measured <= 9_007_199_254_740_991 or
+            not isinstance(observed, list) or len(observed) > 3 or
+            any(not isinstance(x, str) or x not in ("dorm", "campusWifi", "external") for x in observed) or
+            len(set(observed)) != len(observed) or scope_label not in observed):
         return unknown
     local_in = state.get(prefix + "_in")
     local_out = state.get(prefix + "_out")
