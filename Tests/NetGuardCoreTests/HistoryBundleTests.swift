@@ -65,4 +65,43 @@ final class HistoryBundleTests: XCTestCase {
             XCTAssertEqual(try Data(contentsOf: source), corrupt)
         }
     }
+
+    func testRecoveryPreservesSourceAndRejectsExistingDestination() throws {
+        try fixture { root, db, process, connections, events in
+            let backup = root.appendingPathComponent("backup")
+            let recovery = root.appendingPathComponent("recovered")
+            let expected = try HistoryBundle.create(database: db, process: process,
+                connections: connections, events: events, destination: backup)
+            let manifest = backup.appendingPathComponent("manifest.json")
+            let original = try Data(contentsOf: manifest)
+            XCTAssertEqual(try HistoryBundle.recoverCopy(from: backup, to: recovery), expected)
+            XCTAssertEqual(try HistoryBundle.inspect(recovery), expected)
+            XCTAssertEqual(try Data(contentsOf: recovery.appendingPathComponent("manifest.json")), original)
+            XCTAssertEqual(try Data(contentsOf: manifest), original)
+            XCTAssertThrowsError(try HistoryBundle.recoverCopy(from: backup, to: recovery))
+            XCTAssertThrowsError(try HistoryBundle.recoverCopy(from: backup, to: backup))
+            XCTAssertEqual(try HistoryBundle.inspect(backup), expected)
+            XCTAssertEqual(try HistoryBundle.inspect(recovery), expected)
+        }
+    }
+
+    func testRecoveryRejectsNestedDestinationAndCorruptBackup() throws {
+        try fixture { root, db, process, connections, events in
+            let backup = root.appendingPathComponent("backup")
+            _ = try HistoryBundle.create(database: db, process: process,
+                connections: connections, events: events, destination: backup)
+            let nested = backup.appendingPathComponent("nested")
+            XCTAssertThrowsError(try HistoryBundle.recoverCopy(from: backup, to: nested))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: nested.path))
+            let corrupt = Data("[]".utf8)
+            let payload = backup.appendingPathComponent("event-history/events.json")
+            try corrupt.write(to: payload)
+            let recovery = root.appendingPathComponent("recovered")
+            XCTAssertThrowsError(try HistoryBundle.recoverCopy(from: backup, to: recovery))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: recovery.path))
+            XCTAssertEqual(try Data(contentsOf: payload), corrupt)
+            XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: root.path).contains { $0.hasPrefix(".netguard-recovery-") })
+        }
+    }
+
 }
