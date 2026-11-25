@@ -4,6 +4,7 @@ import WebKit
 import SwiftUI
 import IOKit
 import SystemConfiguration
+import Network
 
 // MARK: - 歷史紀錄模型與管理器
 struct DayTrafficRecord {
@@ -251,6 +252,11 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var isConnected: Bool = false
     var pingLatencyMs: Double = -1
     var networkQuality = NetworkQualityWindow()
+    var observationSchedule = ObservationSchedule()
+    var pathMonitor: NWPathMonitor?
+    var routeEventToken = UUID()
+    var observedTunnelCandidates: [String] = []
+    var observedInterfaceRates: [String: ObservedInterfaceRate] = [:]
     var throughputWindow = ThroughputWindow()
     var lastPingUptime: TimeInterval?
     var appProbeInFlight = false
@@ -656,16 +662,19 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     @objc func systemWillSleep() {
         guard workflowPowerGuard.systemSleep() else { return }
+        observationSchedule.reset()
+        observedInterfaceRates = [:]
+        observedTunnelCandidates = []
         networkQuality.reset()
         throughputWindow.reset()
         lastPingUptime = nil
         appProbeTimestamp = nil
         topAppConsumers = []
+        sampleGapCount += 1
         savePersistedState()
         scopedAccumulator.reset()
         predictionEngine.reset()
         lastSampleUptime = nil
-        sampleGapCount += 1
         pingLatencyMs = -1
         providerObservation = nil
         providerRequestID = UUID()
@@ -731,6 +740,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         initHardwareCounters()
         
         setupPopoverUI()
+        startPathObservation()
         syncWithTop100Server()
         measurePingLatency()
         inspectTopAppConsumers()
@@ -766,22 +776,6 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             self?.tickRealtime()
         }
         
-        // 僅在面板打開時定期採樣 nettop，避免在背景無謂消耗 CPU 與電量
-        appInspectTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            if self.popover.isShown || self.managementWindowController?.window?.isVisible == true {
-                self.inspectTopAppConsumers()
-            }
-        }
-        
-        // 延遲偵測在面板打開時更新，背景降低頻率至 60 秒
-        pingTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            if self.popover.isShown || self.managementWindowController?.window?.isVisible == true {
-                self.measurePingLatency()
-            }
-        }
-        
         serverSyncTimer = Timer.scheduledTimer(withTimeInterval: 180.0, repeats: true) { [weak self] _ in
             self?.syncWithTop100Server()
         }
@@ -790,12 +784,47 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             self?.checkIpBlocklist()
         }
         
-        // 每 15 秒背景自動檢測雙網卡延遲與速率，當目前網路太慢時自動切換至較快的網路
-        speedGuardTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
-            self?.evaluateDualNetworkSpeedAndSwitch(forceSpeedBurst: false, manualTrigger: false)
+
+    }
+
+    private func startPathObservation() {
+        guard pathMonitor == nil else { return }
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.routeEventToken = UUID()
+                self.observationSchedule.networkChanged()
+                self.isConnected = false
+                self.activeSpeedMeasured = false
+                self.networkQuality.reset()
+                self.throughputWindow.reset()
+                self.lastPingUptime = nil
+                self.pingLatencyMs = -1
+                self.providerObservation = nil
+                self.providerRequestID = UUID()
+                self.providerLastAttempt = nil
+                self.providerRequestInFlight = false
+            }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-            self?.evaluateDualNetworkSpeedAndSwitch(forceSpeedBurst: true, manualTrigger: false)
+        pathMonitor = monitor
+        monitor.start(queue: DispatchQueue(label: "NetGuard.path-observer"))
+    }
+
+    private func scheduleObservations(at uptime: TimeInterval) {
+        let visible = popover?.isShown == true || managementWindowController?.window?.isVisible == true
+        let busy = activeSpeedMeasured && max(currentDownSpeed, currentUpSpeed) >= 128 * 1024
+        if !isDetectingNetwork && observationSchedule.takeRoute(now: uptime, visible: visible) {
+            detectActiveNetwork()
+        }
+        let allowed = workflowPowerGuard.allowsOptionalProbes
+        if !pingInFlight && isConnected &&
+            observationSchedule.takePing(now: uptime, visible: visible, busy: busy, allowed: allowed) {
+            measurePingLatency()
+        }
+        if !appProbeInFlight &&
+            observationSchedule.takeApps(now: uptime, visible: visible, busy: busy, allowed: allowed) {
+            inspectTopAppConsumers()
         }
     }
 
@@ -932,10 +961,13 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             providerFresh: providerObservation?.isFresh(for: getTodayString(), now: Date()) == true && providerObservation?.status == .listed)
         let latency = networkQuality.summary(at: now)
         let latencyStatus = latency.map { String(format: "延遲中位數 %.1f ms · 相鄰探測平均變動 %.1f ms（%d 筆）", $0.medianMilliseconds, $0.meanChangeMilliseconds, $0.sampleCount) } ?? networkQuality.state(at: now).description
+        let rateFresh = lastSampleUptime.map { now >= $0 && now - $0 <= 5 } ?? false
         let snapshot = ManagementSnapshot(scopes: sampledScopes, defaultInterface: activeInterface,
             connectionKnown: connected, latencyStatus: connected ? latencyStatus : "延遲未量測",
             processRows: rows, processAge: appProbeTimestamp.map { now - $0 },
-            focusEnabled: workflowPowerGuard.focusEnabled, diagnosticInput: input, providerStatus: providerStatusText)
+            focusEnabled: workflowPowerGuard.focusEnabled, diagnosticInput: input, providerStatus: providerStatusText,
+            rates: rateFresh && workflowPowerGuard.allowsSampling ? observedInterfaceRates : [:],
+            tunnelCandidates: workflowPowerGuard.allowsSampling && rateFresh ? observedTunnelCandidates : [])
         if managementModel.snapshot != snapshot { managementModel.snapshot = snapshot }
         let ledgerStatus: String
         if alertLedgerBlockedDay == currentDateString {
@@ -1589,7 +1621,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     private func applyDiscoveredNetwork(interface: String, ip: String) {
         if activeInterface != interface || currentIP != ip {
             networkQuality.reset()
-        throughputWindow.reset()
+            throughputWindow.reset()
             lastPingUptime = nil
             pingLatencyMs = -1
             providerObservation = nil
@@ -1611,6 +1643,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     func detectActiveNetwork(completion: (() -> Void)? = nil) {
         guard !isDetectingNetwork, workflowPowerGuard.allowsSampling else { return }
         isDetectingNetwork = true
+        let token = routeEventToken
         let generation = workflowPowerGuard.generation
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let observed = RealtimeTrafficApp.discoverDefaultIPv4()
@@ -1618,7 +1651,11 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.isDetectingNetwork = false
                 guard self.workflowPowerGuard.generation == generation,
-                      self.workflowPowerGuard.allowsSampling else { return }
+                      self.routeEventToken == token,
+                      self.workflowPowerGuard.allowsSampling else {
+                    self.observationSchedule.networkChanged()
+                    return
+                }
                 self.applyDiscoveredNetwork(interface: observed.interface, ip: observed.ip)
                 completion?()
             }
@@ -1644,6 +1681,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     // Read physical Ethernet/Wi-Fi counters only. No VPN/loopback double counting.
     // Interface traffic includes link-local/LAN bytes, not authoritative campus quota.
     func readScopedInterfaces() -> [ScopedInterfaceSample] {
+        observedTunnelCandidates = []
         let devices = SCNetworkInterfaceCopyAll() as NSArray
         var types: [String: String] = [:]
         for item in devices {
@@ -1661,9 +1699,13 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         defer { freeifaddrs(list) }
         var addresses: [String: [String]] = [:]
         var counters: [String: InterfaceCounters] = [:]
+        var tunnels = Set<String>()
         for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
             let item = pointer.pointee
             let name = String(cString: item.ifa_name)
+            if TunnelEvidence.isTunnelCandidate(name) && (item.ifa_flags & UInt32(IFF_UP)) != 0 {
+                tunnels.insert(name)
+            }
             guard types[name] != nil, let address = item.ifa_addr else { continue }
             if address.pointee.sa_family == UInt8(AF_INET) || address.pointee.sa_family == UInt8(AF_INET6) {
                 var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
@@ -1677,6 +1719,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                     received: UInt64(data.ifi_ibytes), sent: UInt64(data.ifi_obytes))
             }
         }
+        observedTunnelCandidates = tunnels.sorted()
         return counters.keys.sorted().compactMap { name in
             guard let counter = counters[name], let kind = types[name] else { return nil }
             let ips = addresses[name, default: []].sorted()
@@ -1708,6 +1751,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         scopedAccumulator.reset()
         throughputWindow.reset()
         activeSpeedMeasured = false
+        observedInterfaceRates = [:]
         let samples = readScopedInterfaces()
         sampledScopes = InterfaceScopeProjection.scopes(samples)
         let uptime = ProcessInfo.processInfo.systemUptime
@@ -1721,6 +1765,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     func measurePingLatency() {
         guard workflowPowerGuard.allowsOptionalProbes, !pingInFlight, isConnected else { return }
         pingInFlight = true
+        let token = routeEventToken
         let generation = workflowPowerGuard.generation
         let expectedIP = currentIP
         let expectedInterface = activeInterface
@@ -1739,6 +1784,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.pingInFlight = false
                 guard self.workflowPowerGuard.generation == generation,
+                      self.routeEventToken == token, self.isConnected,
                       self.currentIP == expectedIP, self.activeInterface == expectedInterface else { return }
                 let uptime = ProcessInfo.processInfo.systemUptime
                 self.pingLatencyMs = measured ?? -1
@@ -1871,10 +1917,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             }
         }
         
-        // 每 10 秒自動非同步重新偵測網路介面（動態感應插拔網線或切換手機熱點/Wi-Fi，零卡頓）
-        if Int(now) % 10 == 0 {
-            detectActiveNetwork()
-        }
+        // Path events and periodic fallback are handled by ObservationSchedule.
         
         // 每 5 秒自動掃描 P2P 違規風險（宿網防鎖孔）
         if Int(now) % 5 == 0 {
@@ -1910,6 +1953,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         currentDownSpeed = 0
         currentUpSpeed = 0
         activeSpeedMeasured = false
+        observedInterfaceRates = [:]
         if samples.isEmpty || deltas.values.contains(where: { $0.delta.quality != .measured }) {
             sampleGapCount += 1
         }
@@ -1919,6 +1963,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         for (name, value) in deltas where value.delta.quality == .measured {
             let rx = Double(value.delta.received)
             let tx = Double(value.delta.sent)
+            if value.scope == sampledScopes[name], let rate = ObservedInterfaceRate(download: rx / elapsed, upload: tx / elapsed) {
+                observedInterfaceRates[name] = rate
+            }
             if name == activeInterface && value.scope == sampledScopes[name] {
                 activeSpeedMeasured = true
                 currentDownSpeed = rx / elapsed
@@ -1939,6 +1986,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         } else {
             throughputWindow.reset()
         }
+        scheduleObservations(at: uptime)
         updateForecast(samples: samples, deltas: deltas, elapsed: elapsed)
 
         if Int(now) % 10 == 0 {
@@ -2525,6 +2573,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     @objc func quitApp() {
+        pathMonitor?.cancel()
         savePersistedState()
         NSApplication.shared.terminate(nil)
     }
