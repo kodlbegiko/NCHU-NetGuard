@@ -98,6 +98,7 @@ struct ManagementView: View {
                                 Text("目前快照").tag(0)
                                 Text("本次觀測用量").tag(1)
                                 Text("本機歷史").tag(2)
+                                Text("AI 工具").tag(3)
                             }.pickerStyle(.segmented)
                             if processMode == 0 {
                                 Text(snapshot.processStatus).font(.caption).foregroundStyle(.secondary)
@@ -125,6 +126,8 @@ struct ManagementView: View {
                                     }
                                     Divider()
                                 }
+                            } else if processMode == 3 {
+                                agentUsagePanel(snapshot)
                             } else if processMode == 2 {
                                 processHistoryPanel
                             } else if let report = snapshot.sessionUsage {
@@ -253,6 +256,46 @@ struct ManagementView: View {
             } else {
                 Text("尚未讀取歷史").foregroundStyle(.secondary)
             }
+        }
+    }
+
+
+    private func agentUsagePanel(_ snapshot: ManagementSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("AI 工具與子程序").font(.headline)
+            Text("依前後一致的程序階層及執行檔名稱辨識可能的 AI 工作負載；不是經簽章驗證的應用程式身分。只統計本次可觀測增量，與程序總量重疊，不應相加。")
+                .font(.caption).foregroundStyle(.secondary)
+            if snapshot.focusEnabled {
+                Text("重要工作模式：暫停額外觀測").font(.caption)
+            }
+            if let report = snapshot.agentUsage {
+                Text("有效配對區間：\(report.measuredIntervals)").font(.caption)
+                if report.capacityReached { Text("部分增量未計入").font(.caption) }
+                let rows = visibleProcesses(report.rows.map { ProcessSampleRow(name: $0.name, bytes: $0.total) })
+                let indexed = Dictionary(uniqueKeysWithValues: report.rows.map { ($0.name, $0) })
+                if rows.isEmpty {
+                    Text("沒有符合條件的已觀測增量；不代表 AI 工具未使用網路。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                ForEach(rows) { item in
+                    if let row = indexed[item.name] {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(row.name)
+                                Spacer()
+                                Text(String(format: "%.2f MiB", Double(row.total) / 1_048_576)).monospacedDigit()
+                            }
+                            Text(String(format: "下載 %.2f · 上傳 %.2f MiB", Double(row.received) / 1_048_576, Double(row.sent) / 1_048_576))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Divider()
+                    }
+                }
+            } else {
+                Text("尚無觀測資料").foregroundStyle(.secondary)
+            }
+            Text("不儲存 AI 歸屬、程序階層或執行檔路徑；不含脫離程序階層的服務、遠端工作或未觀測流量。")
+                .font(.caption2).foregroundStyle(.secondary)
         }
     }
 
