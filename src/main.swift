@@ -88,6 +88,8 @@ class ScriptHandler: NSObject, WKScriptMessageHandler {
               let action = message.body as? String else { return }
         DispatchQueue.main.async { [weak self] in
             switch action {
+            case "toggleFocusMode":
+                self?.app?.toggleFocusMode()
             case "refresh":
                 self?.app?.manualRefresh()
             case "openTop100":
@@ -241,6 +243,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var unattributedInBytes: Double = 0
     var unattributedOutBytes: Double = 0
     var sampleGapCount: Int = 0
+    var workflowPowerGuard = WorkflowPowerGuard()
     var predictionEngine = PredictionEngine()
     var predictionScope: NetworkScope = .unknown
     var predictionIdentity = Set<String>()
@@ -409,9 +412,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     func activateIdleGuard(reason: String) {
-        guard isIdleGuardEnabled && !isLidCurrentlyClosed else { return }
-        // 若 Codex (SkyComputerUseService / cua_node) 正在自動化操控電腦，完全豁免離座閒置防護！
-        if isCodexEcosystemActive() { return }
+        guard isIdleGuardEnabled && !isLidCurrentlyClosed && !workflowPowerGuard.focusEnabled else { return }
         activateLidGuard(reason: reason, freezeRenderers: false)
     }
 
@@ -583,7 +584,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     // 雙網卡即時競速與慢速自動切換引擎
     func evaluateDualNetworkSpeedAndSwitch(forceSpeedBurst: Bool = false, manualTrigger: Bool = false) {
-        guard manualTrigger, !isRunningSpeedRace && !isSwitchingNetwork else { return }
+        guard workflowPowerGuard.allowsOptionalProbes, manualTrigger, !isRunningSpeedRace && !isSwitchingNetwork else { return }
         isRunningSpeedRace = true
         if manualTrigger {
             pushDataToWebUI()
@@ -757,24 +758,31 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     @objc func systemWillSleep() {
-        if isLidGuardEnabled && !isLidCurrentlyClosed {
-            isLidCurrentlyClosed = true
-            activateLidGuard(reason: "系統休眠", freezeRenderers: true)
-        }
+        guard workflowPowerGuard.systemSleep() else { return }
+        savePersistedState()
+        scopedAccumulator.reset()
+        predictionEngine.reset()
+        lastSampleUptime = nil
+        sampleGapCount += 1
+        pingLatencyMs = -1
+        providerObservation = nil
+        providerRequestID = UUID()
+        providerRequestInFlight = false
     }
 
     @objc func screensDidSleep() {
-        if isLidGuardEnabled && !isLidCurrentlyClosed {
-            isLidCurrentlyClosed = true
-            activateLidGuard(reason: "螢幕關閉", freezeRenderers: true)
-        }
+        workflowPowerGuard.setDisplaySleeping(true)
     }
 
     @objc func screensDidWake() {
-        if isLidGuardEnabled && isLidCurrentlyClosed && !isLidClosed() {
-            isLidCurrentlyClosed = false
-            deactivateLidGuard(reason: "螢幕喚醒")
-        }
+        workflowPowerGuard.setDisplaySleeping(false)
+    }
+
+    @objc func toggleFocusMode() {
+        workflowPowerGuard.setFocus(!workflowPowerGuard.focusEnabled)
+        providerRequestID = UUID()
+        providerRequestInFlight = false
+        if popover != nil && popover.isShown { pushDataToWebUI() }
     }
 
     func getTodayString() -> String {
@@ -1155,6 +1163,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             "isQuotaRestricted": isQuotaRestricted,
             "networkTypeName": networkTypeName,
             "providerStatus": providerStatusText,
+            "focusEnabled": workflowPowerGuard.focusEnabled,
+            "workflowStatus": workflowPowerGuard.statusText,
             "observationStatus": !isConnected ? "網路未確認，請檢查連線" : (isQuotaRestricted ? "監控中 · 配額為本機估計" : "監控中 · 網路配額未確認"),
             "currentIP": currentIP,
             "activeInterface": activeInterface,
@@ -1230,17 +1240,22 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     @objc func systemDidWake() {
-        if isLidGuardEnabled {
-            isLidCurrentlyClosed = false
-            deactivateLidGuard(reason: "系統喚醒")
-        }
+        guard workflowPowerGuard.systemWake() else { return }
+        isLidCurrentlyClosed = false
+        isUserCurrentlyIdle = false
+        isConnected = false
+        currentIP = ""
+        pingLatencyMs = -1
+        initHardwareCounters()
+        let generation = workflowPowerGuard.generation
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-            self?.detectActiveNetwork()
-            self?.initHardwareCounters()
-            self?.syncWithTop100Server()
-            self?.measurePingLatency()
-            self?.inspectTopAppConsumers()
-            self?.evaluateDualNetworkSpeedAndSwitch(forceSpeedBurst: true, manualTrigger: false)
+            guard let self, self.workflowPowerGuard.generation == generation,
+                  self.workflowPowerGuard.allowsSampling else { return }
+            self.detectActiveNetwork {
+                self.syncWithTop100Server()
+                self.measurePingLatency()
+                self.inspectTopAppConsumers()
+            }
         }
     }
 
@@ -1539,43 +1554,47 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         currentUpSpeed = 0
     }
 
+    var pingInFlight = false
     func measurePingLatency() {
+        guard workflowPowerGuard.allowsOptionalProbes, !pingInFlight, isConnected else { return }
+        pingInFlight = true
+        let generation = workflowPowerGuard.generation
+        let expectedIP = currentIP
+        let expectedInterface = activeInterface
+        let target = isQuotaRestricted ? "140.120.1.2" : "1.1.1.1"
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            guard let self = self else { return }
-            let pingTarget = self.isQuotaRestricted ? "140.120.1.2" : "1.1.1.1"
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/sbin/ping")
-            process.arguments = ["-c", "2", "-t", "2", pingTarget]
+            process.arguments = ["-c", "2", "-t", "2", target]
             let pipe = Pipe()
             process.standardOutput = pipe
-            try? process.run()
-            process.waitUntilExit()
-            
-            let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            if let range = out.range(of: "time=") {
-                let sub = out[range.upperBound...]
-                let parts = sub.components(separatedBy: " ")
-                if let msStr = parts.first, let ms = Double(msStr) {
-                    DispatchQueue.main.async {
-                        self.pingLatencyMs = ms
-                        self.consecutivePingFailures = 0
-                        self.isConnected = true
-                    }
-                    return
+            var latency: Double?
+            do {
+                try process.run()
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                if process.terminationStatus == 0, let out = String(data: data, encoding: .utf8),
+                   let range = out.range(of: "time="),
+                   let first = out[range.upperBound...].split(separator: " ").first,
+                   let value = Double(first), value.isFinite, value >= 0 {
+                    latency = value
                 }
-            }
-            
+            } catch {}
+            let measured = latency
             DispatchQueue.main.async {
-                self.consecutivePingFailures += 1
-                if self.consecutivePingFailures >= 3 {
-                    self.isConnected = false
-                    self.currentIP = ""
-                }
+                guard let self else { return }
+                self.pingInFlight = false
+                guard self.workflowPowerGuard.generation == generation,
+                      self.currentIP == expectedIP, self.activeInterface == expectedInterface else { return }
+                // ICMP failure is not proof of loss of network connectivity.
+                self.pingLatencyMs = measured ?? -1
             }
         }
     }
 
     func inspectTopAppConsumers() {
+        guard workflowPowerGuard.allowsOptionalProbes else { return }
+        let generation = workflowPowerGuard.generation
         DispatchQueue.global(qos: .background).async { [weak self] in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/nettop")
@@ -1612,15 +1631,17 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             
             let sorted = appMap.sorted { $0.value > $1.value }.map { (name: $0.key, bytes: $0.value) }
             DispatchQueue.main.async {
-                self?.topAppConsumers = sorted
-                if self?.popover.isShown == true {
-                    self?.pushDataToWebUI()
+                guard let self, self.workflowPowerGuard.generation == generation else { return }
+                self.topAppConsumers = sorted
+                if self.popover.isShown {
+                    self.pushDataToWebUI()
                 }
             }
         }
     }
 
     func tickRealtime() {
+        guard workflowPowerGuard.allowsSampling else { return }
         let todayStr = getTodayString()
         if todayStr != currentDateString {
             if !currentDateString.isEmpty {
@@ -1685,7 +1706,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         if isIdleGuardEnabled && !isLidCurrentlyClosed {
             let idleSecs = getSystemIdleSeconds()
             if idleSecs >= 600.0 && !isUserCurrentlyIdle { // 閒置超過 10 分鐘
-                if isAudioPlaying() || currentDownSpeed > 150 * 1024 {
+                if !workflowPowerGuard.focusEnabled && currentDownSpeed > 150 * 1024 {
                     isUserCurrentlyIdle = true
                     activateIdleGuard(reason: String(format: "已離座閒置 %.0f 分鐘", idleSecs / 60))
                 }
@@ -1972,6 +1993,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     func syncWithTop100Server() {
+        guard workflowPowerGuard.allowsOptionalProbes else { return }
         guard isDormNetwork, isConnected, !currentIP.isEmpty else {
             providerObservation = nil
             providerRequestID = UUID()
