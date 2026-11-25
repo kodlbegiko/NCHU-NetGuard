@@ -31,11 +31,15 @@ public struct RecoveryJournalEntry: Codable, Equatable, Sendable {
     public let plan: RecoveryPlan
     public var phase: RecoveryPhase
     public var applied: OwnedNetworkConfiguration?
+    /// Optional additive v1 field. Old rolledBack entries without this
+    /// evidence remain readable but cannot prove a current rollback.
+    public var restored: OwnedNetworkConfiguration?
     public init(plan: RecoveryPlan) {
         self.schemaVersion = 1
         self.plan = plan
         self.phase = .prepared
         self.applied = nil
+        self.restored = nil
     }
 }
 
@@ -159,6 +163,7 @@ public struct RecoveryTransaction: Sendable {
         case .verifyingRestore:
             guard let restored, observed == restored else { return terminal(.safeMode) }
             entry.phase = .rolledBack
+            entry.restored = restored
             journal = entry
             step = .recordingRestore
             return .persist(entry)
@@ -187,8 +192,7 @@ public struct RecoveryTransaction: Sendable {
         case .committed:
             return terminal(observed == entry.applied ? .committed : .safeMode)
         case .rolledBack:
-            guard let applied = entry.applied, observed.revision > applied.revision,
-                  observed.settings == entry.plan.expected.settings else { return terminal(.safeMode) }
+            guard let restored = entry.restored, observed == restored else { return terminal(.safeMode) }
             return terminal(.rolledBack)
         case .safeMode:
             return terminal(.safeMode)

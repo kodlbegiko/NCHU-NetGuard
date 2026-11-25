@@ -45,6 +45,7 @@ final class RecoveryTransactionTests: XCTestCase {
         XCTAssertEqual(tx.mutationResult(restored), .verify(restored))
         guard case .persist(let entry) = tx.verified(restored) else { return XCTFail() }
         XCTAssertEqual(entry.phase, .rolledBack)
+        XCTAssertEqual(entry.restored, restored)
         XCTAssertEqual(tx.persisted(success: true), .finish(.rolledBack))
     }
     func testUnknownMutationAndExternalConflictStop() {
@@ -85,6 +86,20 @@ final class RecoveryTransactionTests: XCTestCase {
         entry.applied = new
         var tx = RecoveryTransaction()
         XCTAssertEqual(tx.recover(entry, observed: restored), .finish(.safeMode))
+    }
+    func testRolledBackRecoveryRequiresExactRestoredRevision() throws {
+        var entry = RecoveryJournalEntry(plan: plan())
+        entry.phase = .rolledBack
+        entry.applied = new
+        try entry.validate() // legacy evidence remains readable
+        var legacy = RecoveryTransaction()
+        XCTAssertEqual(legacy.recover(entry, observed: restored), .finish(.safeMode))
+        entry.restored = restored
+        try entry.validate()
+        var exact = RecoveryTransaction()
+        XCTAssertEqual(exact.recover(entry, observed: restored), .finish(.rolledBack))
+        var external = RecoveryTransaction()
+        XCTAssertEqual(external.recover(entry, observed: .init(revision: 4, settings: restored.settings)), .finish(.safeMode))
     }
     func testCommitJournalFailureRollsBack() {
         var tx = RecoveryTransaction()

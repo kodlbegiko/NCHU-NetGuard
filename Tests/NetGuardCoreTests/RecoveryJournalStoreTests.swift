@@ -104,6 +104,23 @@ final class RecoveryJournalStoreTests: XCTestCase {
             XCTAssertEqual(try store.load(), first)
         }
     }
+    func testNewRolledBackJournalRequiresVerifiedRestoration() throws {
+        try withStore { store in
+            var entry = RecoveryJournalEntry(plan: plan())
+            try store.save(entry)
+            entry.phase = .applied
+            entry.applied = .init(revision: 2, settings: entry.plan.desired)
+            try store.save(entry)
+            entry.phase = .rolledBack
+            XCTAssertThrowsError(try store.save(entry))
+            XCTAssertEqual(try store.load()?.phase, .applied)
+            entry.restored = .init(revision: 3, settings: entry.plan.expected.settings)
+            try store.save(entry)
+            XCTAssertEqual(try store.load(), entry)
+            entry.restored = .init(revision: 4, settings: entry.plan.expected.settings)
+            XCTAssertThrowsError(try store.save(entry))
+        }
+    }
     func testInvalidPhaseRejected() throws {
         try withStore { store in
             var entry = RecoveryJournalEntry(plan: plan())

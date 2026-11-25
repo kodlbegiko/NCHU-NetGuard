@@ -87,3 +87,6 @@ Next: review exact branch CI, audit all trust boundaries, verify recovery journa
 
 ## Full roadmap integration increment 1
 - Provider request scheduling uses a monotonic single-flight gate, bounded exponential backoff and invalidation without releasing the active slot; runtime integration prevents route churn from resetting the request rate limit. Strict ranking validation shared by diagnostics and display. New deterministic tests; exact integration CI required. Provider billing timestamp/unit and physical reconciliation remain open.
+
+## Full roadmap integration increment 2
+- Persist exact verified restored configuration in recovery journal and require equality at crash recovery. Older rolledBack records remain readable, but fail closed without restoration evidence. New rollback writes require the evidence, and subsequent revision changes cannot masquerade as the original rollback. Regression coverage and additive journal ADR included; exact candidate CI pending. Real adapter remains disabled.

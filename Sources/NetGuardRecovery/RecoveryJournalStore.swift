@@ -26,6 +26,11 @@ public extension RecoveryJournalEntry {
             guard applied.revision > plan.expected.revision,
                   applied.settings == plan.desired else { throw JournalValidationError.invalidPhase }
         }
+        if let restored {
+            guard phase == .rolledBack, let applied,
+                  restored.revision > applied.revision,
+                  restored.settings == plan.expected.settings else { throw JournalValidationError.invalidPhase }
+        }
         switch phase {
         case .prepared:
             guard applied == nil else { throw JournalValidationError.invalidPhase }
@@ -101,6 +106,11 @@ public struct RecoveryJournalStore: Sendable {
 
     public func save(_ entry: RecoveryJournalEntry) throws {
         try entry.validate()
+        // Legacy journals without the additive restoration evidence remain
+        // readable. New rolledBack records must prove the exact observation.
+        guard entry.phase != .rolledBack || entry.restored != nil else {
+            throw JournalValidationError.invalidPhase
+        }
         try withLock { parent, name in
             if let existing = try readLocked(parent: parent, name: name) {
                 guard existing.plan == entry.plan else { throw JournalValidationError.conflict }
