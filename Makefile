@@ -1,4 +1,4 @@
-.PHONY: all build install test smoke clean
+.PHONY: all build install test smoke host-check clean
 APP := build/NCHUTraffic.app
 INSTALL_DIR ?= $(HOME)/Applications
 
@@ -6,7 +6,7 @@ all: build
 
 build:
 	mkdir -p "$(APP)/Contents/MacOS" "$(APP)/Contents/Resources"
-	swiftc -O src/main.swift src/QuickPanel.swift src/HistoryAnalyticsView.swift src/SettingsView.swift src/ManagementView.swift src/AutomationView.swift src/SmokeTest.swift Sources/NetGuardCore/*.swift Sources/NetGuardObservation/*.swift Sources/NetGuardWorkflow/*.swift Sources/NetGuardRecovery/*.swift Sources/NetGuardProvider/*.swift Sources/NetGuardTraffic/*.swift Sources/NetGuardData/*.swift -lsqlite3 -o "$(APP)/Contents/MacOS/NCHUTraffic"
+	swiftc -O src/main.swift src/QuickPanel.swift src/HistoryAnalyticsView.swift src/SettingsView.swift src/ManagementView.swift src/AutomationView.swift src/SmokeTest.swift src/HostProbeCheck.swift Sources/NetGuardCore/*.swift Sources/NetGuardObservation/*.swift Sources/NetGuardWorkflow/*.swift Sources/NetGuardRecovery/*.swift Sources/NetGuardProvider/*.swift Sources/NetGuardTraffic/*.swift Sources/NetGuardData/*.swift -lsqlite3 -o "$(APP)/Contents/MacOS/NCHUTraffic"
 	cp src/Info.plist "$(APP)/Contents/"
 	cp src/Resources/popover.html scripts/traffic_monitor.py "$(APP)/Contents/Resources/"
 
@@ -19,6 +19,9 @@ test:
 
 smoke: build
 	python3 scripts/smoke_test.py --app "$(APP)"
+
+host-check: build
+	"$(APP)/Contents/MacOS/NCHUTraffic" --netguard-host-check
 
 clean:
 	rm -rf build
