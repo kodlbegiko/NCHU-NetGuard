@@ -1,12 +1,11 @@
 # Execution checkpoint
 
-- Authoritative cumulative branch: fix/r4-closure-integration; draft PR #3.
-- Code HEAD before this documentation checkpoint: 11c6d741b4eead9aade0e1e996afb8f46d521840.
-- Last fully passing exact code SHA: 517fb31ffcd58ef8482af8f4d483bf96c2a40cad.
-- CI: https://github.com/kodlbegiko/NCHU-NetGuard/actions/runs/45724245114 (success). 222 Swift + 35 Python tests, zero failures. Legacy and SwiftPM app builds and four-view fixture smoke passed; TCP compatibility evidence OK, host parser and UDP inconclusive (non-gating, not device acceptance).
-- New route candidates fee2ee0a, lossless rule editing e330e3a, coverage instrumentation 11c6d74 are NOT included in that successful CI. Verify the new HEAD separately.
-- Prior failed CI 45723912849: SQLite NOFOLLOW normal symlinked system parent incompatibility and missing unknown provider label. Fixed in 517fb31; tests retained and rerun.
-- Existing partial implementation evidence and unmet acceptance are listed in MASTER-ENGINEERING-TRACKER.md. No work package is declared Done or formally unlocked.
-- User Mac working tree not inspected; Linux connector execution cannot provide real macOS hardware, official provider accounting, authorized device rollback, or 168-hour soak evidence.
-- Continue exact HEAD CI, route candidate compatibility, coverage gaps, real-device harness, secure process identity, actual contract consumers, safe scoped provider reconciliation, unified data/restore, remaining policy/UI and R6 development. Unimplemented tasks are not externally blocked.
-- Main unchanged; no merge, release, deployment, paid service, real network mutation, or privileged extension activation.
+- Authoritative integration branch: fix/r4-closure-integration; draft PR #3.
+- Last fully passing exact SHA: 99743682f823357aa11b0729e05405b4335830b5; CI 45724841285 (224 Swift, 36 Python; zero failures; both app builds/smoke pass; TCP OK, UDP/host inconclusive).
+- Coverage: 3755/3909 = 96.06% on 38/39 sources; alias-only file omitted; new strict declaration-only exclusion pending exact CI.
+- Parallel head c716d5988e5de5ca0d58ec717942ffc15a1a8669 introduced measured-zero SQLite v3 history and guarded legacy login-item changes. Candidate 3fe2c00b436e5f58138e7f51fb731df502548b4d preserved at fix/r4-closure-preserved-3fe2c00. Both histories retained in combined integration. Selected existing guarded login configuration rather than introducing duplicate ServiceManagement registration behavior.
+- Combined code includes probe allowlist, offline same-boundary traffic evaluator, UI label fixes and coverage classifier. This combined tree requires its own CI; earlier CI is not proof.
+- No real host settings, process termination, privileged extension, paid deployment or main merge. No formal unlock or release acceptance.
+- Remaining work is in master tracker. User Mac and actual network/provider data unavailable; still-open software tasks are not relabeled blocked.
+
+- Additional concurrent authoritative commit bac3c5bc846344575e8d3ef1c49b48940754cf66 retained: legacy history validation and ambiguous file-identity rejection. Reconciled candidate includes both parent histories and requires exact CI.
