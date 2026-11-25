@@ -696,6 +696,7 @@
   </style>
 </head>
 <body>
+  <div style="padding:8px;font-size:11px;border:1px solid #888;border-radius:6px;margin-bottom:8px;">R4.0 安全模式：流量為本機估計；自動切換、分流與進程控制暫停，校方狀態需另行確認。</div>
   <!-- Header -->
   <div class="header">
     <div style="display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1;">
@@ -720,11 +721,11 @@
       <div style="display: flex; align-items: center; gap: 7px; min-width: 0;">
         <span style="font-size: 15px; flex-shrink: 0;">🚨</span>
         <div style="min-width: 0;">
-          <div style="font-size: 11px; font-weight: 700; color: #f87171; white-space: nowrap;">宿網 P2P 違規高危警告！</div>
-          <div style="font-size: 9.5px; color: var(--text-sub); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="p2p-alert-text">偵測到 P2P 運行中，計中鎖孔風險極高！</div>
+          <div style="font-size: 11px; font-weight: 700; color: #f87171; white-space: nowrap;">可能的 P2P 使用風險</div>
+          <div style="font-size: 9.5px; color: var(--text-sub); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="p2p-alert-text">偵測到可能具 P2P 功能的程式，請自行確認。</div>
         </div>
       </div>
-      <button class="btn btn-panic" style="padding: 3px 8px; font-size: 9.5px; white-space: nowrap; flex-shrink: 0;" onclick="callNative('killP2PApp')">🛑 強制終止</button>
+      <button class="btn btn-panic" style="padding: 3px 8px; font-size: 9.5px; white-space: nowrap; flex-shrink: 0;" onclick="callNative('killP2PApp')">查看提醒</button>
     </div>
   </div>
 
@@ -866,7 +867,7 @@
           <div class="icon-bubble" style="font-size: 12px; width: 23px; height: 23px; min-width: 23px;">🛡️</div>
           <div style="min-width: 0;">
             <div style="font-size: 10.5px; font-weight: 700; color: var(--text-main); white-space: nowrap;">盒蓋休眠守護</div>
-            <div style="font-size: 8px; color: var(--text-muted); margin-top: 1px; white-space: nowrap;" id="lid-guard-desc">盒蓋凍結背景</div>
+            <div style="font-size: 8px; color: var(--text-muted); margin-top: 1px; white-space: nowrap;" id="lid-guard-desc">闔蓋流量提醒</div>
           </div>
         </div>
         <div class="switch-control on" id="lid-switch-control" style="transform: scale(0.8); transform-origin: right center;">
@@ -882,7 +883,7 @@
           <div class="icon-bubble" style="font-size: 12px; width: 23px; height: 23px; min-width: 23px;">🚶</div>
           <div style="min-width: 0;">
             <div style="font-size: 10.5px; font-weight: 700; color: var(--text-main); white-space: nowrap;">離座閒置守護</div>
-            <div style="font-size: 8px; color: var(--text-muted); margin-top: 1px; white-space: nowrap;" id="idle-guard-desc">10分無操作急停</div>
+            <div style="font-size: 8px; color: var(--text-muted); margin-top: 1px; white-space: nowrap;" id="idle-guard-desc">閒置流量提醒</div>
           </div>
         </div>
         <div class="switch-control on" id="idle-switch-control" style="transform: scale(0.8); transform-origin: right center;">
@@ -898,7 +899,7 @@
           <div class="icon-bubble" style="font-size: 12px; width: 23px; height: 23px; min-width: 23px;">🛑</div>
           <div style="min-width: 0;">
             <div style="font-size: 10.5px; font-weight: 700; color: var(--text-main); white-space: nowrap;">P2P 違規攔截盾</div>
-            <div style="font-size: 8px; color: var(--text-muted); margin-top: 1px; white-space: nowrap;" id="p2p-shield-desc">宿網自動攔截</div>
+            <div style="font-size: 8px; color: var(--text-muted); margin-top: 1px; white-space: nowrap;" id="p2p-shield-desc">僅偵測提醒</div>
           </div>
         </div>
         <div class="switch-control on" id="p2p-switch-control" style="transform: scale(0.8); transform-origin: right center;">
@@ -970,9 +971,9 @@
         <div style="min-width: 0;">
           <div style="display: flex; align-items: center; gap: 5px;">
             <span style="font-size: 11px; font-weight: 700; color: var(--text-main);">計中黑名單診斷</span>
-            <span id="blacklist-badge" style="font-size: 8.5px; padding: 1px 5px; border-radius: 4px; background: var(--capsule-safe-badge-bg); color: var(--capsule-safe-badge-text); font-weight: 700;">🟢 正常安全</span>
+            <span id="blacklist-badge" style="font-size: 8.5px; padding: 1px 5px; border-radius: 4px; background: var(--capsule-safe-badge-bg); color: var(--capsule-safe-badge-text); font-weight: 700;">狀態未知</span>
           </div>
-          <div style="font-size: 8.5px; color: var(--text-muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="blacklist-status-desc">IP 未遭鎖定 • ipblock.nchu.edu.tw</div>
+          <div style="font-size: 8.5px; color: var(--text-muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="blacklist-status-desc">請至計中確認 • ipblock.nchu.edu.tw</div>
         </div>
       </div>
       <div style="display: flex; gap: 3px; flex-shrink: 0;">
@@ -1037,8 +1038,8 @@
   <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--card-border);">
     <div style="display: flex; gap: 4px; align-items: center;">
       <button class="btn" onclick="callNative('refresh')">🔄 校準</button>
-      <button class="btn btn-panic" id="panic-btn" onclick="callNative('panicFreeze')">⚡ 省流</button>
-      <button class="btn" id="wifi-toggle-btn" onclick="callNative('switchToWifi')">🔀 換Wi-Fi</button>
+      <button class="btn btn-panic" id="panic-btn" onclick="callNative('panicFreeze')">流量提醒</button>
+      <button class="btn" id="wifi-toggle-btn" onclick="callNative('switchToWifi')">網路設定（暫停）</button>
       <button class="btn" onclick="callNative('openTop100')">🌐 查詢</button>
     </div>
     <div>
@@ -1195,7 +1196,7 @@
           panicBtn.innerText = '▶️ 恢復';
           panicBtn.classList.add('active');
         } else {
-          panicBtn.innerText = '⚡ 省流';
+          panicBtn.innerText = '流量提醒';
           panicBtn.classList.remove('active');
         }
       }
@@ -1215,7 +1216,7 @@
             wifiToggleBtn.innerText = '🔌 換回有線';
             wifiToggleBtn.onclick = function() { callNative('restoreWired'); };
           } else {
-            wifiToggleBtn.innerText = '🔀 換Wi-Fi';
+            wifiToggleBtn.innerText = '網路設定（暫停）';
             wifiToggleBtn.onclick = function() { callNative('switchToWifi'); };
           }
         }
@@ -1227,7 +1228,7 @@
         if (switchCtrl) {
           if (data.isLidGuardEnabled) {
             switchCtrl.classList.add('on');
-            if (lidDesc) lidDesc.innerText = '盒蓋凍結背景';
+            if (lidDesc) lidDesc.innerText = '闔蓋流量提醒';
           } else {
             switchCtrl.classList.remove('on');
             if (lidDesc) lidDesc.innerText = '已關閉';
@@ -1241,7 +1242,7 @@
         if (idleCtrl) {
           if (data.isIdleGuardEnabled) {
             idleCtrl.classList.add('on');
-            if (idleDesc) idleDesc.innerText = data.isUserCurrentlyIdle ? '離座守護中 🌙' : '10分無操作急停';
+            if (idleDesc) idleDesc.innerText = data.isUserCurrentlyIdle ? '離座守護中 🌙' : '閒置流量提醒';
           } else {
             idleCtrl.classList.remove('on');
             if (idleDesc) idleDesc.innerText = '已關閉';
@@ -1255,7 +1256,7 @@
       if (p2pBanner) {
         if (data.isP2PDetected) {
           p2pBanner.style.display = 'block';
-          if (p2pAlertText) p2pAlertText.innerText = '偵測到 ' + (data.p2pAppName || 'P2P 軟體') + ' 正在運行！宿網嚴禁 P2P 下載！';
+          if (p2pAlertText) p2pAlertText.innerText = '偵測到 ' + (data.p2pAppName || 'P2P 軟體') + ' 正在運行；程式名稱不代表違規。';
         } else {
           p2pBanner.style.display = 'none';
         }
@@ -1268,7 +1269,7 @@
         if (p2pCtrl) {
           if (data.isP2PShieldAutoKillEnabled) {
             p2pCtrl.classList.add('on');
-            if (p2pDesc) p2pDesc.innerText = data.isP2PDetected ? '⚠️ 偵測到違規' : '宿網自動攔截';
+            if (p2pDesc) p2pDesc.innerText = data.isP2PDetected ? '可能風險' : '僅偵測提醒';
           } else {
             p2pCtrl.classList.remove('on');
             if (p2pDesc) p2pDesc.innerText = '僅警告不攔截';
@@ -1359,10 +1360,10 @@
           blBadge.style.color = 'var(--capsule-danger-badge-text)';
           if (blDesc) blDesc.innerText = '原因: ' + (data.blacklistReason || '違規封鎖') + ' (' + (data.lastBlacklistCheckTime || '') + ')';
         } else {
-          blBadge.innerText = '🟢 正常安全';
+          blBadge.innerText = '狀態未知';
           blBadge.style.background = 'var(--capsule-safe-badge-bg)';
           blBadge.style.color = 'var(--capsule-safe-badge-text)';
-          if (blDesc) blDesc.innerText = 'IP 未遭鎖定 • ' + (data.lastBlacklistCheckTime ? data.lastBlacklistCheckTime : 'ipblock.nchu.edu.tw');
+          if (blDesc) blDesc.innerText = '請至計中確認 • ' + (data.lastBlacklistCheckTime ? data.lastBlacklistCheckTime : 'ipblock.nchu.edu.tw');
         }
       }
 
@@ -1372,8 +1373,8 @@
         var riskBadge = document.getElementById('risk-badge');
         if (runoutEl && capsule && riskBadge) {
           capsule.className = 'runout-capsule danger';
-          riskBadge.innerText = '🚨 急停';
-          runoutEl.innerText = '已達 90% 下載上限！已急停背景影音與同步';
+          riskBadge.innerText = '高用量';
+          runoutEl.innerText = '已達 90% 下載上限！請檢查背景傳輸';
         }
       }
 
