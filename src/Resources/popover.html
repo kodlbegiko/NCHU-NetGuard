@@ -718,6 +718,7 @@
     </div>
   </div>
 
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;"><span id="workflow-status" style="font-size:11px;color:var(--text-sub);">一般監控模式</span><button id="focus-mode-button" class="btn" aria-pressed="false" onclick="callNative('toggleFocusMode')">重要工作模式</button></div>
   <div id="overview-state" role="status" style="font-size:12px;margin:0 0 10px;color:var(--text-sub);">正在辨識網路，尚無可靠資料。</div>
   <!-- High-Priority P2P Hazard Alert Banner -->
   <div id="p2p-alert-banner" style="display: none; margin-bottom: 8px; padding: 7px 11px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 10px; animation: pulseGlow 2s infinite;">
@@ -1095,6 +1096,10 @@
       if (!data) return;
       document.getElementById('overview-state').textContent = data.diagnosticSummary || data.observationStatus || '網路狀態未知';
       document.getElementById('provider-status').textContent = data.providerStatus || '校方資料未知';
+      const focusButton = document.getElementById('focus-mode-button');
+      focusButton.textContent = data.focusEnabled ? '結束重要工作模式' : '重要工作模式';
+      focusButton.setAttribute('aria-pressed', data.focusEnabled ? 'true' : 'false');
+      document.getElementById('workflow-status').textContent = data.workflowStatus || '監控狀態未知';
 
       var isQuotaRestricted = (data.isQuotaRestricted === true || data.isDorm === true || data.isCampusWifi === true);
       if (isQuotaRestricted) {
