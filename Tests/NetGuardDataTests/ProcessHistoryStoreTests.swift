@@ -42,6 +42,10 @@ final class ProcessHistoryStoreTests: XCTestCase {
         XCTAssertFalse(LoginItemConfiguration.matches(data, executable: "/other"))
         XCTAssertFalse(LoginItemConfiguration.matches(Data("bad".utf8), executable: path))
         var fields = try XCTUnwrap(PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any])
+        fields["RunAtLoad"] = 1
+        let wrongType = try PropertyListSerialization.data(fromPropertyList: fields, format: .xml, options: 0)
+        XCTAssertFalse(LoginItemConfiguration.matches(wrongType, executable: path))
+        fields["RunAtLoad"] = true
         fields["KeepAlive"] = true
         let foreign = try PropertyListSerialization.data(fromPropertyList: fields, format: .xml, options: 0)
         XCTAssertFalse(LoginItemConfiguration.matches(foreign, executable: path))

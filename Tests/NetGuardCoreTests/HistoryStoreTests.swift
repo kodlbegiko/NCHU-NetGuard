@@ -181,6 +181,22 @@ final class HistoryStoreTests: XCTestCase {
             XCTAssertThrowsError(try ScopedHistoryDay(aggregate: zero, scopes: [.unknown: zero]))
         }
     }
+    func testInvalidV2ZeroCannotBecomeAffirmativeV3Evidence() throws {
+        try withURL { url in
+            var database: OpaquePointer?
+            guard sqlite3_open(url.path, &database) == SQLITE_OK, let database else {
+                throw HistoryStoreError.database("fixture")
+            }
+            let sql = "CREATE TABLE history_days(day TEXT PRIMARY KEY, total INTEGER NOT NULL, download INTEGER, upload INTEGER); CREATE TABLE history_scopes(day TEXT NOT NULL,scope TEXT NOT NULL,download INTEGER NOT NULL,upload INTEGER NOT NULL,PRIMARY KEY(day,scope)); INSERT INTO history_days VALUES('2026-11-24',0,0,0); INSERT INTO history_scopes VALUES('2026-11-24','dorm',0,0); PRAGMA user_version=2;"
+            let status = sqlite3_exec(database, sql, nil, nil, nil)
+            sqlite3_close(database)
+            XCTAssertEqual(status, SQLITE_OK)
+            let original = try Data(contentsOf: url)
+            XCTAssertThrowsError(try HistoryStore(url: url))
+            XCTAssertEqual(try Data(contentsOf: url), original)
+            XCTAssertThrowsError(try HistoryBackupInspector.inspect(url))
+        }
+    }
     func testActualV1DatabaseMigratesWithoutReclassification() throws {
         try withURL { url in
             var database: OpaquePointer?

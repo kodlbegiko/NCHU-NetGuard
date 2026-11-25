@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 #if canImport(Darwin)
 import Darwin
 #elseif canImport(Glibc)
@@ -334,7 +335,7 @@ public enum LoginItemConfiguration {
               let actual = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any],
               Set(actual.keys) == Set(expected.keys),
               let flag = actual["RunAtLoad"] as? NSNumber,
-              String(cString: flag.objCType) == "c",
+              CFGetTypeID(flag) == CFBooleanGetTypeID(),
               flag.boolValue else { return false }
         return actual["Label"] as? String == label &&
                actual["ProgramArguments"] as? [String] == [executable] &&

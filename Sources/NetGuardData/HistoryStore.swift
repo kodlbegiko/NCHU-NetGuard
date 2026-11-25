@@ -164,6 +164,11 @@ public final class HistoryStore {
                     // v3 permits an affirmative measured-zero row for known scopes.
                     // Rebuild v2 atomically; absence stays absent and no zero is inferred.
                     if version == 2 {
+                        // A zero in the legacy schema is not affirmative
+                        // evidence. Reject malformed rows before granting v3 semantics.
+                        guard try scalar("SELECT count(*) FROM history_scopes WHERE typeof(day)<>'text' OR typeof(scope)<>'text' OR scope NOT IN ('dorm','campusWifi','external','unknown') OR typeof(download)<>'integer' OR typeof(upload)<>'integer' OR download<0 OR upload<0 OR (download=0 AND upload=0)") == 0,
+                              try scalar("SELECT count(*) FROM (SELECT day,sum(download) AS dl,sum(upload) AS ul FROM history_scopes GROUP BY day) AS s LEFT JOIN history_days AS h ON h.day=s.day WHERE h.day IS NULL OR typeof(h.download)<>'integer' OR typeof(h.upload)<>'integer' OR h.download<>s.dl OR h.upload<>s.ul OR typeof(h.total)<>'integer' OR h.total<>s.dl+s.ul") == 0
+                        else { throw HistoryStoreError.invalidRecord }
                         try execute("ALTER TABLE history_scopes RENAME TO history_scopes_v2")
                     }
                     try execute("CREATE TABLE history_scopes(day TEXT NOT NULL REFERENCES history_days(day), scope TEXT NOT NULL CHECK(scope IN ('dorm','campusWifi','external','unknown')), download INTEGER NOT NULL CHECK(typeof(download)='integer' AND download >= 0), upload INTEGER NOT NULL CHECK(typeof(upload)='integer' AND upload >= 0), CHECK(scope <> 'unknown' OR download > 0 OR upload > 0), PRIMARY KEY(day,scope))")

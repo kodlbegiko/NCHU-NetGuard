@@ -103,6 +103,10 @@ class FoundationTests(unittest.TestCase):
             link = pathlib.Path(root) / "link"
             link.symlink_to(path)
             self.assertIsNone(monitor.read_json_object(link))
+            hard = pathlib.Path(root) / "hard"
+            hard.hardlink_to(path)
+            self.assertIsNone(monitor.read_json_object(path))
+            self.assertIsNone(monitor.read_json_object(hard))
 
     def test_cli_reads_finalized_sqlite_not_stale_legacy(self):
         import sqlite3
@@ -116,6 +120,9 @@ class FoundationTests(unittest.TestCase):
                 conn.execute("CREATE TABLE history_days(day TEXT, total INTEGER, download INTEGER, upload INTEGER)")
                 conn.execute("INSERT INTO history_days VALUES('2026-11-24',15,10,5)")
             with patch.object(monitor, "HISTORY_DB", str(db)), patch.object(monitor, "HISTORY_FILE", str(legacy)):
+                self.assertEqual(monitor.load_history(), {"2026-11-24": {"total": 15, "dl": 10, "ul": 5}})
+                with sqlite3.connect(db) as conn:
+                    conn.execute("PRAGMA user_version=3")
                 self.assertEqual(monitor.load_history(), {"2026-11-24": {"total": 15, "dl": 10, "ul": 5}})
                 with sqlite3.connect(db) as conn:
                     conn.execute("UPDATE history_days SET total=999")
