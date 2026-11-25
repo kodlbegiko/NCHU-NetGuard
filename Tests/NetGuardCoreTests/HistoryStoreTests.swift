@@ -48,4 +48,15 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertThrowsError(try HistoryDay(day: "2026-11-25", total: 10, download: 8, upload: 8))
         XCTAssertThrowsError(try HistoryDay(day: "2026-11-25", total: 10, download: 8, upload: nil))
     }
+
+    func testStaleDailyRecoveryCannotOverwriteFinalizedHistory() throws {
+        try withURL { url in
+            let store = try HistoryStore(url: url)
+            let final = try HistoryDay(day: "2026-11-24", total: 100, download: 80, upload: 20)
+            try store.upsert(final)
+            try store.insertIfAbsent(HistoryDay(day: "2026-11-24", total: 10, download: 8, upload: 2))
+            XCTAssertEqual(try store.recent(), [final])
+        }
+    }
+
 }
