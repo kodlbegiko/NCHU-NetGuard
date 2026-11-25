@@ -46,4 +46,21 @@ final class ProcessUsageTests: XCTestCase {
         XCTAssertTrue(engine.report().rows.isEmpty)
         XCTAssertTrue(engine.report().capacityReached)
     }
+
+    func testMatchedDurationExcludesGapsAndResets() {
+        var engine = ProcessUsageAccumulator()
+        engine.ingest([row(1, 10, 10)], uptime: 1)
+        engine.ingest([row(1, 20, 20)], uptime: 21)
+        XCTAssertEqual(engine.report().matchedIntervalSeconds, 20)
+        engine.ingest(nil, uptime: 25)
+        engine.ingest([row(1, 50, 50)], uptime: 40)
+        engine.ingest([row(1, 60, 60)], uptime: 75)
+        XCTAssertEqual(engine.report().matchedIntervalSeconds, 55)
+        engine.ingest([row(1, 70, 70)], uptime: 130)
+        engine.breakContinuity()
+        engine.ingest([row(1, 80, 80)], uptime: 135)
+        XCTAssertEqual(engine.report().matchedIntervalSeconds, 55)
+        XCTAssertEqual(engine.report().measuredIntervals, 2)
+    }
+
 }
