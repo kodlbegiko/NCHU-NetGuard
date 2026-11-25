@@ -3239,6 +3239,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 }
 
 // Local compatibility check exits before constructing AppKit or the production delegate.
+if CommandLine.arguments.dropFirst().contains("--netguard-udp-check") {
+    exit(HostProbeCheck.runFlowCheck(transport: .udp))
+}
 if CommandLine.arguments.dropFirst().contains("--netguard-flow-check") {
     exit(HostProbeCheck.runFlowCheck())
 }
