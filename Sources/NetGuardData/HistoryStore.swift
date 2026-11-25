@@ -95,6 +95,22 @@ public enum LegacyHistoryMigration {
 public struct ScopedHistoryDay: Equatable, Sendable {
     public let aggregate: HistoryDay
     public let scopes: [NetworkScope: HistoryDay]
+    /// A zero row requires affirmative scope evidence. All nonzero observed
+    /// bytes are retained, including unattributed bytes; missing scopes stay absent.
+    public static func project(day: String, ledger: DailyTrafficLedger,
+                               coverage: DailyScopeCoverage) throws -> Self {
+        let all = ledger.aggregate
+        let aggregate = try HistoryDay(day: day, total: all.received + all.sent,
+                                       download: all.received, upload: all.sent)
+        var rows: [NetworkScope: HistoryDay] = [:]
+        for scope in NetworkScope.allCases {
+            let bytes = ledger.totals(for: scope)
+            let total = bytes.received + bytes.sent
+            if total == 0 && !coverage.observed(scope) { continue }
+            rows[scope] = try HistoryDay(day: day, total: total, download: bytes.received, upload: bytes.sent)
+        }
+        return try Self(aggregate: aggregate, scopes: rows)
+    }
     public init(aggregate: HistoryDay, scopes: [NetworkScope: HistoryDay]) throws {
         _ = try HistoryDay(day: aggregate.day, total: aggregate.total,
                            download: aggregate.download, upload: aggregate.upload)

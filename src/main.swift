@@ -1993,28 +1993,28 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             isAlertEnabled = json["alert_enabled"] as? Bool ?? true
             isLidGuardEnabled = json["lid_guard_enabled"] as? Bool ?? true
             isIdleGuardEnabled = json["idle_guard_enabled"] as? Bool ?? true
-            if usage.date == today {
-                var restored = DailyTrafficLedger()
-                for (scope, dl, ul) in [
-                    (NetworkScope.dorm, usage.dormIn, usage.dormOut),
-                    (.campusWifi, usage.wifiIn, usage.wifiOut),
-                    (.external, usage.externalIn, usage.externalOut),
-                    (.unknown, usage.unattributedIn, usage.unattributedOut)
-                ] {
-                    guard restored.add(scope: scope, received: dl, sent: ul) else {
-                        throw UsageMigrationError.invalidCounter
-                    }
+            var restored = DailyTrafficLedger()
+            for (scope, dl, ul) in [
+                (NetworkScope.dorm, usage.dormIn, usage.dormOut),
+                (.campusWifi, usage.wifiIn, usage.wifiOut),
+                (.external, usage.externalIn, usage.externalOut),
+                (.unknown, usage.unattributedIn, usage.unattributedOut)
+            ] {
+                guard restored.add(scope: scope, received: dl, sent: ul) else {
+                    throw UsageMigrationError.invalidCounter
                 }
+            }
+            let restoredCoverage: DailyScopeCoverage? = usage.measuredSampleCount > 0
+                ? (json["observed_scopes"] as? [String]).flatMap(DailyScopeCoverage.restore)
+                : nil
+            if usage.date == today {
                 trafficLedger = restored
                 accountingOverflow = json["accounting_overflow"] as? Bool == true
                 sampleGapCount = Int(usage.sampleGapCount)
                 measuredSampleCount = usage.measuredSampleCount
                 scopedHistoryEligible = json["scoped_history_eligible"] as? Bool == true
                 // Legacy files have no affirmative per-scope observation marker.
-                if let raw = json["observed_scopes"] as? [String],
-                   let coverage = DailyScopeCoverage.restore(raw), measuredSampleCount > 0 {
-                    dailyScopeCoverage = coverage
-                }
+                if let coverage = restoredCoverage { dailyScopeCoverage = coverage }
                 if json["alert_ledger_valid"] as? Bool == false {
                     alertLedgerBlockedDay = today
                 } else if let raw = json["alert_ledger"] {
@@ -2035,7 +2035,11 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                 let ul = Double(usage.dormOut) + Double(usage.wifiOut) +
                     Double(usage.externalOut) + Double(usage.unattributedOut)
                 if json["accounting_overflow"] as? Bool != true && (dl + ul > 0 || usage.measuredSampleCount > 0) {
-                    guard TrafficHistoryManager.shared.recordDay(date: usage.date, dl: dl, ul: ul, preserveExisting: true) else {
+                    var scopes: [NetworkScope: HistoryDay]?
+                    if json["scoped_history_eligible"] as? Bool == true, let coverage = restoredCoverage {
+                        scopes = try ScopedHistoryDay.project(day: usage.date, ledger: restored, coverage: coverage).scopes
+                    }
+                    guard TrafficHistoryManager.shared.recordDay(date: usage.date, dl: dl, ul: ul, preserveExisting: true, scopes: scopes) else {
                         throw HistoryStoreError.database("previous day history unavailable")
                     }
                 }
@@ -2417,23 +2421,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
     }
 
     func scopedHistoryRows() -> [NetworkScope: HistoryDay]? {
-        guard scopedHistoryEligible, !persistenceBlocked else { return nil }
-        let values: [(NetworkScope, Double, Double)] = [
-            (.dorm, dormTodayInBytes, dormTodayOutBytes),
-            (.campusWifi, wifiTodayInBytes, wifiTodayOutBytes),
-            (.external, extTodayInBytes, extTodayOutBytes),
-            (.unknown, unattributedInBytes, unattributedOutBytes)
-        ]
-        var rows: [NetworkScope: HistoryDay] = [:]
-        for (scope, rx, tx) in values {
-            guard let dl = UInt64(exactly: rx), let ul = UInt64(exactly: tx) else { return nil }
-            let (total, overflow) = dl.addingReportingOverflow(ul)
-            guard !overflow else { return nil }
-            if total == 0 && !dailyScopeCoverage.observed(scope) { continue }
-            guard let row = try? HistoryDay(day: currentDateString, total: total, download: dl, upload: ul) else { return nil }
-            rows[scope] = row
-        }
-        return rows
+        guard scopedHistoryEligible, !persistenceBlocked, !accountingOverflow else { return nil }
+        return try? ScopedHistoryDay.project(day: currentDateString, ledger: trafficLedger,
+                                            coverage: dailyScopeCoverage).scopes
     }
 
     func tickRealtime() {
@@ -2896,41 +2886,39 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         }
     }
 
-    func isLaunchAtLoginEnabled() -> Bool {
-        let launchAgentPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/LaunchAgents/tw.edu.nchu.dorm.traffic.plist").path
-        return FileManager.default.fileExists(atPath: launchAgentPath)
+    private var loginItemURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents/" + LoginItemConfiguration.label + ".plist")
+    }
+
+    private enum LoginItemState { case absent, configured, unknown }
+    private func loginItemState() -> LoginItemState {
+        guard let executable = Bundle.main.executableURL?.path else { return .unknown }
+        do {
+            guard let data = try HistoryFileAccess.read(loginItemURL, limit: LoginItemConfiguration.maximumBytes)
+            else { return .absent }
+            return LoginItemConfiguration.matches(data, executable: executable) ? .configured : .unknown
+        } catch { return .unknown }
     }
 
     func toggleLaunchAtLogin() {
-        let launchAgentPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/LaunchAgents/tw.edu.nchu.dorm.traffic.plist").path
-        
-        if isLaunchAtLoginEnabled() {
-            try? FileManager.default.removeItem(atPath: launchAgentPath)
-        } else {
-            guard let appPath = Bundle.main.executableURL?.path else { return }
-            try? FileManager.default.createDirectory(at: URL(fileURLWithPath: launchAgentPath).deletingLastPathComponent(), withIntermediateDirectories: true)
-            let escapedAppPath = appPath.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
-            let plistContent = """
-            <?xml version="1.0" encoding="UTF-8"?>
-            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-            <plist version="1.0">
-            <dict>
-                <key>Label</key>
-                <string>tw.edu.nchu.dorm.traffic</string>
-                <key>ProgramArguments</key>
-                <array>
-                    <string>\(escapedAppPath)</string>
-                </array>
-                <key>RunAtLoad</key>
-                <true/>
-                <key>ProcessType</key>
-                <string>Interactive</string>
-            </dict>
-            </plist>
-            """
-            try? plistContent.write(toFile: launchAgentPath, atomically: true, encoding: .utf8)
+        guard let executable = Bundle.main.executableURL?.path else { return }
+        do {
+            let url = loginItemURL
+            let limit = LoginItemConfiguration.maximumBytes
+            if let existing = try HistoryFileAccess.read(url, limit: limit) {
+                guard LoginItemConfiguration.matches(existing, executable: executable)
+                else { throw HistoryStoreError.invalidRecord }
+                try HistoryFileAccess.removeIfUnchanged(url, expected: existing, limit: limit)
+            } else {
+                try HistoryFileAccess.replaceIfUnchanged(url, expected: nil,
+                    data: LoginItemConfiguration.encode(executable: executable), limit: limit)
+            }
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "登入啟動設定無法安全變更"
+            alert.informativeText = "設定可能不屬於目前版本、已變更或寫入結果不明。請在系統設定中確認；本程式不會強制覆寫。"
+            alert.runModal()
         }
     }
 
@@ -2976,9 +2964,11 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         menu.addItem(netModeParent)
         menu.addItem(NSMenuItem.separator())
         
-        let autoLaunchItem = NSMenuItem(title: "🚀 開機自動啟動", action: #selector(handleToggleAutoLaunch), keyEquivalent: "")
+        let loginState = loginItemState()
+        let autoLaunchItem = NSMenuItem(title: loginState == .unknown ? "登入啟動設定未確認" : "下次登入自動啟動設定", action: #selector(handleToggleAutoLaunch), keyEquivalent: "")
         autoLaunchItem.target = self
-        autoLaunchItem.state = isLaunchAtLoginEnabled() ? .on : .off
+        autoLaunchItem.state = loginState == .configured ? .on : (loginState == .unknown ? .mixed : .off)
+        autoLaunchItem.isEnabled = loginState != .unknown
         menu.addItem(autoLaunchItem)
         
         let alertToggleItem = NSMenuItem(title: "🔔 啟用流量預警推播 (宿網 & 校園 Wi-Fi)", action: #selector(handleToggleAlert), keyEquivalent: "")

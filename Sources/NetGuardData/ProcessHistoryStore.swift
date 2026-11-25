@@ -64,6 +64,22 @@ package enum HistoryFileAccess {
         return data
     }
 
+    /// Delete only the exact bytes previously inspected by the caller.
+    /// This serializes cooperating writers; an unrelated same-user process
+    /// can still race. Never use it as proof of authorization.
+    package static func removeIfUnchanged(_ url: URL, expected: Data, limit: Int) throws {
+        guard url.isFileURL, (1...4_194_304).contains(limit), expected.count <= limit,
+              !url.lastPathComponent.isEmpty, url.lastPathComponent != ".", url.lastPathComponent != ".."
+        else { throw HistoryStoreError.invalidRecord }
+        let name = url.lastPathComponent
+        try withDirectoryLock(directory: url.deletingLastPathComponent(), name: name + ".lock") { parent in
+            guard try read(parent: parent, name: name, limit: limit) == expected
+            else { throw HistoryStoreError.database("state changed by another writer") }
+            guard unlinkat(parent, name, 0) == 0 else { throw HistoryStoreError.database("state removal") }
+            guard fsync(parent) == 0 else { throw HistoryStoreError.database("state removal durability unknown") }
+        }
+    }
+
     /// Atomic compare-and-replace for a single local state file. Cooperation
     /// is required; this does not defend against arbitrary same-user writers.
     /// The temp inode is private from creation. A sync failure after rename
@@ -294,5 +310,34 @@ public struct ProcessHistoryStore: Sendable {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try data.write(to: path, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
+    }
+}
+
+
+/// Descriptor for the legacy user-controlled next-login configuration.
+/// No registration, launchctl or process control. Ownership is intentionally
+/// conservative: a moved app or extra plist keys requires manual review.
+public enum LoginItemConfiguration {
+    public static let label = "tw.edu.nchu.dorm.traffic"
+    public static let maximumBytes = 16_384
+    private static func fields(executable: String) throws -> [String: Any] {
+        guard executable.hasPrefix("/"), executable.utf8.count <= 4096,
+              !executable.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+        else { throw HistoryStoreError.invalidRecord }
+        return ["Label": label, "ProgramArguments": [executable], "RunAtLoad": true, "ProcessType": "Interactive"]
+    }
+    public static func encode(executable: String) throws -> Data {
+        try PropertyListSerialization.data(fromPropertyList: fields(executable: executable), format: .xml, options: 0)
+    }
+    public static func matches(_ data: Data, executable: String) -> Bool {
+        guard data.count <= maximumBytes, let expected = try? fields(executable: executable),
+              let actual = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any],
+              Set(actual.keys) == Set(expected.keys),
+              let flag = actual["RunAtLoad"] as? NSNumber,
+              String(cString: flag.objCType) == "c",
+              flag.boolValue else { return false }
+        return actual["Label"] as? String == label &&
+               actual["ProgramArguments"] as? [String] == [executable] &&
+               actual["ProcessType"] as? String == "Interactive"
     }
 }

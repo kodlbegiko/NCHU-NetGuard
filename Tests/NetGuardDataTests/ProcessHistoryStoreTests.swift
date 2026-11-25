@@ -35,6 +35,26 @@ final class ProcessHistoryStoreTests: XCTestCase {
             XCTAssertEqual(try HistoryFileAccess.read(file, limit: 100), second)
         }
     }
+    func testLoginItemConfigRejectsForeignAndChangedEntries() throws {
+        let path = "/Applications/Fixture & Test.app/Contents/MacOS/NetGuard"
+        let data = try LoginItemConfiguration.encode(executable: path)
+        XCTAssertTrue(LoginItemConfiguration.matches(data, executable: path))
+        XCTAssertFalse(LoginItemConfiguration.matches(data, executable: "/other"))
+        XCTAssertFalse(LoginItemConfiguration.matches(Data("bad".utf8), executable: path))
+        var fields = try XCTUnwrap(PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any])
+        fields["KeepAlive"] = true
+        let foreign = try PropertyListSerialization.data(fromPropertyList: fields, format: .xml, options: 0)
+        XCTAssertFalse(LoginItemConfiguration.matches(foreign, executable: path))
+        try withStore { store in
+            let file = store.directory.appendingPathComponent("fixture.plist")
+            try HistoryFileAccess.replaceIfUnchanged(file, expected: nil, data: data, limit: 16_384)
+            try HistoryFileAccess.replaceIfUnchanged(file, expected: data, data: foreign, limit: 16_384)
+            XCTAssertThrowsError(try HistoryFileAccess.removeIfUnchanged(file, expected: data, limit: 16_384))
+            XCTAssertEqual(try HistoryFileAccess.read(file, limit: 16_384), foreign)
+            try HistoryFileAccess.removeIfUnchanged(file, expected: foreign, limit: 16_384)
+            XCTAssertNil(try HistoryFileAccess.read(file, limit: 16_384))
+        }
+    }
     func testCooperatingWriterLockPreservesHistory() throws {
         try withStore { store in
             let day = "2026-11-25"

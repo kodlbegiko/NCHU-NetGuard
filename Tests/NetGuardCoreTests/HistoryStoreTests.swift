@@ -149,6 +149,18 @@ final class HistoryStoreTests: XCTestCase {
             XCTAssertTrue(try HistoryStore(url: url).recent().isEmpty)
         }
     }
+    func testScopedProjectionKeepsZeroOnlyWithEvidence() throws {
+        var ledger = DailyTrafficLedger()
+        XCTAssertTrue(ledger.add(scope: .dorm, received: 10, sent: 5))
+        XCTAssertTrue(ledger.add(scope: .unknown, received: 2, sent: 0))
+        var coverage = DailyScopeCoverage()
+        coverage.observe(.init(scope: .campusWifi, delta: .init(received: 0, sent: 0, quality: .measured)))
+        let projected = try ScopedHistoryDay.project(day: "2026-11-25", ledger: ledger, coverage: coverage)
+        XCTAssertEqual(projected.aggregate.total, 17)
+        XCTAssertEqual(projected.scopes[.campusWifi]?.total, 0)
+        XCTAssertNil(projected.scopes[.external])
+        XCTAssertEqual(projected.scopes[.unknown]?.total, 2)
+    }
     func testV2MigratesWithoutInventingZerosAndV3PersistsMeasuredZero() throws {
         try withURL { url in
             var database: OpaquePointer?

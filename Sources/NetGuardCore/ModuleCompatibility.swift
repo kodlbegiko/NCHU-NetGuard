@@ -53,6 +53,7 @@ public typealias LegacyHistoryMigration = NetGuardData.LegacyHistoryMigration
 public typealias ScopedHistoryDay = NetGuardData.ScopedHistoryDay
 public typealias HistoryStore = NetGuardData.HistoryStore
 package typealias HistoryFileAccess = NetGuardData.HistoryFileAccess
+public typealias LoginItemConfiguration = NetGuardData.LoginItemConfiguration
 public typealias HistoryPeriodDay = NetGuardData.HistoryPeriodDay
 public typealias HistoryPeriod = NetGuardData.HistoryPeriod
 public typealias HistoryAnalytics = NetGuardData.HistoryAnalytics
