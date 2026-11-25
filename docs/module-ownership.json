@@ -28,7 +28,8 @@
     "ObservationSchedule.swift": 2,
     "ProcessUsage.swift": 2,
     "ProcessHistoryStore.swift": 7,
-    "QualityDiagnostics.swift": 2
+    "QualityDiagnostics.swift": 2,
+    "AgentAttribution.swift": 2
   },
   "shared_paths": {
     "src/main.swift": 0,
@@ -92,6 +93,7 @@
     "ObservationSchedule.swift": "NetGuardObservation",
     "ProcessUsage.swift": "NetGuardObservation",
     "ProcessHistoryStore.swift": "NetGuardData",
-    "QualityDiagnostics.swift": "NetGuardObservation"
+    "QualityDiagnostics.swift": "NetGuardObservation",
+    "AgentAttribution.swift": "NetGuardObservation"
   }
 }
