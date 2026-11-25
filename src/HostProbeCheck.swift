@@ -67,23 +67,36 @@ enum HostProbeCheck {
     /// Explicit diagnostic: two snapshots of existing TCP connections, no
     /// generated network traffic. No raw socket or process details are printed.
     static func runFlowCheck(transport: FlowTransport = .tcp) -> Int32 {
-        func snapshot() -> ([TCPFlowCounter]?, TimeInterval) {
+        func snapshot(_ phase: String) -> ([TCPFlowCounter]?, TimeInterval) {
             let before = tree()
             let outcome = ProbeRunner.run("/usr/bin/nettop",
                 ["-m", transport.rawValue, "-n", "-x", "-L", "1", "-J", "bytes_in,bytes_out,interface,state"], timeout: 5)
             let uptime = ProcessInfo.processInfo.systemUptime
             let after = tree()
-            guard let before, let after, case .success(let raw) = outcome else { return (nil, uptime) }
-            return (TCPFlowParser.parse(raw, before: before.mapValues { $0.start },
-                after: after.mapValues { $0.start }, transport: transport), uptime)
+            switch outcome {
+            case .failed: print("\(phase)_probe=failed"); return (nil, uptime)
+            case .timedOut: print("\(phase)_probe=timedOut"); return (nil, uptime)
+            case .outputLimit: print("\(phase)_probe=outputLimit"); return (nil, uptime)
+            case .success(let raw):
+                guard let before, let after else {
+                    print("\(phase)_probe=missingProcessEvidence")
+                    return (nil, uptime)
+                }
+                var detail = FlowParseDiagnostics()
+                let rows = TCPFlowParser.parse(raw, before: before.mapValues { $0.start },
+                    after: after.mapValues { $0.start }, transport: transport, diagnostics: &detail)
+                print("\(phase)_parse=\(detail.status) candidate=\(detail.candidateRows) accepted=\(detail.acceptedRows) malformed=\(detail.malformedRows)")
+                print("\(phase)_rejected_owner=\(detail.ownerRejected) state=\(detail.stateRejected) counter=\(detail.counterRejected) interface=\(detail.interfaceRejected) endpoint=\(detail.endpointRejected) duplicate_identities=\(detail.duplicateIdentities)")
+                return (rows, uptime)
+            }
         }
         let marker = "NETGUARD_" + transport.rawValue.uppercased() + "_FLOW_CHECK"
         print(marker + "_V1")
         var accumulator = TCPFlowAccumulator()
-        let first = snapshot()
+        let first = snapshot("first")
         _ = accumulator.ingest(first.0, uptime: first.1)
         Thread.sleep(forTimeInterval: 1)
-        let second = snapshot()
+        let second = snapshot("second")
         // A flow's interface is not proof of unique traffic: VPN/proxy layers
         // can describe the same transfer. Never combine transports or use
         // this output as a physical-interface or billing total.

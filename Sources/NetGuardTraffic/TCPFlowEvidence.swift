@@ -16,12 +16,35 @@ public struct TCPFlowCounter: Equatable, Sendable {
     public let sent: UInt64
 }
 
+public struct FlowParseDiagnostics: Equatable, Sendable {
+    public var status = "notParsed"
+    public var candidateRows = 0
+    public var malformedRows = 0
+    public var ownerRejected = 0
+    public var stateRejected = 0
+    public var counterRejected = 0
+    public var interfaceRejected = 0
+    public var endpointRejected = 0
+    public var duplicateIdentities = 0
+    public var acceptedRows = 0
+    public init() {}
+}
+
 public enum TCPFlowParser {
     /// Numeric IPv4 / bracketed IPv6 endpoints. TCP Established only;
     /// UDP explicit peer endpoints and recognized state fields only.
     /// Process summary rows never contribute bytes; UDP is not proof of QUIC.
     public static func parse(_ output: String, before: [Int: String], after: [Int: String], transport: FlowTransport = .tcp) -> [TCPFlowCounter]? {
-        guard output.utf8.count <= 1_048_576, !before.isEmpty, !after.isEmpty else { return nil }
+        var diagnostics = FlowParseDiagnostics()
+        return parse(output, before: before, after: after, transport: transport, diagnostics: &diagnostics)
+    }
+
+    public static func parse(_ output: String, before: [Int: String], after: [Int: String],
+                             transport: FlowTransport, diagnostics: inout FlowParseDiagnostics) -> [TCPFlowCounter]? {
+        diagnostics = FlowParseDiagnostics()
+        guard output.utf8.count <= 1_048_576 else { diagnostics.status = "outputLimit"; return nil }
+        guard !before.isEmpty, !after.isEmpty else { diagnostics.status = "missingProcessEvidence"; return nil }
+        guard !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { diagnostics.status = "emptyOutput"; return nil }
         var columns: [String: Int]?
         var owner: (Int, String, String)?
         var rows: [String: TCPFlowCounter] = [:]
@@ -30,10 +53,10 @@ public enum TCPFlowParser {
             var fields = line.split(separator: ",", omittingEmptySubsequences: false)
                 .map { $0.trimmingCharacters(in: .whitespaces) }
             if fields.last == "" { fields.removeLast() }
-            guard fields.count == 5 else { owner = nil; continue }
+            guard fields.count == 5 else { diagnostics.malformedRows += 1; owner = nil; continue }
             if Set(fields.dropFirst()) == Set(["bytes_in", "bytes_out", "interface", "state"]) {
                 // A second header would represent a different observation.
-                guard columns == nil else { return nil }
+                guard columns == nil else { diagnostics.status = "repeatedHeader"; return nil }
                 columns = Dictionary(uniqueKeysWithValues: fields.dropFirst().enumerated().map { ($0.element, $0.offset + 1) })
                 owner = nil
                 continue
@@ -53,26 +76,31 @@ public enum TCPFlowParser {
                 owner = (pid, start, name)
                 continue
             }
+            diagnostics.candidateRows += 1
             let state = fields[columns["state"]!]
             // UDP has no TCP-style handshake. Require explicit endpoints;
             // only initial known fixture states are accepted.
             let acceptedState = transport == .tcp ? state == "Established" : (state.isEmpty || state == "Connected")
-            guard let owner, acceptedState,
-                  let rx = UInt64(fields[columns["bytes_in"]!]),
-                  let tx = UInt64(fields[columns["bytes_out"]!]) else { continue }
+            guard let owner else { diagnostics.ownerRejected += 1; continue }
+            guard acceptedState else { diagnostics.stateRejected += 1; continue }
+            guard let rx = UInt64(fields[columns["bytes_in"]!]),
+                  let tx = UInt64(fields[columns["bytes_out"]!]) else { diagnostics.counterRejected += 1; continue }
             let iface = fields[columns["interface"]!]
             guard (1...32).contains(iface.utf8.count), iface.utf8.allSatisfy({
                 (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0)
-            }) else { continue }
+            }) else { diagnostics.interfaceRejected += 1; continue }
             let ends = String(label.dropFirst(5)).components(separatedBy: "<->")
-            guard ends.count == 2, let local = endpoint(ends[0], ipv6: label.hasPrefix(v6Prefix)), let remote = endpoint(ends[1], ipv6: label.hasPrefix(v6Prefix)) else { continue }
+            guard ends.count == 2, let local = endpoint(ends[0], ipv6: label.hasPrefix(v6Prefix)), let remote = endpoint(ends[1], ipv6: label.hasPrefix(v6Prefix)) else { diagnostics.endpointRejected += 1; continue }
             let identity = "\(owner.0)|\(owner.1.utf8.count):\(owner.1)|\(owner.2.utf8.count):\(owner.2)|\(iface)|\(label.prefix(4))|[\(local.0)]:\(local.1)|[\(remote.0)]:\(remote.1)"
             let row = TCPFlowCounter(identity: identity, remote: remote.0, transport: transport, interface: iface, received: rx, sent: tx)
             if rows.updateValue(row, forKey: identity) != nil { ambiguous.insert(identity) }
-            guard rows.count <= 4096 else { return nil }
+            guard rows.count <= 4096 else { diagnostics.status = "rowLimit"; return nil }
         }
-        guard columns != nil else { return nil }
+        guard columns != nil else { diagnostics.status = "missingHeader"; return nil }
         for id in ambiguous { rows.removeValue(forKey: id) }
+        diagnostics.duplicateIdentities = ambiguous.count
+        diagnostics.acceptedRows = rows.count
+        diagnostics.status = rows.isEmpty ? "noAcceptedRows" : "parsed"
         return rows.values.sorted { $0.identity < $1.identity }
     }
 

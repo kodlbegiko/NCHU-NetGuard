@@ -108,4 +108,25 @@ final class TCPFlowEvidenceTests: XCTestCase {
         XCTAssertNil(accumulator.coverage)
     }
 
+
+    func testRedactedUDPRejectionDiagnostics() throws {
+        var detail = FlowParseDiagnostics()
+        let valid = "udp4 192.168.1.2:50000<->8.8.8.8:443,100,50,en0,,\n"
+        let invalidEndpoint = valid.replacingOccurrences(of: "8.8.8.8:443", with: "*:*")
+        let invalidState = valid.replacingOccurrences(of: "en0,,", with: "en0,Listen,")
+        let invalidCounter = valid.replacingOccurrences(of: ",100,50,", with: ",bad,50,")
+        let rows = try XCTUnwrap(TCPFlowParser.parse(header + parent + valid + invalidEndpoint + invalidState + invalidCounter,
+            before: starts, after: starts, transport: .udp, diagnostics: &detail))
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(detail.status, "parsed")
+        XCTAssertEqual(detail.candidateRows, 4)
+        XCTAssertEqual(detail.acceptedRows, 1)
+        XCTAssertEqual(detail.endpointRejected, 1)
+        XCTAssertEqual(detail.stateRejected, 1)
+        XCTAssertEqual(detail.counterRejected, 1)
+        XCTAssertNil(TCPFlowParser.parse("unsupported", before: starts, after: starts, transport: .udp, diagnostics: &detail))
+        XCTAssertEqual(detail.status, "missingHeader")
+        XCTAssertEqual(detail.candidateRows, 0)
+    }
+
 }
