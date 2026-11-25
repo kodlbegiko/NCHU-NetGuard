@@ -1355,6 +1355,35 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         if managementModel.automation != automation { managementModel.automation = automation }
     }
 
+    private func measureExperimentalFlow(_ transport: FlowTransport) {
+        guard !managementModel.flowBusy else { return }
+        guard workflowPowerGuard.allowsOptionalProbes else {
+            managementModel.flowReading = nil
+            managementModel.flowStatus = "重要工作模式或休眠中，未執行"
+            return
+        }
+        let generation = workflowPowerGuard.generation
+        let route = routeEventToken
+        managementModel.flowReading = nil
+        managementModel.flowBusy = true
+        managementModel.flowStatus = "正在進行一次性連線差分觀測"
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let reading = HostProbeCheck.measureFlow(transport: transport)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.managementModel.flowBusy = false
+                guard self.workflowPowerGuard.generation == generation, self.routeEventToken == route,
+                      self.workflowPowerGuard.allowsOptionalProbes,
+                      self.managementWindowController?.window?.isVisible == true else {
+                    self.managementModel.flowStatus = "觀測期間狀態改變，結果已捨棄"
+                    return
+                }
+                self.managementModel.flowReading = reading
+                self.managementModel.flowStatus = reading.totals == nil ? "未取得可匹配的有效流量證據" : "一次性觀測完成（非完整網路用量）"
+            }
+        }
+    }
+
     @objc func openNativeManagement() {
         popover?.performClose(nil)
         syncManagementModel()
@@ -1380,6 +1409,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 setProcessBackground: { [weak self] in self?.setProcessBackgroundEnabled($0) },
                 reloadHistory: { [weak self] in self?.reloadProcessHistory() },
                 testDNS: { [weak self] in self?.testDNS() },
+                measureFlow: { [weak self] in self?.measureExperimentalFlow($0) },
                 configureTrafficEvents: { [weak self] rules in self?.configureTrafficEvents(rules) },
                 saveEventArchive: { [weak self] in
                     guard let self else { return }

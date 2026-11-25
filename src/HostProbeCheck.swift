@@ -64,9 +64,17 @@ enum HostProbeCheck {
         return result.status == .parsed ? .compatible : .incompatible
     }
 
-    /// Explicit diagnostic: two snapshots of existing TCP connections, no
-    /// generated network traffic. No raw socket or process details are printed.
-    static func runFlowCheck(transport: FlowTransport = .tcp) -> Int32 {
+    struct FlowCheckReading: Sendable {
+        let transport: FlowTransport
+        let totals: [DestinationAddressKind: DestinationByteTotals]?
+        let coverage: TCPFlowCoverage?
+        let tunnelCandidate: Bool
+        let diagnosticLines: [String]
+    }
+
+    /// One-shot, explicit observation. The result contains aggregates only.
+    static func measureFlow(transport: FlowTransport) -> FlowCheckReading {
+        var lines: [String] = []
         func snapshot(_ phase: String) -> ([TCPFlowCounter]?, TimeInterval) {
             let before = tree()
             let outcome = ProbeRunner.run("/usr/bin/nettop",
@@ -74,53 +82,54 @@ enum HostProbeCheck {
             let uptime = ProcessInfo.processInfo.systemUptime
             let after = tree()
             switch outcome {
-            case .failed: print("\(phase)_probe=failed"); return (nil, uptime)
-            case .timedOut: print("\(phase)_probe=timedOut"); return (nil, uptime)
-            case .outputLimit: print("\(phase)_probe=outputLimit"); return (nil, uptime)
+            case .failed: lines.append("\(phase)_probe=failed"); return (nil, uptime)
+            case .timedOut: lines.append("\(phase)_probe=timedOut"); return (nil, uptime)
+            case .outputLimit: lines.append("\(phase)_probe=outputLimit"); return (nil, uptime)
             case .success(let raw):
                 guard let before, let after else {
-                    print("\(phase)_probe=missingProcessEvidence")
+                    lines.append("\(phase)_probe=missingProcessEvidence")
                     return (nil, uptime)
                 }
                 var detail = FlowParseDiagnostics()
                 let rows = TCPFlowParser.parse(raw, before: before.mapValues { $0.start },
                     after: after.mapValues { $0.start }, transport: transport, diagnostics: &detail)
-                print("\(phase)_parse=\(detail.status) candidate=\(detail.candidateRows) accepted=\(detail.acceptedRows) malformed=\(detail.malformedRows)")
-                print("\(phase)_rejected_owner=\(detail.ownerRejected) state=\(detail.stateRejected) counter=\(detail.counterRejected) interface=\(detail.interfaceRejected) endpoint=\(detail.endpointRejected) duplicate_identities=\(detail.duplicateIdentities)")
+                lines.append("\(phase)_parse=\(detail.status) candidate=\(detail.candidateRows) accepted=\(detail.acceptedRows) malformed=\(detail.malformedRows)")
+                lines.append("\(phase)_rejected_owner=\(detail.ownerRejected) state=\(detail.stateRejected) counter=\(detail.counterRejected) interface=\(detail.interfaceRejected) endpoint=\(detail.endpointRejected) duplicate_identities=\(detail.duplicateIdentities)")
                 return (rows, uptime)
             }
         }
-        let marker = "NETGUARD_" + transport.rawValue.uppercased() + "_FLOW_CHECK"
-        print(marker + "_V1")
         var accumulator = TCPFlowAccumulator()
         let first = snapshot("first")
         _ = accumulator.ingest(first.0, uptime: first.1)
         Thread.sleep(forTimeInterval: 1)
         let second = snapshot("second")
-        // A flow's interface is not proof of unique traffic: VPN/proxy layers
-        // can describe the same transfer. Never combine transports or use
-        // this output as a physical-interface or billing total.
-        let observedInterfaces = (first.0 ?? []) + (second.0 ?? [])
-        let tunnelCandidate = observedInterfaces.contains { TunnelEvidence.isTunnelCandidate($0.interface) }
-        print("tunnel_interface_candidate=" + (tunnelCandidate ? "observed" : "not_observed"))
+        let tunnelCandidate = ((first.0 ?? []) + (second.0 ?? [])).contains { TunnelEvidence.isTunnelCandidate($0.interface) }
+        let totals = accumulator.ingest(second.0, uptime: second.1)
+        return FlowCheckReading(transport: transport, totals: totals, coverage: accumulator.coverage,
+            tunnelCandidate: tunnelCandidate, diagnosticLines: lines)
+    }
+
+    static func runFlowCheck(transport: FlowTransport = .tcp) -> Int32 {
+        let marker = "NETGUARD_" + transport.rawValue.uppercased() + "_FLOW_CHECK"
+        print(marker + "_V1")
+        let reading = measureFlow(transport: transport)
+        for line in reading.diagnosticLines { print(line) }
+        print("tunnel_interface_candidate=" + (reading.tunnelCandidate ? "observed" : "not_observed"))
         print("overlap_exclusion=unverified")
-        let result = accumulator.ingest(second.0, uptime: second.1)
-        if let coverage = accumulator.coverage {
+        if let coverage = reading.coverage {
             print("prior_rows=\(coverage.priorRows) current_rows=\(coverage.currentRows) matched_rows=\(coverage.matchedRows)")
             print("new_rows=\(coverage.newRows) disappeared_rows=\(coverage.disappearedRows) reset_rows=\(coverage.resetRows)")
             print("matched_current_rows_fraction=\(coverage.matchedFraction) elapsed_seconds=\(coverage.elapsedSeconds)")
         }
-        guard let totals = result else {
+        guard let totals = reading.totals else {
             print(marker + "_INCONCLUSIVE")
             return 2
         }
         for kind in totals.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
-            // Print classification and aggregate counts only, not endpoints.
             guard let value = totals[kind] else { continue }
             print("\(kind.rawValue): received=\(value.received) sent=\(value.sent)")
         }
         print(marker + "_OK")
         return 0
     }
-
 }

@@ -3,6 +3,9 @@ import Foundation
 
 final class ManagementModel: ObservableObject {
     @Published var snapshot: ManagementSnapshot?
+    @Published var flowBusy = false
+    @Published var flowReading: HostProbeCheck.FlowCheckReading?
+    @Published var flowStatus = "尚未進行連線層觀測"
     @Published var eventRules = TrafficEventRules.standard
     @Published var eventArchiveRows: [TrafficObservationEvent] = []
     @Published var eventArchiveBusy = false
@@ -30,6 +33,7 @@ struct ManagementView: View {
     let setProcessBackground: (Bool) -> Void
     let reloadHistory: () -> Void
     let testDNS: () -> Void
+    let measureFlow: (FlowTransport) -> Void
     let configureTrafficEvents: (TrafficEventRules) -> Void
     let saveEventArchive: () -> Void
     let loadEventArchive: () -> Void
@@ -43,6 +47,8 @@ struct ManagementView: View {
     let setHistoryRetention: (Int) -> Void
     let deleteHistory: () -> Void
     @State private var tab = 0
+    @State private var showFlowCheck = false
+    @State private var flowTransport = FlowTransport.tcp
     @State private var connectionLabel = ""
     @State private var connectionLimit = ""
     @State private var showConnectionArchive = false
@@ -99,8 +105,8 @@ struct ManagementView: View {
                         if tab == 0 {
                             Text(snapshot.connectionStatus).font(.subheadline)
                             Text(snapshot.routeStatus).font(.caption)
-                            Text("LAN／Internet 個別流量：未量測").font(.caption)
-                            Text("目前實體網卡總量包含區域網路流量。私有或公有目的位址不等於實際傳輸路徑；尚無經驗證的連線層流量來源，不推算網際網路用量。").font(.caption2).foregroundStyle(.secondary)
+                            Text("LAN／Internet 個別流量：未確認").font(.caption)
+                            experimentalFlowPanel
                             connectionSessionPanel
                             Text("預設路由與位址存在不代表網際網路可達；雙協定使用同一份實體網卡帳本。").font(.caption2).foregroundStyle(.secondary)
                             Text(snapshot.latencyStatus).font(.caption).foregroundStyle(.secondary)
@@ -642,6 +648,57 @@ struct ManagementView: View {
             Button("清除", role: .destructive, action: clearEventArchive)
         } message: {
             Text("此操作只清除本機事件歷史，不會改變用量帳本。")
+        }
+    }
+
+
+    private var experimentalFlowPanel: some View {
+        DisclosureGroup("連線層觀測（實驗性）", isExpanded: $showFlowCheck) {
+            VStack(alignment: .leading, spacing: 8) {
+                Picker("協定", selection: $flowTransport) {
+                    Text("TCP").tag(FlowTransport.tcp)
+                    Text("UDP").tag(FlowTransport.udp)
+                }.pickerStyle(.segmented).disabled(model.flowBusy)
+                Button("執行一次觀測") { measureFlow(flowTransport) }.disabled(model.flowBusy)
+                if model.flowBusy { ProgressView().controlSize(.small) }
+                Text(model.flowStatus).font(.caption)
+                if let reading = model.flowReading {
+                    Text("上次觀測：" + reading.transport.rawValue.uppercased()).font(.caption)
+                    if let coverage = reading.coverage {
+                        Text("匹配 \(coverage.matchedRows)／\(coverage.currentRows) 筆有效紀錄；\(String(format: "%.1f", coverage.elapsedSeconds)) 秒").font(.caption)
+                    }
+                    if let totals = reading.totals {
+                        ForEach(totals.keys.sorted(by: { $0.rawValue < $1.rawValue }), id: \.self) { kind in
+                            if let value = totals[kind] {
+                                HStack {
+                                    Text(flowKindLabel(kind))
+                                    Spacer()
+                                    Text(String(format: "↓ %.2f ↑ %.2f MiB", Double(value.received) / 1_048_576, Double(value.sent) / 1_048_576))
+                                        .monospacedDigit()
+                                }.font(.caption)
+                            }
+                        }
+                    }
+                    if reading.tunnelCandidate {
+                        Text("觀測到疑似隧道介面，可能存在內外層重疊。").font(.caption)
+                    }
+                }
+                Text("僅顯示本次可匹配的連線增量；未觀測的類別不等於零。不是 LAN／Internet 或帳單用量，不與網卡帳本或另一協定相加。不保存端點或結果。")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func flowKindLabel(_ kind: DestinationAddressKind) -> String {
+        switch kind {
+        case .loopback: return "Loopback"
+        case .linkLocal: return "Link-local"
+        case .privateSpace: return "私有位址"
+        case .sharedSpace: return "共用位址"
+        case .multicast: return "Multicast"
+        case .specialUse: return "特殊用途"
+        case .publicCandidate: return "公有位址候選"
+        case .unknown: return "未知"
         }
     }
 
