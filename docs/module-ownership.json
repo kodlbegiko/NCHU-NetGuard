@@ -47,16 +47,18 @@
       "NetGuardObservation",
       "NetGuardWorkflow",
       "NetGuardRecovery",
-      "NetGuardProvider"
+      "NetGuardProvider",
+      "NetGuardTraffic"
     ],
     "NetGuardObservation": [],
     "NetGuardWorkflow": [],
     "NetGuardRecovery": [],
-    "NetGuardProvider": []
+    "NetGuardProvider": [],
+    "NetGuardTraffic": []
   },
   "source_targets": {
-    "TrafficAccounting.swift": "NetGuardCore",
-    "ScopedAccounting.swift": "NetGuardCore",
+    "TrafficAccounting.swift": "NetGuardTraffic",
+    "ScopedAccounting.swift": "NetGuardTraffic",
     "Contracts.swift": "NetGuardCore",
     "ContractValidation.swift": "NetGuardCore",
     "Diagnostics.swift": "NetGuardCore",
