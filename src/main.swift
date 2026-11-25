@@ -262,6 +262,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var observationSchedule = ObservationSchedule()
     var pathMonitor: NWPathMonitor?
     var routeEventToken = UUID()
+    var dualStackEvidence: DualStackEvidence?
+    var observedAddressEvidence: [String: InterfaceAddressEvidence] = [:]
     var observedTunnelCandidates: [String] = []
     var observedInterfaceRates: [String: ObservedInterfaceRate] = [:]
     var throughputWindow = ThroughputWindow()
@@ -692,6 +694,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         observationSchedule.reset()
         observedInterfaceRates = [:]
         observedTunnelCandidates = []
+        observedAddressEvidence = [:]
+        dualStackEvidence = nil
         networkQuality.reset()
         resetQualityEvidence()
         throughputWindow.reset()
@@ -825,6 +829,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.routeEventToken = UUID()
+                self.dualStackEvidence = nil
+                self.observedAddressEvidence = [:]
                 self.observationSchedule.networkChanged()
                 self.isConnected = false
                 self.activeSpeedMeasured = false
@@ -1177,7 +1183,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             tunnelCandidates: workflowPowerGuard.allowsSampling && rateFresh ? observedTunnelCandidates : [],
             sessionUsage: processUsage.report(), echoStatus: echoStatus, dnsStatus: dnsStatus,
             agentUsage: agentUsage.report(), processBackgroundEnabled: processBackgroundEnabled,
-            processObservationStatus: processObservationStatus)
+            processObservationStatus: processObservationStatus,
+            routeEvidence: workflowPowerGuard.allowsSampling ? dualStackEvidence : nil, evidenceUptime: now,
+            addressEvidence: workflowPowerGuard.allowsSampling && rateFresh ? observedAddressEvidence : [:])
         if managementModel.snapshot != snapshot { managementModel.snapshot = snapshot }
         let ledgerStatus: String
         if alertLedgerBlockedDay == currentDateString {
@@ -1880,16 +1888,16 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     var isDetectingNetwork: Bool = false
     
+    private static func discoverDefaultRoute(ipv6: Bool) -> String? {
+        guard case .success(let output) = ProbeRunner.run("/sbin/route",
+            ["-n", "get", ipv6 ? "-inet6" : "-inet", "default"], timeout: 2, maxBytes: 65536)
+        else { return nil }
+        return DefaultRouteParser.interfaceName(output)
+    }
+
     private static func discoverDefaultIPv4() -> (interface: String, ip: String) {
-        guard case .success(let route) = ProbeRunner.run("/sbin/route", ["-n", "get", "default"], timeout: 2),
-              let line = route.components(separatedBy: .newlines).first(where: {
-                  $0.trimmingCharacters(in: .whitespaces).hasPrefix("interface:")
-              }),
-              let separator = line.firstIndex(of: ":") else { return ("", "") }
-        let name = line[line.index(after: separator)...].trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, name.count <= 32,
-              name.range(of: #"^[a-zA-Z0-9]+$"#, options: .regularExpression) != nil,
-              case .success(let address) = ProbeRunner.run("/usr/sbin/ipconfig", ["getifaddr", name], timeout: 2)
+        guard let name = discoverDefaultRoute(ipv6: false) else { return ("", "") }
+        guard case .success(let address) = ProbeRunner.run("/usr/sbin/ipconfig", ["getifaddr", name], timeout: 2)
         else { return (name, "") }
         let ip = address.trimmingCharacters(in: .whitespacesAndNewlines)
         var parsed = in_addr()
@@ -1900,7 +1908,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     private func applyDiscoveredNetwork(interface: String, ip: String) {
         if activeInterface != interface || currentIP != ip {
             networkQuality.reset()
-        resetQualityEvidence()
+            resetQualityEvidence()
             throughputWindow.reset()
             lastPingUptime = nil
             pingLatencyMs = -1
@@ -1927,6 +1935,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         let generation = workflowPowerGuard.generation
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let observed = RealtimeTrafficApp.discoverDefaultIPv4()
+            let ipv6 = RealtimeTrafficApp.discoverDefaultRoute(ipv6: true)
+            let evidence = DualStackEvidence(ipv4Interface: observed.interface.isEmpty ? nil : observed.interface,
+                ipv6Interface: ipv6, observedAt: ProcessInfo.processInfo.systemUptime)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isDetectingNetwork = false
@@ -1937,6 +1948,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                     return
                 }
                 self.applyDiscoveredNetwork(interface: observed.interface, ip: observed.ip)
+                self.dualStackEvidence = evidence
                 completion?()
             }
         }
@@ -1962,6 +1974,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     // Interface traffic includes link-local/LAN bytes, not authoritative campus quota.
     func readScopedInterfaces() -> [ScopedInterfaceSample] {
         observedTunnelCandidates = []
+        observedAddressEvidence = [:]
         let devices = SCNetworkInterfaceCopyAll() as NSArray
         var types: [String: String] = [:]
         for item in devices {
@@ -1980,6 +1993,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         var addresses: [String: [String]] = [:]
         var counters: [String: InterfaceCounters] = [:]
         var tunnels = Set<String>()
+        var familyEvidence: [String: InterfaceAddressEvidence] = [:]
         for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
             let item = pointer.pointee
             let name = String(cString: item.ifa_name)
@@ -1991,7 +2005,23 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
                 if getnameinfo(address, socklen_t(address.pointee.sa_len), &host,
                                socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 {
-                    addresses[name, default: []].append(String(cString: host))
+                    let ip = String(cString: host)
+                    addresses[name, default: []].append(ip)
+                    if (item.ifa_flags & UInt32(IFF_UP)) != 0 {
+                        if address.pointee.sa_family == UInt8(AF_INET) {
+                            familyEvidence[name, default: InterfaceAddressEvidence()].observeIPv4()
+                        } else {
+                            // fe80::/10 is link-local; the remaining address space
+                            // also includes ULA and does not imply global reachability.
+                            let numeric = ip.split(separator: "%").first.map(String.init) ?? ip
+                            var parsed = in6_addr()
+                            if inet_pton(AF_INET6, numeric, &parsed) == 1 {
+                                let bytes = withUnsafeBytes(of: &parsed) { Array($0) }
+                                let linkLocal = bytes.count >= 2 && bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80
+                                familyEvidence[name, default: InterfaceAddressEvidence()].observeIPv6(linkLocal: linkLocal)
+                            }
+                        }
+                    }
                 }
             } else if address.pointee.sa_family == UInt8(AF_LINK), let raw = item.ifa_data {
                 let data = raw.assumingMemoryBound(to: if_data.self).pointee
@@ -2000,6 +2030,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             }
         }
         observedTunnelCandidates = tunnels.sorted()
+        observedAddressEvidence = familyEvidence
         return counters.keys.sorted().compactMap { name in
             guard let counter = counters[name], let kind = types[name] else { return nil }
             let ips = addresses[name, default: []].sorted()
