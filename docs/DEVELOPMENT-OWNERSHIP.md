@@ -41,3 +41,7 @@ NetGuardRecovery contains only the pure transaction state machine, local journal
 ## Third module split
 
 NetGuardTraffic owns the raw counters, sampling quality, network scope and deterministic scoped accounting. It has no internal package dependencies. NetGuardCore re-exports the existing type names via source-level aliases, including TrafficSnapshot; the ValidatedContract protocol and its TrafficSnapshot conformance remain in NetGuardCore, so direct NetGuardTraffic consumers must not assume the validated decode API is available there. No wire schema or classification behavior changes are intended. The data and policy targets can subsequently depend on NetGuardTraffic without importing the integration layer. The app still uses flattened compilation.
+
+## Fourth module split
+
+NetGuardData owns SQLite history, scoped aggregation persistence, backup and read-only validation, legacy daily-state migration, historical period analytics, CSV and chart projection. Its sole internal dependency is NetGuardTraffic for the shared scope type. SQLite linkage now belongs to NetGuardData. The NetGuardCore aliases retain source-level compatibility; the app's flattened Makefile still compiles the original implementations. Independent tests cover the public Data module API without importing NetGuardCore. No database schema change or backup restore capability is introduced by this extraction.
