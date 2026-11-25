@@ -10,6 +10,7 @@ struct QuickPanel: View {
     let refresh: () -> Void
     let toggleFocus: () -> Void
     let toggleAlerts: () -> Void
+    let openHistory: () -> Void
     let openAdvanced: () -> Void
     @State private var showDetails = false
 
@@ -74,6 +75,8 @@ struct QuickPanel: View {
                     .font(.caption)
                     .padding(.top, 8)
                 }
+                Button("歷史流量與匯出", action: openHistory)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Button("開啟完整管理面板", action: openAdvanced)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
