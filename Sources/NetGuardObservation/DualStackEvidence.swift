@@ -1,19 +1,39 @@
 import Foundation
 
-/// Default-route evidence is not a reachability or per-flow routing guarantee.
+public enum DefaultRouteParseStatus: String, Equatable, Sendable {
+    case parsed, emptyOutput, missingInterface, ambiguousInterface, invalidInterface, outputLimit, invalidRouteFlags
+}
+public struct DefaultRouteParseResult: Equatable, Sendable {
+    public let status: DefaultRouteParseStatus
+    public let interfaceName: String?
+}
 public enum DefaultRouteParser {
-    public static func interfaceName(_ output: String) -> String? {
-        guard output.utf8.count <= 65_536 else { return nil }
-        let values = output.split(whereSeparator: \.isNewline).compactMap { line -> String? in
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard trimmed.hasPrefix("interface:") else { return nil }
-            return String(trimmed.dropFirst("interface:".count)).trimmingCharacters(in: .whitespaces)
+    public static func inspect(_ output: String) -> DefaultRouteParseResult {
+        func failure(_ status: DefaultRouteParseStatus) -> DefaultRouteParseResult {
+            .init(status: status, interfaceName: nil)
         }
-        guard values.count == 1, let name = values.first, (1...32).contains(name.utf8.count),
+        guard output.utf8.count <= 65_536 else { return failure(.outputLimit) }
+        guard !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return failure(.emptyOutput) }
+        var values: [String] = []
+        for line in output.split(whereSeparator: \.isNewline) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("flags:") {
+                let flags = trimmed.dropFirst("flags:".count)
+                    .split(whereSeparator: { $0 == "<" || $0 == ">" || $0 == "," || $0.isWhitespace })
+                if flags.contains("REJECT") || flags.contains("BLACKHOLE") { return failure(.invalidRouteFlags) }
+            }
+            guard let separator = trimmed.firstIndex(of: ":"),
+                  trimmed[..<separator].trimmingCharacters(in: .whitespaces) == "interface" else { continue }
+            values.append(String(trimmed[trimmed.index(after: separator)...]).trimmingCharacters(in: .whitespaces))
+        }
+        guard !values.isEmpty else { return failure(.missingInterface) }
+        guard values.count == 1 else { return failure(.ambiguousInterface) }
+        guard let name = values.first, (1...32).contains(name.utf8.count),
               name.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) })
-        else { return nil }
-        return name
+        else { return failure(.invalidInterface) }
+        return .init(status: .parsed, interfaceName: name)
     }
+    public static func interfaceName(_ output: String) -> String? { inspect(output).interfaceName }
 }
 
 /// Separate observed route families. Never selects a billing interface or
