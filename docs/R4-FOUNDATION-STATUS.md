@@ -25,3 +25,9 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 - Recovery rejects malformed journal entries before interpreting their state.
 - Applied simple-first UX in the legacy WebView: compact adaptive popover, primary information first, collapsed advanced section, keyboard focus styles, reduced motion, placeholder/unknown status, hidden unavailable quick actions. No claim of native SwiftUI completion or UX acceptance testing.
 - Contract freeze, full version validation of other shared models, provider policy verification, and real-device recovery remain open. CI evidence must correspond to exact HEAD.
+
+## Fifth iteration
+
+- Campus ranking now parses one row at a time, rejects duplicate or malformed matches, validates HTTPS response destination and limits response size. Displayed provider units remain unverified; never merge ranking numbers into local byte totals. Retrieval date/time, request identity, in-flight guard and freshness are tracked. Live campus format and accounting policies still require on-campus verification; the parser fixtures are synthetic.
+- Added structural v1 validation and validated decode for all eight shared contract types; authorization, cryptographic verification and version compatibility remain separate concerns. Three contract tests and five provider/parser tests added.
+- Added proposed role/path ownership and parallel unlock checklist. Contract freeze and full parallel development remain blocked pending integrated CI and review. No paid services.
