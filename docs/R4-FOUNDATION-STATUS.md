@@ -284,3 +284,7 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 ## Fifty-first iteration
 
 - Added session-only, opt-in abnormal traffic notifications using macOS UserNotifications. Separate from quota and legacy osascript notifications; only newly detected sustained high/surge events, global 120-second monotonic attempt cooldown, bounded UUID deduplication, no replay or gap notifications. Authorization explicitly requested; settings checked before submission; status distinguishes accepted request from actual delivery. Focus/sleep and route-generation guard before submission. In-flight accepted notifications cannot be recalled; no cross-restart cooldown or proof of delivery. One regression test and inert smoke callback. Candidate CI and real notification authorization/display remain unverified; unsigned build behavior is not established. No paid services or release.
+
+## Fifty-second iteration
+
+- Added separately opt-in AI workload-label history, fixed allowlist and independent hourly accumulator; observed increments only, separate directory, 30-day retention on successful save, seven-day per-tool comparison, explicit read and confirmed deletion. No PID, paths or endpoint persistence; shares observed process traffic, never add to general process totals. Existing history bundle does NOT yet include AI history. One serial caller; pending write blocks toggles/deletion, no cross-process lock. Two data tests, smoke fixture inert callbacks. No exact candidate CI; no paid services or release.

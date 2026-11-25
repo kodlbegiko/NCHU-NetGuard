@@ -19,6 +19,10 @@ final class ManagementModel: ObservableObject {
     @Published var connectionArchiveRows: [SavedConnectionSession] = []
     @Published var connectionArchiveStatus = "尚未讀取本機紀錄"
     @Published var connectionArchiveBusy = false
+    @Published var agentHistoryEnabled = false
+    @Published var agentHistoryBusy = false
+    @Published var agentHistoryStatus = "預設不保存"
+    @Published var agentHistoryDays: [ProcessHistoryDay] = []
     @Published var historyEnabled = false
     @Published var historyBusy = false
     @Published var historyRetention = 30
@@ -33,6 +37,9 @@ struct ManagementView: View {
     let setAlerts: (Bool) -> Void
     let setFocus: (Bool) -> Void
     let setHistoryEnabled: (Bool) -> Void
+    let setAgentHistoryEnabled: (Bool) -> Void
+    let reloadAgentHistory: () -> Void
+    let deleteAgentHistory: () -> Void
     let setProcessBackground: (Bool) -> Void
     let reloadHistory: () -> Void
     let testDNS: () -> Void
@@ -51,6 +58,8 @@ struct ManagementView: View {
     let setHistoryRetention: (Int) -> Void
     let deleteHistory: () -> Void
     @State private var tab = 0
+    @State private var showAgentHistory = false
+    @State private var confirmDeleteAgentHistory = false
     @State private var showFlowCheck = false
     @State private var flowTransport = FlowTransport.tcp
     @State private var connectionLabel = ""
@@ -190,6 +199,7 @@ struct ManagementView: View {
                                 }
                             } else if processMode == 3 {
                                 agentUsagePanel(snapshot)
+                                agentHistoryPanel
                             } else if processMode == 2 {
                                 processHistoryPanel
                             } else if let report = snapshot.sessionUsage {
@@ -709,6 +719,46 @@ struct ManagementView: View {
         case .specialUse: return "特殊用途"
         case .publicCandidate: return "公有位址候選"
         case .unknown: return "未知"
+        }
+    }
+
+
+    private var agentHistoryPanel: some View {
+        DisclosureGroup("AI 工具歷史（最近七日）", isExpanded: $showAgentHistory) {
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("本次執行允許儲存 AI 工具分類", isOn: Binding(
+                    get: { model.agentHistoryEnabled }, set: setAgentHistoryEnabled))
+                    .disabled(model.agentHistoryBusy)
+                Text("只保存固定 AI 工具分類與已觀測增量，保留 30 天（成功儲存時清理）。與程序統計重疊，不應相加；未包含在目前歷史備份。")
+                    .font(.caption2).foregroundStyle(.secondary)
+                HStack {
+                    Button("讀取歷史", action: reloadAgentHistory)
+                    Button("刪除 AI 歷史", role: .destructive) { confirmDeleteAgentHistory = true }
+                }.disabled(model.agentHistoryBusy)
+                if model.agentHistoryBusy { ProgressView().controlSize(.small) }
+                Text(model.agentHistoryStatus).font(.caption)
+                ForEach(model.agentHistoryDays, id: \.day) { day in
+                    Text(day.day + " · " + String(day.intervals) + " 個配對區間").font(.caption.weight(.medium))
+                    if day.buckets.isEmpty {
+                        Text("無觀測紀錄").font(.caption2).foregroundStyle(.secondary)
+                    } else if let rows = try? day.totals() {
+                        if rows.isEmpty { Text("無可歸屬非零增量").font(.caption2) }
+                        ForEach(rows) { row in
+                            HStack {
+                                Text(row.name)
+                                Spacer()
+                                Text(String(format: "↓ %.2f ↑ %.2f MiB", Double(row.download) / 1_048_576, Double(row.upload) / 1_048_576)).monospacedDigit()
+                            }.font(.caption)
+                        }
+                    } else { Text("無法驗證加總").font(.caption) }
+                    if day.limited { Text("部分資料未計入").font(.caption2) }
+                    Divider()
+                }
+            }
+        }
+        .alert("刪除 AI 工具歷史？", isPresented: $confirmDeleteAgentHistory) {
+            Button("取消", role: .cancel) {}
+            Button("刪除並停止保存", role: .destructive, action: deleteAgentHistory)
         }
     }
 

@@ -291,6 +291,15 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var appProbeTimestamp: TimeInterval?
     var processUsage = ProcessUsageAccumulator()
     var agentUsage = ProcessUsageAccumulator()
+    private var agentHistoryUsage = ProcessUsageAccumulator()
+    private var agentHistorySession = UUID()
+    private var agentHistoryKey: String?
+    private var agentHistoryDate: Date?
+    private var agentHistoryUptime: TimeInterval?
+    private let agentHistoryQueue = DispatchQueue(label: "NetGuard.agent-history", qos: .utility)
+    private var agentHistoryStore: AgentHistoryStore {
+        AgentHistoryStore(directory: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/NCHU-NetGuard/agent-history", isDirectory: true))
+    }
     var processHistoryUsage = ProcessUsageAccumulator()
     var processHistorySession = UUID()
     var processHistoryDay: String?
@@ -881,6 +890,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     private func breakProcessContinuity() {
         processUsage.breakContinuity()
         agentUsage.breakContinuity()
+        agentHistoryUsage.breakContinuity()
+        agentHistoryDate = nil
+        agentHistoryUptime = nil
         processHistoryUsage.breakContinuity()
         processHistoryLastDate = nil
         processHistoryLastUptime = nil
@@ -955,6 +967,87 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                     days: [])
             }
         }
+    }
+
+    private func setAgentHistoryEnabled(_ enabled: Bool) {
+        guard !managementModel.agentHistoryBusy else { return }
+        managementModel.agentHistoryEnabled = enabled
+        agentHistoryUsage = ProcessUsageAccumulator()
+        agentHistorySession = UUID()
+        agentHistoryKey = nil
+        agentHistoryDate = nil
+        agentHistoryUptime = nil
+        managementModel.agentHistoryStatus = enabled ? "已允許本次執行保存 AI 工具分類" : "停止保存；既有資料保留"
+    }
+
+    private func agentHistoryOperation(delete: Bool = false) {
+        guard !managementModel.agentHistoryBusy else { return }
+        if delete { setAgentHistoryEnabled(false) }
+        managementModel.agentHistoryBusy = true
+        let store = agentHistoryStore
+        agentHistoryQueue.async { [weak self] in
+            let days: [ProcessHistoryDay]?
+            do {
+                if delete { try store.removeAll() }
+                days = try store.readRecent()
+            } catch { days = nil }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.managementModel.agentHistoryBusy = false
+                self.managementModel.agentHistoryDays = days ?? []
+                self.managementModel.agentHistoryStatus = days == nil ? "AI 歷史操作失敗" : (delete ? "已刪除本機 AI 歷史" : "已讀取最近七日觀測")
+            }
+        }
+    }
+
+    private func recordAgentHistory(_ counters: [ProcessCounter]?, date: Date, uptime: TimeInterval) {
+        guard managementModel.agentHistoryEnabled else { return }
+        guard !managementModel.agentHistoryBusy, !historyBundleBusy else {
+            agentHistoryUsage.breakContinuity()
+            agentHistoryDate = nil
+            agentHistoryUptime = nil
+            return
+        }
+        let hour = ProcessHistoryStore.hour(at: date)
+        let key = hour.day + "-" + String(hour.hour)
+        let discontinuity = agentHistoryDate.map { prior in
+            guard let last = agentHistoryUptime else { return true }
+            return uptime <= last || abs(date.timeIntervalSince(prior) - (uptime - last)) > 2
+        } ?? false
+        if agentHistoryKey != key || discontinuity {
+            agentHistoryUsage = ProcessUsageAccumulator()
+            agentHistorySession = UUID()
+            agentHistoryKey = key
+        }
+        agentHistoryDate = date
+        agentHistoryUptime = uptime
+        let prior = agentHistoryUsage.report().measuredIntervals
+        agentHistoryUsage.ingest(counters, uptime: uptime)
+        let report = agentHistoryUsage.report()
+        guard report.measuredIntervals > prior else { return }
+        do {
+            let rows = try report.rows.map { try ProcessHistoryRow(name: $0.name, download: $0.received, upload: $0.sent) }
+            let bucket = try ProcessHistoryBucket(session: agentHistorySession, hour: hour.hour,
+                intervals: report.measuredIntervals, rows: rows, limited: report.capacityReached)
+            let store = agentHistoryStore
+            managementModel.agentHistoryBusy = true
+            agentHistoryQueue.async { [weak self] in
+                var message = "AI 觀測增量已儲存"
+                var days: [ProcessHistoryDay]?
+                do {
+                    try store.save(day: hour.day, bucket: bucket)
+                    do { try store.prune() } catch { message += "；清理逾期資料失敗" }
+                    do { days = try store.readRecent() } catch { message += "；讀取失敗"; days = [] }
+                } catch { message = "AI 歷史寫入失敗" }
+                let result = days, status = message
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.managementModel.agentHistoryBusy = false
+                    if let result { self.managementModel.agentHistoryDays = result }
+                    self.managementModel.agentHistoryStatus = status
+                }
+            }
+        } catch { managementModel.agentHistoryStatus = "AI 歷史資料無法驗證" }
     }
 
     private func recordProcessHistory(_ counters: [ProcessCounter]?, date: Date, uptime: TimeInterval) {
@@ -1462,6 +1555,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                     self.syncManagementModel()
                 },
                 setHistoryEnabled: { [weak self] in self?.setProcessHistoryEnabled($0) },
+                setAgentHistoryEnabled: { [weak self] in self?.setAgentHistoryEnabled($0) },
+                reloadAgentHistory: { [weak self] in self?.agentHistoryOperation() },
+                deleteAgentHistory: { [weak self] in self?.agentHistoryOperation(delete: true) },
                 setProcessBackground: { [weak self] in self?.setProcessBackgroundEnabled($0) },
                 reloadHistory: { [weak self] in self?.reloadProcessHistory() },
                 testDNS: { [weak self] in self?.testDNS() },
@@ -2549,6 +2645,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 if collectSession && self.processObservationAllowed && self.processObservationToken == token {
                     self.processUsage.ingest(counters, uptime: sampledAt)
                     self.agentUsage.ingest(attributed, uptime: sampledAt)
+                    self.recordAgentHistory(attributed, date: sampledDate, uptime: sampledAt)
                     self.recordProcessHistory(counters, date: sampledDate, uptime: sampledAt)
                 }
                 self.topAppConsumers = (observations ?? []).map { (name: $0.name, bytes: Double($0.bytes)) }
