@@ -25,3 +25,7 @@ Unlock checklist:
 - [ ] Integration owner confirms ownership, dependencies, review/merge policy and unlock scope.
 
 Do not confuse a documentation checklist with completion. No paid runners, cloud services, publication, signing or notarization. Read UX-PRINCIPLES.md before user-facing changes.
+
+## Machine-checkable boundary
+
+`docs/module-ownership.json` assigns every current flat core Swift source exactly one role. `tests/test_module_boundaries.py` verifies manifest coverage, the absence of UI framework imports in core, and a single core Process launcher. These are architectural static guardrails, not a security sandbox, GitHub CODEOWNERS enforcement, or independent package targets. Shared legacy runtime/build/contract changes still require integrator review. Future file additions must update the manifest and this allocation together.
