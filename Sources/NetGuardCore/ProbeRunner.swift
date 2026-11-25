@@ -9,7 +9,7 @@ public enum ProbeOutcome: Equatable, Sendable {
 /// can outlive the deadline; no guarantee of forced process-tree termination.
 enum ProbeRunner {
     static func run(_ path: String, _ arguments: [String], timeout: TimeInterval = 5,
-                    maxBytes: Int = 1_048_576) -> ProbeOutcome {
+                    maxBytes: Int = 1_048_576, acceptedExitCodes: Set<Int32> = [0]) -> ProbeOutcome {
         guard path.hasPrefix("/"), timeout.isFinite, timeout > 0, timeout <= 30,
               (1...4_194_304).contains(maxBytes) else { return .failed }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -45,7 +45,7 @@ enum ProbeRunner {
                 }
                 Thread.sleep(forTimeInterval: 0.025)
             }
-            guard process.terminationStatus == 0 else { return .failed }
+            guard process.terminationReason == .exit, acceptedExitCodes.contains(process.terminationStatus) else { return .failed }
             let reader = try FileHandle(forReadingFrom: url)
             defer { try? reader.close() }
             let bytes = try reader.read(upToCount: maxBytes + 1) ?? Data()
