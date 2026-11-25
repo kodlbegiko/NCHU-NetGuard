@@ -21,7 +21,10 @@ jobs:
       - name: Static guards and Python tests
         run: make test
       - name: Core Swift tests
-        run: swift test
+        run: swift test --enable-code-coverage
+      - name: Core line coverage evidence
+        run: |
+          python3 scripts/core_coverage.py --root "$PWD" --report "$(swift test --show-codecov-path)"
       - name: Legacy app build (no launch)
         run: make build
       - name: Verify bundle

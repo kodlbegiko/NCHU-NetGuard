@@ -48,3 +48,5 @@ Acceptance targets and dependencies follow ROADMAP.md, UX-PRINCIPLES.md, AGENTS.
 
 - R4-TRAFFIC: bounded local route-table candidate inspection in manual TCP/UDP observation; at most three numeric peers, two matching next-hop observations, matching interface required, tunnel overlap yields unknown. Route buckets reuse the same matched increments, never add to interface totals or destination buckets. No raw endpoints are retained; route-table observations do not prove packet path, LAN/Internet billing or tunnel dedup. Candidate fee2ee0a, exact CI pending.
 - R4-POLICY: tri-state connection and normal quota tier remain editable without silently dropping an existing condition; mutation rejects unsupported or invalid source rule sets. Regression added.
+
+- R5-QA: CI now generates Swift coverage and reports weighted production Sources line counts, missing source inventory and the unchanged 90% target. Missing files or insufficient coverage cannot imply the target was met. Foundation CI does not gate on the target yet; release remains gated. Synthetic Python regression covers weighted counts, absent source, invalid count and duplicate file. Exact CI evidence pending.
