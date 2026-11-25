@@ -14,6 +14,25 @@ final class TrafficModuleTests: XCTestCase {
         XCTAssertEqual(result["en1"]?.delta.quality, .unknown)
     }
 
+    func testDailyLedgerUsesExactIntegerTotalsAndRejectsOverflowAtomically() {
+        var ledger = DailyTrafficLedger()
+        XCTAssertTrue(ledger.add(scope: .dorm, received: 10, sent: 5))
+        XCTAssertTrue(ledger.add(scope: .external, received: 20, sent: 2))
+        XCTAssertTrue(ledger.add(scope: .unknown, received: 1, sent: 0))
+        XCTAssertEqual(ledger.aggregate, .init(received: 31, sent: 7))
+        XCTAssertEqual(ledger.totals(for: .dorm), .init(received: 10, sent: 5))
+        let prior = ledger
+        XCTAssertFalse(ledger.add(scope: .campusWifi, received: UInt64.max, sent: 1))
+        XCTAssertEqual(ledger, prior)
+        XCTAssertFalse(ledger.add(scope: .dorm, received: DailyTrafficLedger.maximumTotal, sent: 0))
+        XCTAssertEqual(ledger, prior)
+    }
+    func testExactCeilingAndNextByteRejected() {
+        var ledger = DailyTrafficLedger()
+        XCTAssertTrue(ledger.add(scope: .external, received: DailyTrafficLedger.maximumTotal - 1, sent: 1))
+        XCTAssertFalse(ledger.add(scope: .unknown, received: 1, sent: 0))
+        XCTAssertEqual(ledger.aggregate.received, DailyTrafficLedger.maximumTotal - 1)
+    }
     func testScopeProjectionRejectsAmbiguousIdentity() {
         let counters = InterfaceCounters(interfaceID: "en0", received: 1, sent: 2)
         XCTAssertEqual(InterfaceScopeProjection.scopes([

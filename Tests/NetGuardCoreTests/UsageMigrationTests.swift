@@ -29,6 +29,11 @@ final class UsageMigrationTests: XCTestCase {
         }
     }
 
+    func testAggregateCeilingAndDocumentSize() throws {
+        XCTAssertThrowsError(try decode(#"{"date":"2026-11-25","dorm_in":9007199254740991,"ext_out":1}"#))
+        XCTAssertThrowsError(try UsageMigration.decode(Data(repeating: 32, count: 1_048_577)))
+        XCTAssertEqual(try decode(#"{"date":"2026-11-25","dorm_in":9007199254740990,"ext_out":1}"#).externalOut, 1)
+    }
     func testCurrentVersionPreservesCounts() throws {
         let s = try decode(#"{"schema_version":1,"date":"2026-11-25","dorm_in":10,"dorm_out":5,"ext_in":40,"sample_gap_count":2}"#)
         XCTAssertEqual(s.schemaVersion, 1)

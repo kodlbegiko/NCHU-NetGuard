@@ -79,3 +79,35 @@ public enum InterfaceScopeProjection {
         }
     }
 }
+
+public struct DailyScopeTotals: Equatable, Sendable {
+    public let received: UInt64
+    public let sent: UInt64
+    public init(received: UInt64 = 0, sent: UInt64 = 0) {
+        self.received = received; self.sent = sent
+    }
+}
+
+/// Checked integer accounting. The ceiling preserves lossless v1 compatibility.
+public struct DailyTrafficLedger: Equatable, Sendable {
+    public static let maximumTotal: UInt64 = 9_007_199_254_740_991
+    private var buckets: [NetworkScope: DailyScopeTotals] = [:]
+    public private(set) var aggregate = DailyScopeTotals()
+    public init() {}
+    public func totals(for scope: NetworkScope) -> DailyScopeTotals {
+        buckets[scope] ?? DailyScopeTotals()
+    }
+    @discardableResult
+    public mutating func add(scope: NetworkScope, received: UInt64, sent: UInt64) -> Bool {
+        let prior = totals(for: scope)
+        let (dl, a) = prior.received.addingReportingOverflow(received)
+        let (ul, b) = prior.sent.addingReportingOverflow(sent)
+        let (allDL, c) = aggregate.received.addingReportingOverflow(received)
+        let (allUL, d) = aggregate.sent.addingReportingOverflow(sent)
+        let (total, e) = allDL.addingReportingOverflow(allUL)
+        guard !a, !b, !c, !d, !e, total <= Self.maximumTotal else { return false }
+        buckets[scope] = DailyScopeTotals(received: dl, sent: ul)
+        aggregate = DailyScopeTotals(received: allDL, sent: allUL)
+        return true
+    }
+}
