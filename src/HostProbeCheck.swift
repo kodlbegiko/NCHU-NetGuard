@@ -12,7 +12,7 @@ enum HostProbeCheck {
 
     static func run() -> Int32 {
         let before = tree()
-        let nettop = ProbeRunner.run("/usr/bin/nettop", ["-P", "-L", "1", "-J", "bytes_in,bytes_out"], timeout: 5)
+        let nettop = ProbeRunner.runApproved("/usr/bin/nettop", ["-P", "-L", "1", "-J", "bytes_in,bytes_out"], timeout: 5)
         let after = tree()
         let selfPID = Int(ProcessInfo.processInfo.processIdentifier)
         let ps: Result
@@ -52,13 +52,13 @@ enum HostProbeCheck {
     }
 
     private static func tree() -> [Int: ProcessTreeNode]? {
-        guard case .success(let raw) = ProbeRunner.run("/bin/ps",
+        guard case .success(let raw) = ProbeRunner.runApproved("/bin/ps",
             ["-ax", "-o", "pid=,ppid=,lstart=,comm="], timeout: 2) else { return nil }
         return AgentAttribution.parseTree(raw)
     }
 
     private static func route(ipv6: Bool) -> Result {
-        guard case .success(let raw) = ProbeRunner.run("/sbin/route",
+        guard case .success(let raw) = ProbeRunner.runApproved("/sbin/route",
             ["-n", "get", ipv6 ? "-inet6" : "-inet", "default"], timeout: 2, maxBytes: 65536)
         else { return .unavailable }
         let result = DefaultRouteParser.inspect(raw)
@@ -81,7 +81,7 @@ enum HostProbeCheck {
         var lines: [String] = []
         func snapshot(_ phase: String) -> ([TCPFlowCounter]?, TimeInterval) {
             let before = tree()
-            let outcome = ProbeRunner.run("/usr/bin/nettop",
+            let outcome = ProbeRunner.runApproved("/usr/bin/nettop",
                 ["-m", transport.rawValue, "-n", "-x", "-L", "1", "-J", "bytes_in,bytes_out,interface,state"], timeout: 5)
             let uptime = ProcessInfo.processInfo.systemUptime
             let after = tree()
@@ -114,7 +114,7 @@ enum HostProbeCheck {
                 guard !peer.isEmpty, peer.utf8.count <= 64,
                       peer.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) ||
                           (65...70).contains($0) || $0 == 46 || $0 == 58 }) else { continue }
-                if case .success(let raw) = ProbeRunner.run("/sbin/route",
+                if case .success(let raw) = ProbeRunner.runApproved("/sbin/route",
                     ["-n", "get", peer.contains(":") ? "-inet6" : "-inet", peer],
                     timeout: 0.75, maxBytes: 16_384), let evidence = RoutePathParser.inspect(raw) {
                     result[peer] = evidence

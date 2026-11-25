@@ -2109,7 +2109,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
     var isDetectingNetwork: Bool = false
     
     private static func discoverDefaultRoute(ipv6: Bool) -> String? {
-        guard case .success(let output) = ProbeRunner.run("/sbin/route",
+        guard case .success(let output) = ProbeRunner.runApproved("/sbin/route",
             ["-n", "get", ipv6 ? "-inet6" : "-inet", "default"], timeout: 2, maxBytes: 65536)
         else { return nil }
         return DefaultRouteParser.interfaceName(output)
@@ -2117,7 +2117,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
 
     private static func discoverDefaultIPv4() -> (interface: String, ip: String) {
         guard let name = discoverDefaultRoute(ipv6: false) else { return ("", "") }
-        guard case .success(let address) = ProbeRunner.run("/usr/sbin/ipconfig", ["getifaddr", name], timeout: 2)
+        guard case .success(let address) = ProbeRunner.runApproved("/usr/sbin/ipconfig", ["getifaddr", name], timeout: 2)
         else { return (name, "") }
         let ip = address.trimmingCharacters(in: .whitespacesAndNewlines)
         var parsed = in_addr()
@@ -2316,7 +2316,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         let generation = workflowPowerGuard.generation
         syncManagementModel()
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let outcome = ProbeRunner.run("/usr/bin/dig", ["-r", "+time=2", "+tries=1", "+noall", "+comments", "+stats", "example.com.", "A"], timeout: 4, maxBytes: 65536)
+            let outcome = ProbeRunner.runApproved("/usr/bin/dig", ["-r", "+time=2", "+tries=1", "+noall", "+comments", "+stats", "example.com.", "A"], timeout: 4, maxBytes: 65536)
             let reading: DNSProbeReading?
             if case .success(let raw) = outcome { reading = DNSProbeParser.parse(raw) }
             else { reading = nil }
@@ -2353,7 +2353,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             echoTarget = target
         }
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let outcome = ProbeRunner.run("/sbin/ping", ["-c", "2", "-t", "3", target], timeout: 5, maxBytes: 65536, acceptedExitCodes: [0, 2])
+            let outcome = ProbeRunner.runApproved("/sbin/ping", ["-c", "2", "-t", "3", target], timeout: 5, maxBytes: 65536, acceptedExitCodes: [0, 2])
             let reading: EchoProbeReading?
             if case .success(let raw) = outcome { reading = EchoProbeParser.parse(raw, expectedCount: 2) }
             else { reading = nil }
@@ -2381,17 +2381,17 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         let token = processObservationToken
         DispatchQueue.global(qos: .background).async { [weak self] in
             let before: [Int: ProcessTreeNode]?
-            if collectSession, case .success(let raw) = ProbeRunner.run("/bin/ps", ["-ax", "-o", "pid=,ppid=,lstart=,comm="], timeout: 2) {
+            if collectSession, case .success(let raw) = ProbeRunner.runApproved("/bin/ps", ["-ax", "-o", "pid=,ppid=,lstart=,comm="], timeout: 2) {
                 let parsed = AgentAttribution.parseTree(raw)
                 before = parsed.isEmpty ? nil : parsed
             } else { before = nil }
-            let outcome = ProbeRunner.run("/usr/bin/nettop", ["-P", "-L", "1", "-J", "bytes_in,bytes_out"], timeout: 5)
+            let outcome = ProbeRunner.runApproved("/usr/bin/nettop", ["-P", "-L", "1", "-J", "bytes_in,bytes_out"], timeout: 5)
             let sampledAt = ProcessInfo.processInfo.systemUptime
             let sampledDate = Date()
             let counters: [ProcessCounter]?
             let attributed: [ProcessCounter]?
             if let before, case .success(let raw) = outcome,
-               case .success(let afterOutput) = ProbeRunner.run("/bin/ps", ["-ax", "-o", "pid=,ppid=,lstart=,comm="], timeout: 2) {
+               case .success(let afterOutput) = ProbeRunner.runApproved("/bin/ps", ["-ax", "-o", "pid=,ppid=,lstart=,comm="], timeout: 2) {
                 let after = AgentAttribution.parseTree(afterOutput)
                 counters = after.isEmpty ? nil : ProcessCounterParser.parse(raw, before: before.mapValues { $0.start }, after: after.mapValues { $0.start })
                 attributed = AgentAttribution.attributed(counters, before: before, after: after)
@@ -2736,7 +2736,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             lastCriticalNotificationTime = now
         }
         DispatchQueue.global(qos: .utility).async {
-            _ = ProbeRunner.run("/usr/bin/osascript", ["-e", "on run argv", "-e",
+            _ = ProbeRunner.runApproved("/usr/bin/osascript", ["-e", "on run argv", "-e",
                 "display notification (item 2 of argv) with title (item 1 of argv)",
                 "-e", "end run", "--", title, body], timeout: 5)
         }
@@ -2884,7 +2884,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                 }
             }
             guard let scriptPath = Bundle.main.url(forResource: "traffic_monitor", withExtension: "py")?.path else { return }
-            guard case .success(let output) = ProbeRunner.run("/usr/bin/python3", [scriptPath, "--json"], timeout: 15),
+            guard case .success(let output) = ProbeRunner.runApproved("/usr/bin/python3", [scriptPath, "--json"], timeout: 15),
                   let data = output.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   json["schema_version"] as? Int == 1,

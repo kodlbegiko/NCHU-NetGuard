@@ -15,6 +15,17 @@ final class ProbeQualityTests: XCTestCase {
         XCTAssertEqual(ProbeRunner.run("/usr/bin/yes", [], timeout: 2, maxBytes: 32_768), .outputLimit)
         XCTAssertEqual(ProbeRunner.run("/usr/bin/false", [], acceptedExitCodes: [1]), .success(""))
     }
+    func testProductionProbeArgumentPolicy() {
+        XCTAssertTrue(ProbeRunner.isApproved("/sbin/route", ["-n", "get", "-inet", "192.0.2.1"]))
+        XCTAssertTrue(ProbeRunner.isApproved("/sbin/route", ["-n", "get", "-inet6", "2001:db8::1"]))
+        XCTAssertTrue(ProbeRunner.isApproved("/usr/sbin/ipconfig", ["getifaddr", "en0"]))
+        XCTAssertFalse(ProbeRunner.isApproved("/sbin/route", ["add", "default", "192.0.2.1"]))
+        XCTAssertFalse(ProbeRunner.isApproved("/sbin/route", ["-n", "get", "-inet", "-bad"]))
+        XCTAssertFalse(ProbeRunner.isApproved("/usr/sbin/ipconfig", ["getifaddr", "en0;bad"]))
+        XCTAssertFalse(ProbeRunner.isApproved("/usr/bin/osascript", ["-e", "do shell script \"anything\""]))
+        XCTAssertFalse(ProbeRunner.isApproved("/usr/bin/python3", ["/tmp/unknown.py", "--json"]))
+        XCTAssertEqual(ProbeRunner.runApproved("/usr/bin/printf", ["hello"]), .failed)
+    }
     func testQualityRequiresFreshSamples() {
         var window = NetworkQualityWindow()
         window.ingest(latency: 20, uptime: 10)
