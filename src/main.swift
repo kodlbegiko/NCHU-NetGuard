@@ -149,6 +149,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     let quickPanelModel = QuickPanelModel()
     var historyWindowController: NSWindowController?
     var settingsWindowController: NSWindowController?
+    var managementWindowController: NSWindowController?
+    let managementModel = ManagementModel()
     let settingsModel = NetGuardSettingsModel()
     var activeSpeedMeasured = false
     
@@ -757,7 +759,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         // 僅在面板打開時定期採樣 nettop，避免在背景無謂消耗 CPU 與電量
         appInspectTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            if self.popover.isShown {
+            if self.popover.isShown || self.managementWindowController?.window?.isVisible == true {
                 self.inspectTopAppConsumers()
             }
         }
@@ -765,7 +767,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         // 延遲偵測在面板打開時更新，背景降低頻率至 60 秒
         pingTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            if self.popover.isShown {
+            if self.popover.isShown || self.managementWindowController?.window?.isVisible == true {
                 self.measurePingLatency()
             }
         }
@@ -802,6 +804,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 toggleAlerts: { [weak self] in self?.handleToggleAlert(); self?.pushDataToWebUI() },
                 openHistory: { [weak self] in self?.openHistoryAnalytics() },
                 openSettings: { [weak self] in self?.openNativeSettings() },
+                openManagement: { [weak self] in self?.openNativeManagement() },
                 openAdvanced: { [weak self] in self?.switchPanel(native: false) }
             ))
             return
@@ -893,6 +896,55 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
+    }
+
+    func syncManagementModel() {
+        let now = ProcessInfo.processInfo.systemUptime
+        let connected = isConnected && workflowPowerGuard.allowsSampling
+        let scope = sampledScopes[activeInterface] ?? .unknown
+        let rows = topAppConsumers.compactMap { item -> ProcessSampleRow? in
+            guard let bytes = UInt64(exactly: item.bytes) else { return nil }
+            return ProcessSampleRow(name: item.name, bytes: bytes)
+        }
+        _ = TrafficHistoryManager.shared.loadHistory()
+        let input = DiagnosticInput(connected: connected, scope: scope,
+            persistenceHealthy: !persistenceBlocked && TrafficHistoryManager.shared.healthy && !persistenceStatus.contains("失敗"),
+            sampleGapCount: sampleGapCount,
+            providerFresh: providerObservation?.isFresh(for: getTodayString(), now: Date()) == true && providerObservation?.status == .listed)
+        let snapshot = ManagementSnapshot(scopes: sampledScopes, defaultInterface: activeInterface,
+            connectionKnown: connected, latencyStatus: networkQuality.state(at: now).description,
+            processRows: rows, processAge: appProbeTimestamp.map { now - $0 },
+            focusEnabled: workflowPowerGuard.focusEnabled, diagnosticInput: input, providerStatus: providerStatusText)
+        if managementModel.snapshot != snapshot { managementModel.snapshot = snapshot }
+    }
+
+    @objc func openNativeManagement() {
+        popover?.performClose(nil)
+        syncManagementModel()
+        let controller: NSWindowController
+        if let existing = managementWindowController {
+            controller = existing
+        } else {
+            let content = NSHostingController(rootView: ManagementView(
+                model: managementModel,
+                refresh: { [weak self] in self?.manualRefresh(); self?.syncManagementModel() },
+                openProvider: { [weak self] in self?.openTop100() }
+            ))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 510),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+            window.title = "NetGuard · 網路管理"
+            window.contentViewController = content
+            window.minSize = NSSize(width: 460, height: 400)
+            window.isReleasedWhenClosed = false
+            window.center()
+            controller = NSWindowController(window: window)
+            managementWindowController = controller
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        measurePingLatency()
+        inspectTopAppConsumers()
     }
 
     func syncSettingsModel() {
@@ -1750,6 +1802,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         
         updateStatusBar()
         if settingsWindowController?.window?.isVisible == true { syncSettingsModel() }
+        if managementWindowController?.window?.isVisible == true { syncManagementModel() }
         
         if popover.isShown {
             pushDataToWebUI()
@@ -2058,6 +2111,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         let settingsItem = NSMenuItem(title: "原生設定中心", action: #selector(openNativeSettings), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
+        let managementItem = NSMenuItem(title: "原生網路管理與診斷", action: #selector(openNativeManagement), keyEquivalent: "")
+        managementItem.target = self
+        menu.addItem(managementItem)
         menu.addItem(NSMenuItem.separator())
         
         let netModeMenu = NSMenu()
