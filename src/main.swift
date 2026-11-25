@@ -55,6 +55,12 @@ class TrafficHistoryManager {
         return cache
     }
 
+    func analyticsRecords() throws -> [HistoryDay] {
+        initialize()
+        guard let store else { throw HistoryStoreError.database("unavailable") }
+        return try store.recent(limit: 366)
+    }
+
     @discardableResult
     func recordDay(date: String, dl: Double, ul: Double) -> Bool {
         initialize()
@@ -141,6 +147,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var webView: WKWebView!
     var nativePanelEnabled = false
     let quickPanelModel = QuickPanelModel()
+    var historyWindowController: NSWindowController?
     var activeSpeedMeasured = false
     
     var secondTimer: Timer?
@@ -791,6 +798,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 refresh: { [weak self] in self?.manualRefresh() },
                 toggleFocus: { [weak self] in self?.toggleFocusMode() },
                 toggleAlerts: { [weak self] in self?.handleToggleAlert(); self?.pushDataToWebUI() },
+                openHistory: { [weak self] in self?.openHistoryAnalytics() },
                 openAdvanced: { [weak self] in self?.switchPanel(native: false) }
             ))
             return
@@ -846,6 +854,41 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         if let button = statusItem.button {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
+    }
+
+    @objc func openHistoryAnalytics() {
+        popover?.performClose(nil)
+        let manager = TrafficHistoryManager.shared
+        let records: [HistoryDay]
+        let healthy: Bool
+        do {
+            records = try manager.analyticsRecords()
+            healthy = manager.healthy
+        } catch {
+            records = []
+            healthy = false
+        }
+        let content = NSHostingController(rootView: HistoryAnalyticsView(
+            records: records, today: getTodayString(), storageHealthy: healthy))
+        let controller: NSWindowController
+        if let existing = historyWindowController, let window = existing.window {
+            controller = existing
+            window.contentViewController = content
+        } else {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 560),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                backing: .buffered, defer: false)
+            window.title = "NetGuard · 歷史流量"
+            window.contentViewController = content
+            window.minSize = NSSize(width: 480, height: 420)
+            window.isReleasedWhenClosed = false
+            window.center()
+            controller = NSWindowController(window: window)
+            historyWindowController = controller
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
     }
 
     @objc func toggleNativePanelPreview() {
@@ -1948,6 +1991,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         let nativeItem = NSMenuItem(title: nativePanelEnabled ? "返回完整管理面板" : "試用原生快速面板（預覽）", action: #selector(toggleNativePanelPreview), keyEquivalent: "")
         nativeItem.target = self
         menu.addItem(nativeItem)
+        let historyItem = NSMenuItem(title: "歷史流量與 CSV 匯出", action: #selector(openHistoryAnalytics), keyEquivalent: "")
+        historyItem.target = self
+        menu.addItem(historyItem)
         menu.addItem(NSMenuItem.separator())
         
         let netModeMenu = NSMenu()
