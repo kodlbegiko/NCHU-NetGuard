@@ -5,6 +5,8 @@ final class ManagementModel: ObservableObject {
     @Published var snapshot: ManagementSnapshot?
     @Published var automation: AutomationSnapshot?
     @Published var historyEnabled = false
+    @Published var historyBusy = false
+    @Published var historyRetention = 30
     @Published var historyStatus = "預設關閉；不儲存程序名稱"
     @Published var historyDays: [ProcessHistoryDay] = []
 }
@@ -17,6 +19,8 @@ struct ManagementView: View {
     let setFocus: (Bool) -> Void
     let setHistoryEnabled: (Bool) -> Void
     let reloadHistory: () -> Void
+    let setHistoryRetention: (Int) -> Void
+    let deleteHistory: () -> Void
     @State private var tab = 0
     @State private var selectedInterface: String? = nil
     @State private var processQuery = ""
@@ -24,6 +28,7 @@ struct ManagementView: View {
     @State private var processMode = 0
     @State private var historyDayIndex = 0
     @State private var historyHour = -1
+    @State private var confirmDeleteHistory = false
 
     private func visibleProcesses(_ rows: [ProcessSampleRow]) -> [ProcessSampleRow] {
         ProcessSamplePresentation.visible(rows, query: processQuery,
@@ -175,10 +180,31 @@ struct ManagementView: View {
         VStack(alignment: .leading, spacing: 10) {
             Toggle("本次執行允許儲存程序歷史", isOn: Binding(
                 get: { model.historyEnabled }, set: setHistoryEnabled))
+                .disabled(model.historyBusy)
             Text("預設關閉。只儲存程序名稱與雙向觀測增量；不儲存 PID、IP 或目的地。停止後保留舊資料，不包含在一般流量資料庫備份。")
                 .font(.caption).foregroundStyle(.secondary)
             Text(model.historyStatus).font(.caption)
-            Button("讀取本機歷史", action: reloadHistory)
+            Picker("保留期限（本次執行）", selection: Binding(
+                get: { model.historyRetention }, set: setHistoryRetention)) {
+                Text("7 天").tag(7)
+                Text("30 天").tag(30)
+                Text("90 天").tag(90)
+            }.disabled(model.historyBusy)
+            Text("啟用紀錄後，每次成功儲存將依保留期限清理舊檔；未啟用時不自動清理。")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Button("讀取本機歷史", action: reloadHistory)
+                Button("刪除所有程序歷史", role: .destructive) { confirmDeleteHistory = true }
+            }.disabled(model.historyBusy)
+            .alert("刪除所有程序歷史？", isPresented: $confirmDeleteHistory) {
+                Button("取消", role: .cancel) {}
+                Button("刪除並停止記錄", role: .destructive, action: deleteHistory)
+            } message: {
+                Text("將刪除本機程序歷史檔案，無法由 NetGuard 復原；一般流量帳本不受影響。")
+            }
+            if model.historyBusy {
+                ProgressView("正在處理本機歷史").controlSize(.small)
+            }
             Picker("日期", selection: $historyDayIndex) {
                 Text("今日").tag(0)
                 Text("昨日").tag(1)
