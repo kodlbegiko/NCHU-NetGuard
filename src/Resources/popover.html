@@ -933,43 +933,11 @@
 
   <!-- Smart Routing & Campus Diagnostics Card -->
   <div class="card" style="margin-top: 8px; padding: 10px 11px;">
-    <!-- Smart Speed Race & Auto-Switch Row -->
-    <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 7px; border-bottom: 1px solid var(--hist-border); cursor: pointer;" onclick="callNative('toggleSpeedAutoSwitch')">
-      <div style="display: flex; align-items: center; gap: 7px; min-width: 0;">
-        <div class="icon-bubble" style="font-size: 13px; width: 24px; height: 24px; min-width: 24px;">⚡</div>
-        <div style="min-width: 0;">
-          <div style="display: flex; align-items: center; gap: 5px;">
-            <span style="font-size: 11px; font-weight: 700; color: var(--text-main);">慢速自動換快網</span>
-            <span id="speed-race-badge" style="font-size: 8.5px; padding: 1px 5px; border-radius: 4px; background: var(--capsule-safe-badge-bg); color: var(--capsule-safe-badge-text); font-weight: 700;">🔌 4.0ms 勝出</span>
-          </div>
-          <div style="font-size: 8.5px; color: var(--text-muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="speed-race-desc">有線 22.8M (4ms) vs 無線 1.0M (46ms) • 變慢秒切</div>
-        </div>
-      </div>
-      <div style="display: flex; align-items: center; gap: 5px; flex-shrink: 0;">
-        <button class="btn" id="speed-race-btn" style="padding: 2px 6px; font-size: 9px;" onclick="event.stopPropagation(); callNative('runSpeedRaceNow')">⚡ 競速</button>
-        <div class="switch-control on" id="speed-auto-switch-control" style="transform: scale(0.82); transform-origin: right center;">
-          <div class="switch-knob"></div>
-        </div>
-      </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding-bottom:8px;border-bottom:1px solid var(--hist-border);">
+      <div><strong style="font-size:11px;">網路延遲品質</strong><div id="network-quality-status" style="font-size:10px;color:var(--text-muted);">尚未取得樣本</div></div>
+      <button class="btn" onclick="callNative('runSpeedRaceNow')">更新延遲</button>
     </div>
-
-    <!-- Dual Interface Split Routing Row -->
-    <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 7px; padding-bottom: 7px; border-bottom: 1px solid var(--hist-border); cursor: pointer;" onclick="callNative('toggleSplitRouting')">
-      <div style="display: flex; align-items: center; gap: 7px; min-width: 0;">
-        <div class="icon-bubble" style="font-size: 13px; width: 24px; height: 24px; min-width: 24px;">🔀</div>
-        <div style="min-width: 0;">
-          <div style="display: flex; align-items: center; gap: 5px;">
-            <span style="font-size: 11px; font-weight: 700; color: var(--text-main);">雙軌智慧分流</span>
-            <span style="font-size: 8.5px; padding: 1px 4px; border-radius: 4px; background: var(--mode-wifi-bg); color: var(--mode-wifi-text); font-weight: 600;" id="split-mode-tag">Codex專線+影音分流</span>
-          </div>
-          <div style="font-size: 8.5px; color: var(--text-muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="split-routing-status">🟢 Codex 走 4ms 有線 • YouTube/更新分流 Wi-Fi</div>
-        </div>
-      </div>
-      <div class="switch-control on" id="split-switch-control" style="transform: scale(0.82); transform-origin: right center;">
-        <div class="switch-knob"></div>
-      </div>
-    </div>
-
+    <div style="font-size:10px;color:var(--text-muted);padding:8px 0;">自動切換、分流與雙網測速尚未開放。</div>
     <!-- Blacklist Diagnostics Row -->
     <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 7px;">
       <div style="display: flex; align-items: center; gap: 7px; min-width: 0;">
@@ -1184,6 +1152,7 @@
       if (data.date) document.getElementById('date-label').innerText = data.date + ipInfo;
 
       if (data.latencyStr) document.getElementById('latency-text').innerText = data.latencyStr;
+      document.getElementById('network-quality-status').textContent = data.networkQualityStatus || '延遲未知';
 
       if (data.runoutText) {
         var runoutEl = document.getElementById('runout-text');
@@ -1307,73 +1276,6 @@
         }
       }
 
-      // Smart Speed Race & Auto-Switch Control
-      if (typeof data.isSpeedAutoSwitchEnabled !== 'undefined') {
-        var spdCtrl = document.getElementById('speed-auto-switch-control');
-        var spdBadge = document.getElementById('speed-race-badge');
-        var spdDesc = document.getElementById('speed-race-desc');
-        var spdBtn = document.getElementById('speed-race-btn');
-        if (spdCtrl) {
-          if (data.isSpeedAutoSwitchEnabled) spdCtrl.classList.add('on');
-          else spdCtrl.classList.remove('on');
-        }
-        if (spdBtn) {
-          spdBtn.innerText = data.isRunningSpeedRace ? '⏳ 測速中' : '⚡ 競速';
-        }
-        var wPing = data.wiredReachable ? (data.wiredPingMs + 'ms') : '中斷';
-        var wfPing = data.wifiReachable ? (data.wifiPingMs + 'ms') : '中斷';
-        var wMbps = data.wiredReachable ? (data.wiredSpeedMbps + 'M') : '0M';
-        var wfMbps = data.wifiReachable ? (data.wifiSpeedMbps + 'M') : '0M';
-        if (spdBadge) {
-          if (data.isRunningSpeedRace) {
-            spdBadge.innerText = '⏳ 雙網競速中...';
-          } else if (data.activeInterface === 'en6' && data.wiredReachable) {
-            spdBadge.innerText = '🔌 有線 ' + wPing + ' 勝出';
-            spdBadge.style.background = 'var(--capsule-safe-badge-bg)';
-            spdBadge.style.color = 'var(--capsule-safe-badge-text)';
-          } else {
-            spdBadge.innerText = '🛜 無線 ' + wfPing + ' 接管';
-            spdBadge.style.background = 'var(--mode-wifi-bg)';
-            spdBadge.style.color = 'var(--mode-wifi-text)';
-          }
-        }
-        if (spdDesc) {
-          var statusPrefix = data.isSpeedAutoSwitchEnabled ? '🟢 自動擇優：' : '⚪ 僅監測：';
-          spdDesc.innerText = statusPrefix + '有線 ' + wMbps + ' (' + wPing + ') vs 無線 ' + wfMbps + ' (' + wfPing + ')';
-        }
-      }
-
-      // Dual-Interface Split Routing Control & Status
-      if (typeof data.isSplitRoutingEnabled !== 'undefined') {
-        var splitCtrl = document.getElementById('split-switch-control');
-        var splitDesc = document.getElementById('split-routing-status');
-        var splitTag = document.getElementById('split-mode-tag');
-        if (splitCtrl) {
-          if (data.isSplitRoutingEnabled) {
-            splitCtrl.classList.add('on');
-            if (!data.isWiredTemporarilyDisabled) {
-              if (splitTag) splitTag.innerText = 'Codex專線+影音分流';
-              if (splitDesc) splitDesc.innerText = '🟢 Codex 走 4ms 有線 • YouTube/背景更新分流 Wi-Fi';
-            } else {
-              if (splitTag) splitTag.innerText = '校內千兆免額度';
-              if (splitDesc) splitDesc.innerText = '🟢 校內 140.120.* 走千兆 • 外網走 Wi-Fi';
-            }
-          } else {
-            splitCtrl.classList.remove('on');
-            if (splitDesc) splitDesc.innerText = '⚪ 未開啟：所有流量走同一介面';
-          }
-        }
-      }
-
-      const accountingStatus = document.getElementById('accounting-status');
-      if (accountingStatus) {
-        accountingStatus.textContent = '介面：' + (data.observedInterfaces || '未知') +
-          '｜未歸屬：' + (data.unattributedTotalStr || '未知') +
-          '｜採樣缺口：' + (data.sampleGapCount ?? '未知') +
-          '；介面統計含區網流量，不等同校方用量。' +
-          '｜' + (data.persistenceStatus || '儲存狀態未知');
-      }
-
       // NCHU Blacklist Diagnostics
       var blBadge = document.getElementById('blacklist-badge');
       var blDesc = document.getElementById('blacklist-status-desc');
@@ -1402,12 +1304,24 @@
         }
       }
 
-      if (data.topApps && data.topApps.length > 0) {
-        var html = '';
-        data.topApps.forEach(function(item, idx) {
-          html += '<div class="app-row"><span>' + (idx+1) + '. ' + item.name + '</span><span>' + item.bytes + '</span></div>';
-        });
-        document.getElementById('apps-container').innerHTML = html;
+      const apps = document.getElementById('apps-container');
+      apps.replaceChildren();
+      document.getElementById('top-status').textContent = data.appSampleStatus || '採樣未知';
+      for (const [index, item] of (data.topApps || []).entries()) {
+        const row = document.createElement('div');
+        row.className = 'app-row';
+        const name = document.createElement('span');
+        name.textContent = (index + 1) + '. ' + item.name;
+        const bytes = document.createElement('span');
+        bytes.textContent = item.bytes;
+        row.append(name, bytes);
+        apps.append(row);
+      }
+      if (!apps.childElementCount) {
+        const empty = document.createElement('div');
+        empty.className = 'app-row';
+        empty.textContent = '沒有可用的近期程序採樣';
+        apps.append(empty);
       }
 
       // 渲染 7 日柱狀圖與 KPI 指標
