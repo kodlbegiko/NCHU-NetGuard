@@ -28,3 +28,10 @@ P1: bounded hourly history, source/coverage metadata, explainable diagnostics, p
 P2: optional richer passive connections and packet metadata with consent and privacy safeguards.
 
 Do not enable process suspension, firewall rules, real network mutation, deep packet capture, remote lookups, or paid services as a side effect of benchmarking. 
+
+## Iteration 25 — network observation
+
+- NetBar-inspired read-only physical-interface rate display and filtering; selection never changes default routing, accounting buckets, or quota. A vanished interface remains explicitly unavailable. Tunnel-name hints are not verified VPN status, and tunnel counters remain excluded from the physical accounting path.
+- NWPathMonitor path events invalidate stale route/ping observations and schedule coalesced IPv4 discovery, with 10/30-second visible/hidden fallback. Event detection is best-effort, not complete VPN or IPv6 route attribution.
+- Network Monitor-inspired adaptive optional probes: visible busy/quiet ping cadence 15/45 seconds, app snapshot cadence 10/25 seconds. Hidden views do not schedule these optional probes; explicit refresh/open events and provider polling remain separate. Focus/sleep guards remain in force. Core accounting remains at one second. No energy savings measured yet.
+- Four new regression tests. LAN-versus-internet exclusion, per-process counter deltas, custom quotas, real device smoke testing and verified VPN attribution remain open. No imported third-party source or new permissions.
