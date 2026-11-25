@@ -13,6 +13,21 @@ struct ManagementView: View {
     let setAlerts: (Bool) -> Void
     let setFocus: (Bool) -> Void
     @State private var tab = 0
+    @State private var processQuery = ""
+    @State private var processOrder = 0
+
+    private func visibleProcesses(_ rows: [ProcessSampleRow]) -> [ProcessSampleRow] {
+        let query = processQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filtered = rows.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
+        return filtered.sorted {
+            if processOrder == 1 {
+                if $0.bytes != $1.bytes { return $0.bytes < $1.bytes }
+            } else if processOrder == 0 {
+                if $0.bytes != $1.bytes { return $0.bytes > $1.bytes }
+            }
+            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -53,10 +68,19 @@ struct ManagementView: View {
                             Text("自動切換與分流尚未開放。").font(.caption).foregroundStyle(.secondary)
                         } else if tab == 1 {
                             Text(snapshot.processStatus).font(.caption).foregroundStyle(.secondary)
+                            TextField("搜尋目前前 20 個程序", text: $processQuery)
+                                .textFieldStyle(.roundedBorder)
+                            Picker("排序", selection: $processOrder) {
+                                Text("流量由大到小").tag(0)
+                                Text("流量由小到大").tag(1)
+                                Text("名稱").tag(2)
+                            }.pickerStyle(.segmented)
                             if snapshot.processes.isEmpty {
                                 Text("沒有可顯示的近期程序採樣").foregroundStyle(.secondary)
+                            } else if visibleProcesses(snapshot.processes).isEmpty {
+                                Text("沒有符合搜尋的程序").foregroundStyle(.secondary)
                             }
-                            ForEach(snapshot.processes) { item in
+                            ForEach(visibleProcesses(snapshot.processes)) { item in
                                 HStack {
                                     Text(item.name).lineLimit(2)
                                     Spacer()
