@@ -264,6 +264,13 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var routeEventToken = UUID()
     var dualStackEvidence: DualStackEvidence?
     var connectionSession = ConnectionSessionMeter()
+    private var connectionSessionID = UUID()
+    private var pendingConnectionRecord: SavedConnectionSession?
+    private let connectionArchiveQueue = DispatchQueue(label: "NetGuard.connection-archive", qos: .utility)
+    private var connectionArchiveBusy = false
+    private var connectionArchive: ConnectionHistoryStore {
+        ConnectionHistoryStore(directory: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/NCHU-NetGuard/connection-history", isDirectory: true))
+    }
     var lastConnectionSamples: [ScopedInterfaceSample] = []
     var observedAddressEvidence: [String: InterfaceAddressEvidence] = [:]
     var observedTunnelCandidates: [String] = []
@@ -1167,6 +1174,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             managementModel.connectionSessionStatus = "請確認目前實體網卡已有連續採樣，並輸入有效名稱及整數 GB"
             return
         }
+        connectionSessionID = UUID()
+        pendingConnectionRecord = nil
         managementModel.connectionSessionStatus = "已開始；首個採樣區間不納入用量"
         syncManagementModel()
     }
@@ -1174,6 +1183,63 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     private func stopConnectionSession() {
         connectionSession.stop()
         syncManagementModel()
+    }
+
+    private func loadConnectionArchive() {
+        performConnectionArchiveOperation(message: "已讀取連線紀錄") { _ in }
+    }
+
+    private func saveConnectionArchive() {
+        guard !connectionArchiveBusy, let reading = connectionSession.reading(),
+              reading.stopped, reading.intervals > 0 else { return }
+        if pendingConnectionRecord == nil {
+            pendingConnectionRecord = try? SavedConnectionSession(id: connectionSessionID,
+                label: reading.label, savedAt: Date(), received: reading.received,
+                sent: reading.sent, limitBytes: reading.limitBytes, intervals: reading.intervals)
+        }
+        guard let row = pendingConnectionRecord else {
+            managementModel.connectionArchiveStatus = "連線紀錄無法驗證"
+            return
+        }
+        performConnectionArchiveOperation(message: "已保存連線紀錄") { store in
+            try store.save(row)
+        }
+    }
+
+    private func deleteConnectionArchive(id: UUID) {
+        performConnectionArchiveOperation(message: "已刪除指定連線紀錄") { store in
+            try store.remove(id: id)
+        }
+    }
+
+    private func performConnectionArchiveOperation(message: String,
+        operation: @escaping @Sendable (ConnectionHistoryStore) throws -> Void) {
+        guard !connectionArchiveBusy else {
+            managementModel.connectionArchiveStatus = "另一項紀錄操作尚未完成；本次未執行"
+            return
+        }
+        connectionArchiveBusy = true
+        managementModel.connectionArchiveBusy = true
+        let store = connectionArchive
+        connectionArchiveQueue.async { [weak self] in
+            let rows: [SavedConnectionSession]?
+            let status: String
+            do {
+                try operation(store)
+                rows = try store.read()
+                status = message
+            } catch {
+                rows = nil
+                status = "連線紀錄操作失敗或結果未確認；請重新讀取"
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.connectionArchiveBusy = false
+                self.managementModel.connectionArchiveBusy = false
+                self.managementModel.connectionArchiveStatus = status
+                self.managementModel.connectionArchiveRows = rows ?? []
+            }
+        }
     }
 
     func syncManagementModel() {
@@ -1261,6 +1327,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 testDNS: { [weak self] in self?.testDNS() },
                 startConnectionSession: { [weak self] label, text in self?.startConnectionSession(label: label, text: text) },
                 stopConnectionSession: { [weak self] in self?.stopConnectionSession() },
+                saveConnectionArchive: { [weak self] in self?.saveConnectionArchive() },
+                loadConnectionArchive: { [weak self] in self?.loadConnectionArchive() },
+                deleteConnectionArchive: { [weak self] id in self?.deleteConnectionArchive(id: id) },
                 setHistoryRetention: { [weak self] in self?.setProcessHistoryRetention($0) },
                 deleteHistory: { [weak self] in self?.deleteProcessHistory() }
             ))
