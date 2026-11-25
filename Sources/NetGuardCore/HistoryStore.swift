@@ -124,6 +124,42 @@ public final class HistoryStore {
     }
     deinit { if let db { sqlite3_close(db) } }
 
+    /// Snapshot using SQLite's backup API, never by copying a live DB file.
+    /// The destination must not exist. The caller owns its parent directory.
+    public func backup(to destination: URL) throws {
+        guard let db, destination.isFileURL else { throw HistoryStoreError.database("backup destination") }
+        let fm = FileManager.default
+        let temporary = destination.deletingLastPathComponent().appendingPathComponent(".netguard-backup-" + UUID().uuidString)
+        guard !fm.fileExists(atPath: destination.path),
+              fm.createFile(atPath: temporary.path, contents: nil, attributes: [.posixPermissions: 0o600])
+        else { throw HistoryStoreError.database("backup destination exists or unavailable") }
+        defer { try? fm.removeItem(at: temporary) }
+        var target: OpaquePointer?
+        let open = sqlite3_open_v2(temporary.path, &target, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil)
+        guard open == SQLITE_OK, let target else {
+            if let target { sqlite3_close(target) }
+            throw HistoryStoreError.database("backup open")
+        }
+        guard let operation = sqlite3_backup_init(target, "main", db, "main") else {
+            sqlite3_close(target)
+            throw HistoryStoreError.database("backup init")
+        }
+        let deadline = ProcessInfo.processInfo.systemUptime + 3
+        var step: Int32
+        repeat {
+            step = sqlite3_backup_step(operation, 128)
+            if step == SQLITE_BUSY || step == SQLITE_LOCKED { Thread.sleep(forTimeInterval: 0.01) }
+        } while (step == SQLITE_OK || step == SQLITE_BUSY || step == SQLITE_LOCKED) &&
+                ProcessInfo.processInfo.systemUptime < deadline
+        let finish = sqlite3_backup_finish(operation)
+        let close = sqlite3_close(target)
+        guard step == SQLITE_DONE, finish == SQLITE_OK, close == SQLITE_OK
+        else { throw HistoryStoreError.database("backup incomplete") }
+        _ = try HistoryBackupInspector.inspect(temporary)
+        // moveItem refuses an existing destination, including a race after the initial check.
+        try fm.moveItem(at: temporary, to: destination)
+    }
+
     private func execute(_ sql: String) throws {
         guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK
         else { throw HistoryStoreError.database("execute") }
