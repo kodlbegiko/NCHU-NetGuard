@@ -1,4 +1,9 @@
 import XCTest
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 @testable import NetGuardCore
 
 final class RecoveryJournalStoreTests: XCTestCase {
@@ -61,6 +66,34 @@ final class RecoveryJournalStoreTests: XCTestCase {
             XCTAssertThrowsError(try store.load())
             XCTAssertThrowsError(try store.save(RecoveryJournalEntry(plan: plan())))
             XCTAssertEqual(try Data(contentsOf: target), payload)
+        }
+    }
+    func testCompetingWriterCannotChangeJournal() throws {
+        try withStore { store in
+            let first = RecoveryJournalEntry(plan: plan())
+            try store.save(first)
+            let fd = open(store.url.path + ".lock", O_RDWR | O_NOFOLLOW)
+            XCTAssertGreaterThanOrEqual(fd, 0)
+            guard fd >= 0 else { return }
+            defer { _ = flock(fd, LOCK_UN); _ = close(fd) }
+            XCTAssertEqual(flock(fd, LOCK_EX | LOCK_NB), 0)
+            XCTAssertThrowsError(try store.save(first)) {
+                XCTAssertEqual($0 as? JournalValidationError, .lockBusy)
+            }
+        }
+    }
+    func testAppliedEvidenceCannotBeRewritten() throws {
+        try withStore { store in
+            var entry = RecoveryJournalEntry(plan: plan())
+            try store.save(entry)
+            entry.phase = .applied
+            entry.applied = .init(revision: 2, settings: entry.plan.desired)
+            try store.save(entry)
+            let original = entry
+            entry.phase = .committed
+            entry.applied = .init(revision: 3, settings: entry.plan.desired)
+            XCTAssertThrowsError(try store.save(entry))
+            XCTAssertEqual(try store.load(), original)
         }
     }
     func testOtherTransactionCannotReplaceJournal() throws {

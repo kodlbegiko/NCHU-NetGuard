@@ -39,6 +39,12 @@ public struct RecoveryJournalEntry: Codable, Equatable, Sendable {
     }
 }
 
+/// Persistence callbacks must distinguish a proven pre-write failure from an
+/// ambiguous result (for example, rename succeeded but directory sync failed).
+public enum RecoveryPersistenceOutcome: Equatable, Sendable {
+    case persisted, notWritten, unknown
+}
+
 public enum RecoveryOutcome: Equatable, Sendable {
     case rejected, committed, rolledBack, safeMode
 }
@@ -74,13 +80,19 @@ public struct RecoveryTransaction: Sendable {
             return .finish(.rejected)
         }
         let entry = RecoveryJournalEntry(plan: plan)
+        guard (try? entry.validate()) != nil else { return .finish(.rejected) }
         journal = entry
         step = .preparing
         return .persist(entry)
     }
 
     public mutating func persisted(success: Bool) -> RecoveryEffect {
+        persisted(success ? .persisted : .unknown)
+    }
+
+    public mutating func persisted(_ outcome: RecoveryPersistenceOutcome) -> RecoveryEffect {
         guard let entry = journal else { return terminal(.safeMode) }
+        let success = outcome == .persisted
         switch step {
         case .preparing:
             guard success else { return terminal(.rejected) }
@@ -89,6 +101,7 @@ public struct RecoveryTransaction: Sendable {
         case .recordingApplied:
             guard let applied = entry.applied else { return terminal(.safeMode) }
             if !success {
+                guard outcome == .notWritten else { return terminal(.safeMode) }
                 step = .restoring
                 return .compareAndSwap(expected: applied, desired: entry.plan.expected.settings)
             }
@@ -96,7 +109,7 @@ public struct RecoveryTransaction: Sendable {
             return .verify(applied)
         case .committing:
             if success { return terminal(.committed) }
-            guard let applied = entry.applied else { return terminal(.safeMode) }
+            guard outcome == .notWritten, let applied = entry.applied else { return terminal(.safeMode) }
             step = .restoring
             return .compareAndSwap(expected: applied, desired: entry.plan.expected.settings)
         case .recordingRestore:
@@ -172,8 +185,10 @@ public struct RecoveryTransaction: Sendable {
             step = .restoring
             return .compareAndSwap(expected: applied, desired: entry.plan.expected.settings)
         case .committed:
-            return terminal(.committed)
+            return terminal(observed == entry.applied ? .committed : .safeMode)
         case .rolledBack:
+            guard let applied = entry.applied, observed.revision > applied.revision,
+                  observed.settings == entry.plan.expected.settings else { return terminal(.safeMode) }
             return terminal(.rolledBack)
         case .safeMode:
             return terminal(.safeMode)

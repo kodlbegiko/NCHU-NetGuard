@@ -55,3 +55,7 @@ Next: review exact branch CI, audit all trust boundaries, verify recovery journa
 
 ## Closure batch 6 (candidate)
 - Introduce true SwiftPM NetGuardApp executable target and separate packaged module-linkage build/smoke. Add CI gate without removing legacy build/smoke. ProbeRunner package-scoped; no public subprocess API. Exact compilation required before changing default build or claiming migration complete.
+
+## Closure batch 7 (candidate)
+- Recovery journal descriptor-relative no-follow open, regular/single-link/owner validation, nonblocking advisory lock spanning read-check-write, unique private temp file, file fsync and directory fsync after atomic rename. Ambiguous post-write failure explicitly distinct. Isolated Linux POSIX primitives check passed; macOS exact candidate CI required. Hardware durability and noncooperating writer protection not claimed.
+- Recovery plan bounds; immutable applied evidence across phase transition; explicit persisted/notWritten/unknown outcome, safe mode for ambiguous writes, terminal crash recovery checks current observed revision/settings. Four regression cases. Real adapter still disabled.

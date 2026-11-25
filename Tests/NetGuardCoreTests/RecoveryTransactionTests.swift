@@ -70,6 +70,22 @@ final class RecoveryTransactionTests: XCTestCase {
         XCTAssertEqual(second.recover(entry, observed: new),
                        .compareAndSwap(expected: new, desired: old.settings))
     }
+    func testAmbiguousCommitWriteStopsWithoutAnotherMutation() {
+        var tx = RecoveryTransaction()
+        _ = tx.begin(plan(), observed: old, authorized: true)
+        _ = tx.persisted(success: true)
+        _ = tx.mutationResult(new)
+        _ = tx.persisted(success: true)
+        _ = tx.verified(new)
+        XCTAssertEqual(tx.persisted(success: false), .finish(.safeMode))
+    }
+    func testCommittedJournalWithExternalChangeIsNotCurrentSuccess() {
+        var entry = RecoveryJournalEntry(plan: plan())
+        entry.phase = .committed
+        entry.applied = new
+        var tx = RecoveryTransaction()
+        XCTAssertEqual(tx.recover(entry, observed: restored), .finish(.safeMode))
+    }
     func testCommitJournalFailureRollsBack() {
         var tx = RecoveryTransaction()
         _ = tx.begin(plan(), observed: old, authorized: true)
@@ -77,6 +93,6 @@ final class RecoveryTransactionTests: XCTestCase {
         _ = tx.mutationResult(new)
         _ = tx.persisted(success: true)
         _ = tx.verified(new)
-        XCTAssertEqual(tx.persisted(success: false), .compareAndSwap(expected: new, desired: old.settings))
+        XCTAssertEqual(tx.persisted(.notWritten), .compareAndSwap(expected: new, desired: old.settings))
     }
 }

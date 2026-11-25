@@ -22,6 +22,7 @@ public typealias OwnedNetworkConfiguration = NetGuardRecovery.OwnedNetworkConfig
 public typealias RecoveryPlan = NetGuardRecovery.RecoveryPlan
 public typealias RecoveryPhase = NetGuardRecovery.RecoveryPhase
 public typealias RecoveryJournalEntry = NetGuardRecovery.RecoveryJournalEntry
+public typealias RecoveryPersistenceOutcome = NetGuardRecovery.RecoveryPersistenceOutcome
 public typealias RecoveryOutcome = NetGuardRecovery.RecoveryOutcome
 public typealias RecoveryEffect = NetGuardRecovery.RecoveryEffect
 public typealias RecoveryTransaction = NetGuardRecovery.RecoveryTransaction
