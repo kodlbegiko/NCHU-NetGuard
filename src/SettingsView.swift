@@ -8,6 +8,8 @@ final class NetGuardSettingsModel: ObservableObject {
     @Published var nativePreview = false
     @Published var displayMode = 0
     @Published var persistenceStatus = "尚未載入"
+    @Published var backupBusy = false
+    @Published var backupStatus = "尚未執行備份或預檢"
 }
 
 struct NetGuardSettingsView: View {
@@ -16,6 +18,8 @@ struct NetGuardSettingsView: View {
     let setFocus: (Bool) -> Void
     let setNativePreview: (Bool) -> Void
     let setDisplayMode: (Int) -> Void
+    let createBackup: () -> Void
+    let inspectBackup: () -> Void
 
     var body: some View {
         Form {
@@ -37,6 +41,14 @@ struct NetGuardSettingsView: View {
             }
             Section("資料與安全") {
                 LabeledContent("本機儲存", value: model.persistenceStatus)
+                HStack {
+                    Button("建立歷史資料備份", action: createBackup)
+                    Button("檢查備份檔", action: inspectBackup)
+                }.disabled(model.backupBusy)
+                if model.backupBusy { ProgressView().controlSize(.small) }
+                Text(model.backupStatus).font(.caption).foregroundStyle(.secondary)
+                Text("備份僅包含歷史 SQLite 資料；不包含今日尚未結算的流量與設定。檢查不會覆寫現有資料庫。")
+                    .font(.caption).foregroundStyle(.secondary)
                 Text("校方配額尚待驗證；自動切換、分流、網路設定回滾與程序控制尚未開放。")
                     .font(.caption).foregroundStyle(.secondary)
                 Text("歷史資料保留於本機；匯出由使用者主動選擇。")
