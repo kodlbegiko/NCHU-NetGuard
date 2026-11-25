@@ -74,6 +74,7 @@ struct HistoryAnalyticsView: View {
                 }
                 .padding(12)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+                HistoryTrafficChart(period: report)
                 Text("無紀錄不等於零流量；歷史資料可能有採樣缺口，不代表校方計費用量。")
                     .font(.caption).foregroundStyle(.secondary)
                 ScrollView {
@@ -114,5 +115,76 @@ struct HistoryAnalyticsView: View {
             case .failure: exportMessage = "匯出未完成；本機紀錄未變更"
             }
         }
+    }
+}
+
+
+/// Native SwiftUI stacked bars. Missing, zero and unknown directions are
+/// distinguished by symbols and accompanying accessible text.
+struct HistoryTrafficChart: View {
+    let period: HistoryPeriod
+    private let chartHeight: CGFloat = 112
+    private var maximum: Double { max(1, Double(period.rows.compactMap { $0.record?.total }.max() ?? 0)) }
+
+    private func barHeight(_ bytes: UInt64) -> CGFloat {
+        CGFloat(Double(bytes) / maximum) * chartHeight
+    }
+
+    private func description(_ row: HistoryPeriodDay) -> String {
+        guard let record = row.record else { return row.day + "，無紀錄" }
+        if let dl = record.download, let ul = record.upload {
+            return row.day + "，下載 \(dl) bytes，上傳 \(ul) bytes"
+        }
+        return row.day + "，總量 \(record.total) bytes，上下傳未分類"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("每日流量").font(.subheadline.weight(.medium))
+                Spacer()
+                Text(String(format: "最高 %.2f GiB", Double(period.rows.compactMap { $0.record?.total }.max() ?? 0) / 1_073_741_824))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            HStack(alignment: .bottom, spacing: period.rows.count > 30 ? 1 : 3) {
+                ForEach(period.rows) { row in
+                    VStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        if let record = row.record {
+                            if record.total == 0 {
+                                Capsule().strokeBorder(record.download == nil ? Color.orange : Color.secondary, lineWidth: 1)
+                                    .frame(height: 4)
+                            } else if let dl = record.download, let ul = record.upload {
+                                Rectangle().fill(Color.teal).frame(height: barHeight(ul))
+                                Rectangle().fill(Color.accentColor).frame(height: barHeight(dl))
+                            } else {
+                                Rectangle().fill(Color.orange.opacity(0.75)).frame(height: barHeight(record.total))
+                            }
+                        } else {
+                            Rectangle().fill(Color.secondary.opacity(0.35)).frame(height: 2)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: chartHeight + 4)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(description(row))
+                }
+            }
+            HStack {
+                Text(period.rows.first?.day ?? "")
+                Spacer()
+                Text(period.rows.last?.day ?? "")
+            }
+            .font(.caption2).foregroundStyle(.secondary)
+            HStack(spacing: 9) {
+                Label("下載", systemImage: "square.fill").foregroundStyle(Color.accentColor)
+                Label("上傳", systemImage: "square.fill").foregroundStyle(Color.teal)
+                Label("未分類", systemImage: "square.fill").foregroundStyle(Color.orange)
+                Label("無紀錄", systemImage: "minus")
+                Label("零", systemImage: "capsule")
+            }.font(.caption2)
+        }
+        .padding(10)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
     }
 }
