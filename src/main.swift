@@ -888,7 +888,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     private func deleteProcessHistory() {
-        guard !processHistoryBusy else { return }
+        guard !processHistoryBusy else {
+            managementModel.historyStatus = "有其他歷史作業執行中；本次未刪除，請完成後重新確認"
+            return
+        }
         setProcessHistoryEnabled(false)
         guard beginProcessHistoryOperation() else { return }
         // Disable future writes and invalidate in-flight sampling before deletion.
