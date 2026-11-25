@@ -1,0 +1,84 @@
+import SwiftUI
+import Foundation
+
+final class ManagementModel: ObservableObject {
+    @Published var snapshot: ManagementSnapshot?
+}
+
+struct ManagementView: View {
+    @ObservedObject var model: ManagementModel
+    let refresh: () -> Void
+    let openProvider: () -> Void
+    @State private var tab = 0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("網路管理").font(.title2.weight(.semibold))
+                    Text("唯讀監控，不變更系統設定").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button(action: refresh) { Label("重新整理", systemImage: "arrow.clockwise") }
+            }
+            Picker("功能", selection: $tab) {
+                Text("網路連線").tag(0)
+                Text("應用程式").tag(1)
+                Text("診斷").tag(2)
+            }.pickerStyle(.segmented)
+            if let snapshot = model.snapshot {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        if tab == 0 {
+                            Text(snapshot.connectionStatus).font(.subheadline)
+                            Text(snapshot.latencyStatus).font(.caption).foregroundStyle(.secondary)
+                            if snapshot.interfaces.isEmpty {
+                                Text("尚無介面採樣").foregroundStyle(.secondary)
+                            }
+                            ForEach(snapshot.interfaces) { item in
+                                HStack {
+                                    VStack(alignment: .leading) {
+                                        Text(item.name).font(.system(.body, design: .monospaced))
+                                        Text(item.scopeLabel).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    if item.isDefault { Text("預設路由").font(.caption) }
+                                }
+                                Divider()
+                            }
+                            Text("自動切換與分流尚未開放。").font(.caption).foregroundStyle(.secondary)
+                        } else if tab == 1 {
+                            Text(snapshot.processStatus).font(.caption).foregroundStyle(.secondary)
+                            if snapshot.processes.isEmpty {
+                                Text("沒有可顯示的近期程序採樣").foregroundStyle(.secondary)
+                            }
+                            ForEach(snapshot.processes) { item in
+                                HStack {
+                                    Text(item.name).lineLimit(2)
+                                    Spacer()
+                                    Text(String(format: "%.2f MiB", Double(item.bytes) / 1_048_576)).monospacedDigit()
+                                }
+                                Divider()
+                            }
+                        } else {
+                            ForEach(snapshot.findings, id: \.rawValue) { finding in
+                                Label(finding.summary, systemImage: "info.circle")
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Divider()
+                            Text(snapshot.providerStatus).font(.caption).foregroundStyle(.secondary)
+                            Button("開啟校方榜單頁面", action: openProvider)
+                            Text("目前不執行網路設定復原或程序控制。").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                Text("正在讀取本機資料").foregroundStyle(.secondary)
+                Spacer()
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 460, minHeight: 400)
+    }
+}
