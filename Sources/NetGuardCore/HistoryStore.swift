@@ -126,6 +126,9 @@ public final class HistoryStore {
     }
     public func upsert(_ day: HistoryDay) throws { try write(day, replace: true) }
 
+    /// Crash recovery of a stale prior-day state must not replace finalized history.
+    public func insertIfAbsent(_ day: HistoryDay) throws { try write(day, replace: false) }
+
     /// Import is atomic and idempotent. Existing database days win over legacy data.
     public func importLegacy(_ data: Data) throws {
         let days = try LegacyHistoryMigration.decode(data)
