@@ -195,3 +195,8 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 
 - Added DualStackEvidence.swift, strict bounded route interface parser, independent IPv4/IPv6 route observations and per-interface address-family display (link-local distinction), with four regression tests. No change to physical byte accounting, IPv4 campus provider or quota policy. IPv6-only reachability, IPv6 campus classification and verified VPN attribution remain open; dual-family route observations are sequential. Native display and host command behavior require device acceptance.
 - Prior integrated run 45639532848 completed successfully: 127 Swift and 13 Python tests, app compile and bundle. Iterations 32–33 eligible for fast-forward integration and new exact-HEAD CI. No paid services, release or host mutation.
+
+## Thirty-fourth iteration
+
+- Added ConnectionSessionMeter.swift, local manual connection label and decimal GB budget with direction counters, first-interval exclusion, and fail-closed stop on continuity or classification changes. Native network management exposes start/stop and partial usage estimates. Four regression tests and module ownership registration. Session only; no persistent per-network attribution or LAN exclusion. Route events are best-effort, so identical-address network changes may be missed. No new permissions or system mutations.
+- Previous run 45640350189 passed static/Python and Swift tests; application compilation was ongoing at last check. Candidate staged pending full preceding CI and exact candidate verification. No paid dependencies or release.
