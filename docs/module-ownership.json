@@ -23,7 +23,8 @@
     "HistoryChartProjection.swift": 7,
     "ManagementSnapshot.swift": 0,
     "AutomationSnapshot.swift": 0,
-    "HistoryBackupInspector.swift": 7
+    "HistoryBackupInspector.swift": 7,
+    "ModuleCompatibility.swift": 0
   },
   "shared_paths": {
     "src/main.swift": 0,
@@ -40,5 +41,39 @@
     "src/SettingsView.swift": 4,
     "src/ManagementView.swift": 4,
     "src/AutomationView.swift": 4
+  },
+  "targets": {
+    "NetGuardCore": [
+      "NetGuardObservation",
+      "NetGuardWorkflow"
+    ],
+    "NetGuardObservation": [],
+    "NetGuardWorkflow": []
+  },
+  "source_targets": {
+    "TrafficAccounting.swift": "NetGuardCore",
+    "ScopedAccounting.swift": "NetGuardCore",
+    "Contracts.swift": "NetGuardCore",
+    "ContractValidation.swift": "NetGuardCore",
+    "Diagnostics.swift": "NetGuardCore",
+    "NetworkQuality.swift": "NetGuardObservation",
+    "AppTrafficSample.swift": "NetGuardObservation",
+    "ProbeRunner.swift": "NetGuardCore",
+    "RecoveryJournalStore.swift": "NetGuardCore",
+    "RecoveryTransaction.swift": "NetGuardCore",
+    "SimulatedNetworkAdapter.swift": "NetGuardCore",
+    "PolicyEngine.swift": "NetGuardCore",
+    "PredictionEngine.swift": "NetGuardCore",
+    "WorkflowPowerGuard.swift": "NetGuardWorkflow",
+    "HistoryStore.swift": "NetGuardCore",
+    "ProviderObservation.swift": "NetGuardCore",
+    "UsageMigration.swift": "NetGuardCore",
+    "QuickPanelState.swift": "NetGuardCore",
+    "HistoryAnalytics.swift": "NetGuardCore",
+    "HistoryChartProjection.swift": "NetGuardCore",
+    "ManagementSnapshot.swift": "NetGuardCore",
+    "AutomationSnapshot.swift": "NetGuardCore",
+    "HistoryBackupInspector.swift": "NetGuardCore",
+    "ModuleCompatibility.swift": "NetGuardCore"
   }
 }
