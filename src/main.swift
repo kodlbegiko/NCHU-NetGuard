@@ -2028,7 +2028,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         ]
         
         webView?.callAsyncJavaScript("if (window.updateStats) { window.updateStats(stats); }",
-                                     arguments: ["stats": payload], in: nil, contentWorld: .page,
+                                     arguments: ["stats": payload], in: nil, in: .page,
                                      completionHandler: nil)
     }
 

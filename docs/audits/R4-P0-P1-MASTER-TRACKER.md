@@ -81,3 +81,6 @@ Next: review exact branch CI, audit all trust boundaries, verify recovery journa
 ## Closure batch 14 (candidate)
 - CLI finalized history uses read-only SQLite v1/v2, bounded rows/time, table/schema and directional validation; legacy fallback only when database absent. Corrupt/unknown active DB does not masquerade as stale legacy history. Fixture regression added.
 - Add opt-in read-only macOS benchmark of explicitly selected existing NCHUTraffic PID: CPU-time delta, sampled peak RSS, hardware/OS metadata, bounded duration, restart/identity rejection and deterministic parser tests. No actual M4 benchmark has been run; this is a measurement tool, not evidence of target attainment.
+
+## Closure batch 15 (candidate)
+- Batch 14 CI 45653268860 passed Python/static tests but caught WebKit's Swift-imported argument label mismatch. Correct `callAsyncJavaScript` label to `in: .page` per the actual compiler, retain safe argument bridge. Batch 11 CI 45652514856 fully green: 196 Swift tests, 27 Python tests, legacy and modular fixture smoke; host/UDP evidence inconclusive, TCP fixture/host check succeeded without a billing claim. Exact batch 15 CI still required.
