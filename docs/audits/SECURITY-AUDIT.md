@@ -16,3 +16,5 @@ Scope: R4–R6. Last fully passing implementation candidate: 517fb31ffcd58ef8482
 | Recovery | 14 explicit simulated fault modes, 15 scenario matrix, two restart tests | Enumerate remaining fault combinations and actual hardware rollback; do not infer device success from simulator |
 
 The earlier NOFOLLOW incompatibility on macOS system temporary parents was reproduced by CI 45723912849, resolved by canonicalizing the parent while retaining final-component NOFOLLOW, and rerun without removing tests. Future real system mutation requires separate explicit authorization and validation. No broad parallel unlock, release or security certification is implied.
+
+Subsequent candidate changes: explicit ServiceManagement login action replaces legacy plist writes (legacy file untouched); disabled mutation menu items no longer present executable controls; fixed legacy HTTP URL no longer opens; production probe command and argument allowlist plus minimal environment and Python isolated mode. Exact new CI and real login-item/device behavior still required. Controlled traffic evaluator does not initiate probes and cannot establish reference independence itself.
