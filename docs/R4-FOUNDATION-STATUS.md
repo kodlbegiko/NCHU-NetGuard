@@ -136,3 +136,9 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 - Extracted NetGuardTraffic as an independent SwiftPM library target for raw interface counters, sample quality, network scope, scoped accumulation and scope projection. Existing type spellings are retained by explicit NetGuardCore aliases. Added explicit public initializers for the two delta values and two standalone tests for scoped accounting and duplicate identity handling. Updated build and machine-readable ownership/dependency graph.
 - TrafficSnapshot wire representation remains unchanged; ValidatedContract and its TrafficSnapshot validation conformance still reside in NetGuardCore. Direct NetGuardTraffic consumers do not yet have the validated decode entry point. The app still compiles flattened sources; separate app linking, database/policy extraction and formal scoped contract freeze remain open.
 - Staged on refactor/r4-traffic-foundation; preceding run 45634524234 has passed Python and core Swift tests at the time of recording. Exact integrated app and candidate CI must be checked separately. No paid services, release or host mutation.
+
+## Twenty-third iteration
+
+- Verified preceding integrated commit 4fcd2aac9feed69a80707bf77316a216540e82f8 via Foundation CI run 45634524234: Python, Swift, app build and bundle verification all succeeded.
+- Extracted NetGuardData (five source files) with a one-way NetGuardTraffic dependency, moved SQLite linkage to the data target, retained public aliases in NetGuardCore, and added two standalone integration/migration tests. Existing schema V2, historical semantics and backup preflight remain unchanged; actual restore remains disabled. App still compiles flattened sources.
+- Traffic and data extraction staged together for fresh exact-HEAD CI. Independent tests are implemented but not yet verified on this candidate. No paid services, release or real-device acceptance.
