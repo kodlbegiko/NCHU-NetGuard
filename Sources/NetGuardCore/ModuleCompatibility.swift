@@ -91,4 +91,5 @@ public typealias DestinationFlowProjection = NetGuardTraffic.DestinationFlowProj
 public typealias TCPFlowCounter = NetGuardTraffic.TCPFlowCounter
 public typealias TCPFlowParser = NetGuardTraffic.TCPFlowParser
 public typealias TCPFlowAccumulator = NetGuardTraffic.TCPFlowAccumulator
+public typealias TCPFlowCoverage = NetGuardTraffic.TCPFlowCoverage
 #endif
