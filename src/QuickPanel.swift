@@ -12,6 +12,7 @@ struct QuickPanel: View {
     let toggleAlerts: () -> Void
     let openHistory: () -> Void
     let openSettings: () -> Void
+    let openManagement: () -> Void
     let openAdvanced: () -> Void
     @State private var showDetails = false
 
@@ -78,9 +79,11 @@ struct QuickPanel: View {
                 }
                 Button("歷史流量與匯出", action: openHistory)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                Button("網路管理與診斷", action: openManagement)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Button("設定", action: openSettings)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Button("開啟完整管理面板", action: openAdvanced)
+                Button("返回舊版管理面板", action: openAdvanced)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(16)
