@@ -59,4 +59,31 @@ final class HistoryStoreTests: XCTestCase {
         }
     }
 
+
+    func testScopedRecordsPersistWithoutInventingLegacyScope() throws {
+        try withURL { url in
+            let store = try HistoryStore(url: url)
+            try store.importLegacy(Data(#"{"2026-11-23":20}"#.utf8))
+            let aggregate = try HistoryDay(day: "2026-11-24", total: 100, download: 70, upload: 30)
+            let dorm = try HistoryDay(day: aggregate.day, total: 80, download: 60, upload: 20)
+            let unknown = try HistoryDay(day: aggregate.day, total: 20, download: 10, upload: 10)
+            try store.recordScoped(ScopedHistoryDay(aggregate: aggregate, scopes: [.dorm: dorm, .unknown: unknown]))
+            XCTAssertEqual(try store.recent(scope: .dorm), [dorm])
+            XCTAssertEqual(try store.recent(scope: .unknown), [unknown])
+            XCTAssertTrue(try store.recent(scope: .external).isEmpty)
+            XCTAssertEqual(try HistoryStore(url: url).recent().count, 2)
+            try store.insertIfAbsent(aggregate)
+            XCTAssertEqual(try store.recent(scope: .dorm), [dorm])
+            try store.upsert(aggregate)
+            XCTAssertTrue(try store.recent(scope: .dorm).isEmpty)
+        }
+    }
+
+    func testScopedSumAndDayMustMatch() throws {
+        let total = try HistoryDay(day: "2026-11-24", total: 100, download: 80, upload: 20)
+        XCTAssertThrowsError(try ScopedHistoryDay(aggregate: total, scopes: [:]))
+        let wrongDay = try HistoryDay(day: "2026-11-23", total: 100, download: 80, upload: 20)
+        XCTAssertThrowsError(try ScopedHistoryDay(aggregate: total, scopes: [.dorm: wrongDay]))
+    }
+
 }
