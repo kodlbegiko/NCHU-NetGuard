@@ -1001,7 +1001,7 @@
     <!-- 3 Key Metric Badges (KPI Row) -->
     <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px;">
       <div class="hist-kpi-badge">
-        <span class="kpi-label">7日日均</span>
+        <span class="kpi-label">有紀錄日均</span>
         <span class="kpi-val" id="kpi-avg">--</span>
       </div>
       <div class="hist-kpi-badge">
@@ -1027,7 +1027,7 @@
       <!-- Interactive Detail Bar Info -->
       <div id="chart-tooltip-panel" class="chart-tooltip-panel">
         <span id="tooltip-date-title" style="font-weight: 600;">點擊或懸停柱體查看詳情</span>
-        <span id="tooltip-details" style="color: var(--speed-text);">近7天完整統計</span>
+        <span id="tooltip-details" style="color: var(--speed-text);">近7天已知紀錄</span>
       </div>
     </div>
 
@@ -1093,7 +1093,7 @@
 
     function updateStats(data) {
       if (!data) return;
-      document.getElementById('overview-state').textContent = data.observationStatus || '網路狀態未知';
+      document.getElementById('overview-state').textContent = data.diagnosticSummary || data.observationStatus || '網路狀態未知';
       document.getElementById('provider-status').textContent = data.providerStatus || '校方資料未知';
 
       var isQuotaRestricted = (data.isQuotaRestricted === true || data.isDorm === true || data.isCampusWifi === true);
