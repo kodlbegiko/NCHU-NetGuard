@@ -60,4 +60,8 @@ public typealias ProcessCounterParser = NetGuardObservation.ProcessCounterParser
 public typealias ProcessUsageRow = NetGuardObservation.ProcessUsageRow
 public typealias ProcessUsageReport = NetGuardObservation.ProcessUsageReport
 public typealias ProcessUsageAccumulator = NetGuardObservation.ProcessUsageAccumulator
+public typealias ProcessHistoryRow = NetGuardData.ProcessHistoryRow
+public typealias ProcessHistoryBucket = NetGuardData.ProcessHistoryBucket
+public typealias ProcessHistoryDay = NetGuardData.ProcessHistoryDay
+public typealias ProcessHistoryStore = NetGuardData.ProcessHistoryStore
 #endif
