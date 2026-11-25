@@ -142,3 +142,9 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 - Verified preceding integrated commit 4fcd2aac9feed69a80707bf77316a216540e82f8 via Foundation CI run 45634524234: Python, Swift, app build and bundle verification all succeeded.
 - Extracted NetGuardData (five source files) with a one-way NetGuardTraffic dependency, moved SQLite linkage to the data target, retained public aliases in NetGuardCore, and added two standalone integration/migration tests. Existing schema V2, historical semantics and backup preflight remain unchanged; actual restore remains disabled. App still compiles flattened sources.
 - Traffic and data extraction staged together for fresh exact-HEAD CI. Independent tests are implemented but not yet verified on this candidate. No paid services, release or real-device acceptance.
+
+## Twenty-fourth iteration: competitive observability
+
+- Verified preceding integrated commit b5a79f0dcd97be640e1135db3c7dffcea74dea35 via CI 45635305449: 96 Swift and 13 Python tests, app and bundle passed.
+- Added original bounded active-interface throughput chart, median probe latency and mean adjacent-probe variation, current process snapshot search and ordering, and five new tests. No historical per-app attribution or packet jitter claim. No third-party code imported. See COMPETITIVE-BENCHMARK.md for upstream feature/license evidence and priorities.
+- Candidate requires new exact-HEAD CI and local UI verification. No paid services, release, or host mutation.
