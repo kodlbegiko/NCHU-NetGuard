@@ -1,0 +1,32 @@
+name: Foundation CI
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [feat/r4-foundation]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: foundation-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  foundation:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: swift --version && python3 --version
+      - name: Static guards and Python tests
+        run: make test
+      - name: Core Swift tests
+        run: swift test
+      - name: Legacy app build (no launch)
+        run: make build
+      - name: Verify bundle
+        run: |
+          test -x build/NCHUTraffic.app/Contents/MacOS/NCHUTraffic
+          test -f build/NCHUTraffic.app/Contents/Resources/traffic_monitor.py
+          test -f build/NCHUTraffic.app/Contents/Resources/popover.html
+          plutil -lint build/NCHUTraffic.app/Contents/Info.plist
