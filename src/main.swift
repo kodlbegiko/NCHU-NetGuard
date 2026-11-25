@@ -231,6 +231,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var currentIP: String = ""
     var isConnected: Bool = false
     var pingLatencyMs: Double = -1
+    var networkQuality = NetworkQualityWindow()
+    var lastPingUptime: TimeInterval?
+    var appProbeInFlight = false
+    var appProbeTimestamp: TimeInterval?
     var consecutivePingFailures: Int = 0
     
     var lastRawIBytes: UInt64 = 0
@@ -521,143 +525,12 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     // 探測單一網卡介面的即時延遲 (ms) 與有效傳輸速率 (Mbps)
-    func probeInterfaceQuality(interfaceName: String, runSpeedBurst: Bool, currentKnownMbps: Double) -> (reachable: Bool, pingMs: Double, speedMbps: Double) {
-        let pPing = Process()
-        pPing.executableURL = URL(fileURLWithPath: "/sbin/ping")
-        pPing.arguments = ["-c", "2", "-W", "800", "-b", interfaceName, "1.1.1.1"]
-        let pipePing = Pipe()
-        pPing.standardOutput = pipePing
-        pPing.standardError = pipePing
-        try? pPing.run()
-        pPing.waitUntilExit()
-        
-        let outPing = String(data: pipePing.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        var pingVal: Double = 999.0
-        var isReachable = false
-        
-        for line in outPing.components(separatedBy: "\n") {
-            if line.contains("round-trip") || line.contains("rtt") {
-                let parts = line.components(separatedBy: "=")
-                if parts.count >= 2 {
-                    let metrics = parts[1].trimmingCharacters(in: .whitespaces).components(separatedBy: "/")
-                    if metrics.count >= 2, let avg = Double(metrics[1]) {
-                        pingVal = avg
-                        isReachable = true
-                    }
-                }
-            }
-        }
-        
-        guard isReachable else {
-            return (false, 999.0, 0.0)
-        }
-        
-        var measuredMbps = currentKnownMbps
-        if runSpeedBurst || pingVal > 85.0 {
-            let pCurl = Process()
-            pCurl.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
-            pCurl.arguments = [
-                "--interface", interfaceName,
-                "-o", "/dev/null",
-                "-s",
-                "-w", "%{speed_download}|%{time_starttransfer}",
-                "--max-time", "2.5",
-                "https://speed.cloudflare.com/__down?bytes=262144"
-            ]
-            let pipeCurl = Pipe()
-            pCurl.standardOutput = pipeCurl
-            try? pCurl.run()
-            pCurl.waitUntilExit()
-            let outCurl = String(data: pipeCurl.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            let parts = outCurl.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "|")
-            if let bps = Double(parts.first ?? "0"), bps > 0 {
-                measuredMbps = max(0.1, (bps * 8.0) / 1_000_000.0)
-            }
-        } else {
-            // 零額度微探測：依 RTT 微幅更新速率估算
-            if pingVal < 10.0 && measuredMbps < 15.0 {
-                measuredMbps = 22.8
-            }
-        }
-        return (true, pingVal, measuredMbps)
-    }
-
-    // 雙網卡即時競速與慢速自動切換引擎
+    // Legacy speed-race controls are unavailable pending a verified, consented
+    // interface-specific benchmark. Ordinary latency probes remain available.
     func evaluateDualNetworkSpeedAndSwitch(forceSpeedBurst: Bool = false, manualTrigger: Bool = false) {
-        guard workflowPowerGuard.allowsOptionalProbes, manualTrigger, !isRunningSpeedRace && !isSwitchingNetwork else { return }
-        isRunningSpeedRace = true
         if manualTrigger {
-            pushDataToWebUI()
-        }
-        
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            let wiredDev = "en6"
-            let wifiDev = "en0"
-            
-            let group = DispatchGroup()
-            var wResult: (reachable: Bool, pingMs: Double, speedMbps: Double) = (false, 999.0, 0.0)
-            var wfResult: (reachable: Bool, pingMs: Double, speedMbps: Double) = (false, 999.0, 0.0)
-            
-            group.enter()
-            DispatchQueue.global().async {
-                wResult = self.probeInterfaceQuality(interfaceName: wiredDev, runSpeedBurst: forceSpeedBurst, currentKnownMbps: self.wiredSpeedMbps)
-                group.leave()
-            }
-            
-            group.enter()
-            DispatchQueue.global().async {
-                wfResult = self.probeInterfaceQuality(interfaceName: wifiDev, runSpeedBurst: forceSpeedBurst, currentKnownMbps: self.wifiSpeedMbps)
-                group.leave()
-            }
-            
-            group.wait()
-            
-            DispatchQueue.main.async {
-                self.isRunningSpeedRace = false
-                self.wiredReachable = wResult.reachable
-                self.wiredPingMs = wResult.pingMs
-                self.wiredSpeedMbps = wResult.speedMbps
-                
-                self.wifiReachable = wfResult.reachable
-                self.wifiPingMs = wfResult.pingMs
-                self.wifiSpeedMbps = wfResult.speedMbps
-                
-                // 同步更新主面板顯示之當前網路延遲
-                if self.activeInterface == wiredDev && wResult.reachable {
-                    self.pingLatencyMs = wResult.pingMs
-                    self.isConnected = true
-                } else if self.activeInterface == wifiDev && wfResult.reachable {
-                    self.pingLatencyMs = wfResult.pingMs
-                    self.isConnected = true
-                }
-                
-                let now = Date().timeIntervalSince1970
-                let canSwitch = false // R4.0 observation-only
-                
-                if canSwitch {
-                    let isWiredQuotaSafe = (self.dormTodayInBytes < 6.75 * 1024 * 1024 * 1024) && !self.isBlacklisted
-                    
-                    // 【有線優先鐵律】：只要有線網路還沒用完 (剩餘 > 250 MB) 且網線有通，100% 強制鎖定使用有線網路，絕不切換去用 Wi-Fi！
-                    if isWiredQuotaSafe && wResult.reachable {
-                        if self.isWiredTemporarilyDisabled || self.activeInterface != wiredDev {
-                            self.lastSpeedSwitchTime = now
-                            self.slowNetworkStreak = 0
-                            self.restoreWiredNetwork(reason: "有線額度充足，強制優先使用有線網路")
-                            self.pushDataToWebUI()
-                            return
-                        }
-                    } else if !isWiredQuotaSafe && !self.isWiredTemporarilyDisabled && wfResult.reachable {
-                        // 只有當有線網路額度真正用完 (已用 >= 6.75 GB / 剩餘 <= 250 MB) 或遭封鎖時，才自動切換至 Wi-Fi
-                        self.lastSpeedSwitchTime = now
-                        self.switchToWifi(reason: "有線網路額度已用盡，自動接管至 Wi-Fi")
-                        self.pushDataToWebUI()
-                        return
-                    }
-                }
-                
-                self.pushDataToWebUI()
-            }
+            measurePingLatency()
+            if popover != nil && popover.isShown { pushDataToWebUI() }
         }
     }
 
@@ -759,6 +632,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     @objc func systemWillSleep() {
         guard workflowPowerGuard.systemSleep() else { return }
+        networkQuality.reset()
+        lastPingUptime = nil
+        appProbeTimestamp = nil
+        topAppConsumers = []
         savePersistedState()
         scopedAccumulator.reset()
         predictionEngine.reset()
@@ -780,6 +657,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     @objc func toggleFocusMode() {
         workflowPowerGuard.setFocus(!workflowPowerGuard.focusEnabled)
+        if workflowPowerGuard.focusEnabled {
+            appProbeTimestamp = nil
+            topAppConsumers = []
+        }
         providerRequestID = UUID()
         providerRequestInFlight = false
         if popover != nil && popover.isShown { pushDataToWebUI() }
@@ -951,7 +832,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         let ulPct = min(max((ulUsed / ulQuotaBytes) * 100.0, 0.0), 100.0)
         
         var appsArray: [[String: String]] = []
-        for item in topAppConsumers.prefix(4) {
+        let appSampleFresh = appProbeTimestamp.map { ProcessInfo.processInfo.systemUptime - $0 <= 30 } ?? false
+        for item in (appSampleFresh ? topAppConsumers : []).prefix(4) {
             appsArray.append(["name": item.name, "bytes": formatBytes(item.bytes)])
         }
 
@@ -1149,7 +1031,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             "quotaGBStr": String(format: "%.0f GB", totalQuotaBytes / (1024 * 1024 * 1024))
         ]
         
-        let pingStr = isConnected && pingLatencyMs >= 0 ? String(format: "%.1f ms", pingLatencyMs) : "未量測"
+        let pingFresh = lastPingUptime.map { ProcessInfo.processInfo.systemUptime - $0 <= 120 } ?? false
+        let pingStr = isConnected && pingFresh && pingLatencyMs >= 0 ? String(format: "%.1f ms", pingLatencyMs) : "未量測"
         let speedStr = String(format: "↓ %@   ↑ %@", formatSpeed(currentDownSpeed), formatSpeed(currentUpSpeed))
         let extTotal = extTodayInBytes + extTodayOutBytes
         
@@ -1165,6 +1048,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             "providerStatus": providerStatusText,
             "focusEnabled": workflowPowerGuard.focusEnabled,
             "workflowStatus": workflowPowerGuard.statusText,
+            "networkQualityStatus": networkQuality.state(at: ProcessInfo.processInfo.systemUptime).description,
+            "appSampleStatus": workflowPowerGuard.focusEnabled ? "重要工作模式：暫停採樣" : (appSampleFresh ? "程序累計快照，非今日用量" : "尚未取得近期採樣"),
             "observationStatus": !isConnected ? "網路未確認，請檢查連線" : (isQuotaRestricted ? "監控中 · 配額為本機估計" : "監控中 · 網路配額未確認"),
             "currentIP": currentIP,
             "activeInterface": activeInterface,
@@ -1436,6 +1321,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 let ifaceChanged = (self.activeInterface != foundInterface)
                 if ifaceChanged || self.currentIP != ipOut {
+                    self.networkQuality.reset()
+                    self.lastPingUptime = nil
+                    self.pingLatencyMs = -1
                     self.providerObservation = nil
                     self.providerRequestID = UUID()
                     self.providerRequestInFlight = false
@@ -1563,79 +1451,45 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         let expectedInterface = activeInterface
         let target = isQuotaRestricted ? "140.120.1.2" : "1.1.1.1"
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/sbin/ping")
-            process.arguments = ["-c", "2", "-t", "2", target]
-            let pipe = Pipe()
-            process.standardOutput = pipe
+            let outcome = ProbeRunner.run("/sbin/ping", ["-c", "2", "-t", "2", target], timeout: 4)
             var latency: Double?
-            do {
-                try process.run()
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                process.waitUntilExit()
-                if process.terminationStatus == 0, let out = String(data: data, encoding: .utf8),
-                   let range = out.range(of: "time="),
-                   let first = out[range.upperBound...].split(separator: " ").first,
-                   let value = Double(first), value.isFinite, value >= 0 {
-                    latency = value
-                }
-            } catch {}
+            if case .success(let out) = outcome,
+               let range = out.range(of: "time="),
+               let first = out[range.upperBound...].split(separator: " ").first,
+               let value = Double(first), value.isFinite, value >= 0 {
+                latency = value
+            }
             let measured = latency
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.pingInFlight = false
                 guard self.workflowPowerGuard.generation == generation,
                       self.currentIP == expectedIP, self.activeInterface == expectedInterface else { return }
-                // ICMP failure is not proof of loss of network connectivity.
+                let uptime = ProcessInfo.processInfo.systemUptime
                 self.pingLatencyMs = measured ?? -1
+                self.lastPingUptime = measured == nil ? nil : uptime
+                self.networkQuality.ingest(latency: measured, uptime: uptime)
             }
         }
     }
 
     func inspectTopAppConsumers() {
-        guard workflowPowerGuard.allowsOptionalProbes else { return }
+        guard workflowPowerGuard.allowsOptionalProbes, !appProbeInFlight else { return }
+        appProbeInFlight = true
         let generation = workflowPowerGuard.generation
         DispatchQueue.global(qos: .background).async { [weak self] in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/nettop")
-            process.arguments = ["-P", "-L", "1", "-J", "bytes_in,bytes_out"]
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            try? process.run()
-            process.waitUntilExit()
-            
-            let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            var appMap: [String: Double] = [:]
-            
-            for line in out.components(separatedBy: .newlines) {
-                let parts = line.split(separator: ",")
-                if parts.count >= 3, let bIn = Double(parts[1]), let bOut = Double(parts[2]) {
-                    var rawName = String(parts[0])
-                    if let dotIdx = rawName.lastIndex(of: ".") {
-                        let suffix = rawName[rawName.index(after: dotIdx)...]
-                        if Int(suffix) != nil {
-                            rawName = String(rawName[..<dotIdx])
-                        }
-                    }
-                    if rawName.hasPrefix("Google Chrome") {
-                        rawName = "Google Chrome"
-                    } else if rawName.hasPrefix("Antigravity") {
-                        rawName = "Antigravity IDE"
-                    }
-                    let total = bIn + bOut
-                    if total > 100 * 1024 {
-                        appMap[rawName, default: 0] += total
-                    }
-                }
-            }
-            
-            let sorted = appMap.sorted { $0.value > $1.value }.map { (name: $0.key, bytes: $0.value) }
+            let outcome = ProbeRunner.run("/usr/bin/nettop", ["-P", "-L", "1", "-J", "bytes_in,bytes_out"], timeout: 5)
+            let observations: [AppTrafficObservation]?
+            if case .success(let out) = outcome {
+                observations = AppTrafficParser.parse(out)
+            } else { observations = nil }
             DispatchQueue.main.async {
-                guard let self, self.workflowPowerGuard.generation == generation else { return }
-                self.topAppConsumers = sorted
-                if self.popover.isShown {
-                    self.pushDataToWebUI()
-                }
+                guard let self else { return }
+                self.appProbeInFlight = false
+                guard self.workflowPowerGuard.generation == generation else { return }
+                self.topAppConsumers = (observations ?? []).map { (name: $0.name, bytes: Double($0.bytes)) }
+                self.appProbeTimestamp = observations == nil ? nil : ProcessInfo.processInfo.systemUptime
+                if self.popover.isShown { self.pushDataToWebUI() }
             }
         }
     }
@@ -2026,15 +1880,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 }
             }
             guard let scriptPath = Bundle.main.url(forResource: "traffic_monitor", withExtension: "py")?.path else { return }
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-            process.arguments = [scriptPath, "--json"]
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            do { try process.run() } catch { return }
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            guard process.terminationStatus == 0, data.count <= 1_048_576,
+            guard case .success(let output) = ProbeRunner.run("/usr/bin/python3", [scriptPath, "--json"], timeout: 15),
+                  let data = output.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   json["schema_version"] as? Int == 1,
                   json["ip"] as? String == expectedIP,
