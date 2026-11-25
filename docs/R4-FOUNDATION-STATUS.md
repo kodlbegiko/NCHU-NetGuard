@@ -211,3 +211,8 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 - Added ConnectionBudgetPeriod.swift and ConnectionCycleReading: monthly calendar anchor (1–31, last-day clamp), inclusive custom periods, explicit selected archive IDs, checked directional totals and remaining estimates. Native management worksheet supports both period modes and validates missing or outside-period selections. Four regression tests; module ownership and compatibility aliases registered.
 - Uses archive save dates, not actual connection start/end or verified billing dates; no persistent cycle profile, automatic network matching, quota policy changes or claims of full-cycle usage. Selection is manual and worksheet settings are not persisted. No paid services or release.
 - Preceding integrated SHA f45326631bab36f0c6741e46b3cd3067b3a28d4c had no workflow runs returned at last check. Candidate remains staged on feat/r4-cycle-budget pending preceding and exact-HEAD CI; real-device behavior unverified.
+
+## Thirty-seventh iteration
+
+- Added TrafficEventDetector.swift with bounded rate baseline, sustained-high/surge/gap heuristics, repeat suppression, continuity invalidation and up to 100 in-memory events; native diagnostic timeline and explicit clear. Four regression tests, ownership and compatibility aliases. No changes to quota ledger, route policy or process control; no malicious-traffic claims, persistent event archive, calibrated thresholds or device validation.
+- Preceding integrated SHA f45326631bab36f0c6741e46b3cd3067b3a28d4c still returned no PR workflow runs at last check. Iterations 36–37 remain staged pending verification. No third-party code, paid services or release.
