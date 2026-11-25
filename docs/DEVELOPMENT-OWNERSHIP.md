@@ -6,8 +6,8 @@ Status: proposed allocation; broad parallel implementation remains locked. No re
 |---|---|
 | 0 Architect/integrator | Package.swift, Contracts.swift, ContractValidation.swift, docs/contracts/, docs/adr/, integration approvals |
 | 1 Traffic | TrafficAccounting.swift, ScopedAccounting.swift |
-| 2 Network | Diagnostics.swift, future NetworkEngine/ and PlatformAdapters/ read-only network discovery |
-| 3 Security/recovery | RecoveryTransaction.swift, RecoveryJournalStore.swift, SimulatedNetworkAdapter.swift, future authorization layer |
+| 2 Network | Diagnostics.swift, NetworkQuality.swift, AppTrafficSample.swift, future NetworkEngine/ and PlatformAdapters/ read-only network discovery |
+| 3 Security/recovery | ProbeRunner.swift, RecoveryTransaction.swift, RecoveryJournalStore.swift, SimulatedNetworkAdapter.swift, future authorization layer |
 | 4 UX | src/Resources/popover.html, future Apps/NetGuardApp/; UX-01–08 |
 | 5 Policy/forecast | PolicyEngine.swift, PredictionEngine.swift, future policy/forecast modules |
 | 6 Workflows/power | WorkflowPowerGuard.swift, future workflow/power adapters |
