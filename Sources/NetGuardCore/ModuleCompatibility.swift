@@ -80,4 +80,7 @@ public typealias SavedConnectionSession = NetGuardData.SavedConnectionSession
 public typealias ConnectionHistoryStore = NetGuardData.ConnectionHistoryStore
 public typealias ConnectionBudgetPeriod = NetGuardData.ConnectionBudgetPeriod
 public typealias ConnectionCycleReading = NetGuardData.ConnectionCycleReading
+public typealias TrafficEventKind = NetGuardObservation.TrafficEventKind
+public typealias TrafficObservationEvent = NetGuardObservation.TrafficObservationEvent
+public typealias TrafficEventDetector = NetGuardObservation.TrafficEventDetector
 #endif
