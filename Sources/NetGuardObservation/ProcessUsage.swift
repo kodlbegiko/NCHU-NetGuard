@@ -72,6 +72,7 @@ public struct ProcessUsageRow: Equatable, Sendable, Identifiable {
 public struct ProcessUsageReport: Equatable, Sendable {
     public let rows: [ProcessUsageRow]
     public let measuredIntervals: Int
+    public let matchedIntervalSeconds: TimeInterval
     public let lastObservedUptime: TimeInterval?
     public let capacityReached: Bool
 }
@@ -84,6 +85,7 @@ public struct ProcessUsageAccumulator: Sendable {
     private var last: TimeInterval?
     private var totals: [String: ProcessUsageRow] = [:]
     private var intervals = 0
+    private var matchedSeconds: TimeInterval = 0
     private var observed: TimeInterval?
     private var capacityReached = false
     public init() {}
@@ -121,11 +123,12 @@ public struct ProcessUsageAccumulator: Sendable {
         }
         if matched {
             intervals = min(intervals + 1, Int.max - 1)
+            matchedSeconds += uptime - last
             observed = uptime
         }
     }
     public func report() -> ProcessUsageReport {
         .init(rows: totals.values.sorted { $0.total == $1.total ? $0.name < $1.name : $0.total > $1.total },
-              measuredIntervals: intervals, lastObservedUptime: observed, capacityReached: capacityReached)
+              measuredIntervals: intervals, matchedIntervalSeconds: matchedSeconds, lastObservedUptime: observed, capacityReached: capacityReached)
     }
 }
