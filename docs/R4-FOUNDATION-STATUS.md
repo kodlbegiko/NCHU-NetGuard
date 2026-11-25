@@ -185,3 +185,8 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 
 - Added AgentAttribution.swift, bounded process-tree parser, exact executable-basename hints, matched ancestry validation and nearest recognized ancestor attribution. Reparenting breaks delta continuity. Integrates the two existing ps probes with nettop and a separate session-only accumulator; AI tool view shows directions, coverage and limitations. Four regression tests added. No signature/bundle identity verification, remote attribution, persistent AI records, or claim of complete workload traffic.
 - Prior integrated run 45638694157 completed successfully (static/Python, Swift, app compile and bundle). Iterations 30–31 are eligible for non-forced integration and fresh exact-HEAD CI. New tests and runtime behavior remain unverified. No paid services, release or network mutation.
+
+## Thirty-second iteration
+
+- Independent session-only opt-in for background process/AI observations; existing disk persistence consent remains separate. Background cadence 20/35 seconds, visible cadence 10/25 seconds, focus and sleep guards retain precedence, and changing consent invalidates pending baselines. Added paired-interval duration to in-memory reports and native status/toggle; two regression tests. Not complete all-day accounting or persistent coverage metadata. Short-lived processes, missed UI transitions, resource overhead and device-specific output remain limitations.
+- Previous run 45639532848 passed static/Python and Swift tests; app build still running at last check. Candidate requires exact-HEAD CI and macOS acceptance. No paid service, host mutation, sleep prevention, or release.
