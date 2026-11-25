@@ -45,3 +45,15 @@ jobs:
           elif [ "$rc" -ne 0 ]; then
             exit "$rc"
           fi
+
+      - name: Experimental flow compatibility evidence (non-gating)
+        run: |
+          for mode in --netguard-flow-check --netguard-udp-check; do
+            rc=0
+            build/NCHUTraffic.app/Contents/MacOS/NCHUTraffic "$mode" || rc=$?
+            if [ "$rc" -eq 2 ]; then
+              echo "::warning::Experimental flow evidence inconclusive ($mode); no coverage or billing claim."
+            elif [ "$rc" -ne 0 ]; then
+              exit "$rc"
+            fi
+          done
