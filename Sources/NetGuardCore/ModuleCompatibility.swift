@@ -5,6 +5,7 @@ import NetGuardObservation
 import NetGuardWorkflow
 import NetGuardRecovery
 import NetGuardProvider
+import NetGuardTraffic
 
 public typealias NetworkQualityState = NetGuardObservation.NetworkQualityState
 public typealias NetworkQualityWindow = NetGuardObservation.NetworkQualityWindow
@@ -23,4 +24,14 @@ public typealias RecoveryJournalStore = NetGuardRecovery.RecoveryJournalStore
 public typealias SimulatedNetworkAdapter = NetGuardRecovery.SimulatedNetworkAdapter
 public typealias ProviderStatus = NetGuardProvider.ProviderStatus
 public typealias ProviderObservation = NetGuardProvider.ProviderObservation
+public typealias SampleQuality = NetGuardTraffic.SampleQuality
+public typealias InterfaceCounters = NetGuardTraffic.InterfaceCounters
+public typealias TrafficDelta = NetGuardTraffic.TrafficDelta
+public typealias TrafficSnapshot = NetGuardTraffic.TrafficSnapshot
+public typealias CounterAccumulator = NetGuardTraffic.CounterAccumulator
+public typealias NetworkScope = NetGuardTraffic.NetworkScope
+public typealias ScopedInterfaceSample = NetGuardTraffic.ScopedInterfaceSample
+public typealias ScopedTrafficDelta = NetGuardTraffic.ScopedTrafficDelta
+public typealias ScopedCounterAccumulator = NetGuardTraffic.ScopedCounterAccumulator
+public typealias InterfaceScopeProjection = NetGuardTraffic.InterfaceScopeProjection
 #endif
