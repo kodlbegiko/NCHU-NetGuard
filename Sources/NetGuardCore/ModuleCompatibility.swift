@@ -71,4 +71,7 @@ public typealias DNSProbeReading = NetGuardObservation.DNSProbeReading
 public typealias DNSProbeParser = NetGuardObservation.DNSProbeParser
 public typealias ProcessTreeNode = NetGuardObservation.ProcessTreeNode
 public typealias AgentAttribution = NetGuardObservation.AgentAttribution
+public typealias DefaultRouteParser = NetGuardObservation.DefaultRouteParser
+public typealias DualStackEvidence = NetGuardObservation.DualStackEvidence
+public typealias InterfaceAddressEvidence = NetGuardObservation.InterfaceAddressEvidence
 #endif
