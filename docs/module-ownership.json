@@ -45,10 +45,14 @@
   "targets": {
     "NetGuardCore": [
       "NetGuardObservation",
-      "NetGuardWorkflow"
+      "NetGuardWorkflow",
+      "NetGuardRecovery",
+      "NetGuardProvider"
     ],
     "NetGuardObservation": [],
-    "NetGuardWorkflow": []
+    "NetGuardWorkflow": [],
+    "NetGuardRecovery": [],
+    "NetGuardProvider": []
   },
   "source_targets": {
     "TrafficAccounting.swift": "NetGuardCore",
@@ -59,14 +63,14 @@
     "NetworkQuality.swift": "NetGuardObservation",
     "AppTrafficSample.swift": "NetGuardObservation",
     "ProbeRunner.swift": "NetGuardCore",
-    "RecoveryJournalStore.swift": "NetGuardCore",
-    "RecoveryTransaction.swift": "NetGuardCore",
-    "SimulatedNetworkAdapter.swift": "NetGuardCore",
+    "RecoveryJournalStore.swift": "NetGuardRecovery",
+    "RecoveryTransaction.swift": "NetGuardRecovery",
+    "SimulatedNetworkAdapter.swift": "NetGuardRecovery",
     "PolicyEngine.swift": "NetGuardCore",
     "PredictionEngine.swift": "NetGuardCore",
     "WorkflowPowerGuard.swift": "NetGuardWorkflow",
     "HistoryStore.swift": "NetGuardCore",
-    "ProviderObservation.swift": "NetGuardCore",
+    "ProviderObservation.swift": "NetGuardProvider",
     "UsageMigration.swift": "NetGuardCore",
     "QuickPanelState.swift": "NetGuardCore",
     "HistoryAnalytics.swift": "NetGuardCore",
