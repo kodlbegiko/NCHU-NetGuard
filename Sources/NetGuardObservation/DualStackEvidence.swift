@@ -95,3 +95,51 @@ public struct InterfaceAddressEvidence: Equatable, Sendable {
         return v4 + " · " + v6
     }
 }
+
+
+/// A route-table candidate, not proof of where a packet went or its billing scope.
+public enum ObservedRouteKind: String, CaseIterable, Sendable {
+    case directLinkCandidate, gatewayCandidate, unknown
+}
+
+public struct RoutePathEvidence: Equatable, Sendable {
+    public let interfaceName: String
+    public let kind: ObservedRouteKind
+    // Ephemeral next hop only; do not encode, log or display it.
+    fileprivate let nextHop: String?
+}
+
+public enum RoutePathParser {
+    public static func inspect(_ output: String) -> RoutePathEvidence? {
+        guard let name = DefaultRouteParser.interfaceName(output),
+              name != "lo0", !TunnelEvidence.isTunnelCandidate(name) else { return nil }
+        var flagRows: [Set<String>] = []
+        var gateways: [String] = []
+        for line in output.split(whereSeparator: \.isNewline) {
+            let value = line.trimmingCharacters(in: .whitespaces)
+            if value.hasPrefix("flags:") {
+                flagRows.append(Set(value.dropFirst(6).split(whereSeparator: {
+                    $0 == "<" || $0 == ">" || $0 == "," || $0.isWhitespace
+                }).map(String.init)))
+            } else if value.hasPrefix("gateway:") {
+                gateways.append(String(value.dropFirst(8)).trimmingCharacters(in: .whitespaces))
+            }
+        }
+        guard flagRows.count == 1, let flags = flagRows.first, flags.contains("UP"),
+              flags.isDisjoint(with: ["REJECT", "BLACKHOLE", "LOCAL", "LLINFO", "MULTICAST", "BROADCAST"]),
+              gateways.count <= 1 else { return nil }
+        let hop = gateways.first
+        if flags.contains("GATEWAY") {
+            guard let hop, !hop.isEmpty, hop.utf8.count <= 128 else { return nil }
+            return .init(interfaceName: name, kind: .gatewayCandidate, nextHop: hop)
+        }
+        return .init(interfaceName: name, kind: .directLinkCandidate, nextHop: hop)
+    }
+
+    public static func classify(before: RoutePathEvidence?, after: RoutePathEvidence?,
+                                flowInterface: String, tunnelOverlap: Bool) -> ObservedRouteKind {
+        guard !tunnelOverlap, let before, let after, before == after,
+              before.interfaceName == flowInterface else { return .unknown }
+        return before.kind
+    }
+}

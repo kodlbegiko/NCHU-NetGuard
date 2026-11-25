@@ -148,32 +148,47 @@ public struct TCPFlowCoverage: Equatable, Sendable {
     public var matchedFraction: Double { Double(matchedRows) / Double(max(1, currentRows)) }
 }
 
+/// Ephemeral adjacent matched rows for route-candidate inspection only.
+public struct MatchedFlowDelta: Sendable {
+    public let remote: String
+    public let interface: String
+    public let received: UInt64
+    public let sent: UInt64
+}
+
 public struct TCPFlowAccumulator: Sendable {
     private var previous: [String: TCPFlowCounter] = [:]
     private var last: TimeInterval?
     public init() {}
     public private(set) var coverage: TCPFlowCoverage?
-    public mutating func reset() { previous = [:]; last = nil; coverage = nil }
+    public private(set) var matchedDeltas: [MatchedFlowDelta] = []
+    public mutating func reset() { previous = [:]; last = nil; coverage = nil; matchedDeltas = [] }
     public mutating func ingest(_ rows: [TCPFlowCounter]?, uptime: TimeInterval) -> [DestinationAddressKind: DestinationByteTotals]? {
         guard let rows, !rows.isEmpty, rows.count <= 4096, uptime.isFinite, uptime >= 0,
               let transport = rows.first?.transport, rows.allSatisfy({ $0.transport == transport }),
               Set(rows.map(\.identity)).count == rows.count else { reset(); return nil }
         coverage = nil
+        matchedDeltas = []
         let current = Dictionary(uniqueKeysWithValues: rows.map { ($0.identity, $0) })
         defer { previous = current; last = uptime }
         guard let last, uptime > last, uptime - last <= 15,
               previous.values.allSatisfy({ $0.transport == transport }) else { return nil }
-        let deltas: [DestinationFlowDelta] = rows.enumerated().compactMap { index, row in
+        let matched: [MatchedFlowDelta] = rows.compactMap { row in
             guard let old = previous[row.identity], old.remote == row.remote, old.interface == row.interface,
                   row.received >= old.received, row.sent >= old.sent else { return nil }
-            return .init(flowID: String(index), remoteAddress: row.remote,
+            return .init(remote: row.remote, interface: row.interface,
                          received: row.received - old.received, sent: row.sent - old.sent)
+        }
+        let deltas = matched.enumerated().map { index, row in
+            DestinationFlowDelta(flowID: String(index), remoteAddress: row.remote, received: row.received, sent: row.sent)
         }
         let new = current.keys.filter { previous[$0] == nil }.count
         let disappeared = previous.keys.filter { current[$0] == nil }.count
         coverage = TCPFlowCoverage(priorRows: previous.count, currentRows: current.count,
             matchedRows: deltas.count, newRows: new, disappearedRows: disappeared,
             resetRows: current.count - new - deltas.count, elapsedSeconds: uptime - last)
-        return DestinationFlowProjection.summarize(deltas)
+        let totals = DestinationFlowProjection.summarize(deltas)
+        if totals != nil { matchedDeltas = matched }
+        return totals
     }
 }

@@ -71,6 +71,7 @@ enum HostProbeCheck {
         let transport: FlowTransport
         let totals: [DestinationAddressKind: DestinationByteTotals]?
         let coverage: TCPFlowCoverage?
+        let routeCandidates: [ObservedRouteKind: DailyScopeTotals]?
         let tunnelCandidate: Bool
         let diagnosticLines: [String]
     }
@@ -104,12 +105,42 @@ enum HostProbeCheck {
         var accumulator = TCPFlowAccumulator()
         let first = snapshot("first")
         _ = accumulator.ingest(first.0, uptime: first.1)
+        // At most three distinct numeric peers; local routing-table queries
+        // only, no DNS or packets. Never retain peer identities in the result.
+        let peers = Array(Set((first.0 ?? []).map(\.remote)).sorted().prefix(3))
+        func routes() -> [String: RoutePathEvidence] {
+            var result: [String: RoutePathEvidence] = [:]
+            for peer in peers {
+                guard !peer.isEmpty, peer.utf8.count <= 64,
+                      peer.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) ||
+                          (65...70).contains($0) || $0 == 46 || $0 == 58 }) else { continue }
+                if case .success(let raw) = ProbeRunner.run("/sbin/route",
+                    ["-n", "get", peer.contains(":") ? "-inet6" : "-inet", peer],
+                    timeout: 0.75, maxBytes: 16_384), let evidence = RoutePathParser.inspect(raw) {
+                    result[peer] = evidence
+                }
+            }
+            return result
+        }
+        let beforeRoutes = routes()
         Thread.sleep(forTimeInterval: 1)
         let second = snapshot("second")
         let tunnelCandidate = ((first.0 ?? []) + (second.0 ?? [])).contains { TunnelEvidence.isTunnelCandidate($0.interface) }
         let totals = accumulator.ingest(second.0, uptime: second.1)
+        let afterRoutes = routes()
+        var buckets: [ObservedRouteKind: DailyScopeTotals] = [:]
+        var valid = totals != nil
+        for row in accumulator.matchedDeltas {
+            let kind = RoutePathParser.classify(before: beforeRoutes[row.remote], after: afterRoutes[row.remote],
+                flowInterface: row.interface, tunnelOverlap: tunnelCandidate)
+            let old = buckets[kind] ?? DailyScopeTotals()
+            let (rx, a) = old.received.addingReportingOverflow(row.received)
+            let (tx, b) = old.sent.addingReportingOverflow(row.sent)
+            if a || b || rx.addingReportingOverflow(tx).overflow { valid = false; break }
+            buckets[kind] = .init(received: rx, sent: tx)
+        }
         return FlowCheckReading(transport: transport, totals: totals, coverage: accumulator.coverage,
-            tunnelCandidate: tunnelCandidate, diagnosticLines: lines)
+            routeCandidates: valid ? buckets : nil, tunnelCandidate: tunnelCandidate, diagnosticLines: lines)
     }
 
     static func runFlowCheck(transport: FlowTransport = .tcp) -> Int32 {
@@ -131,6 +162,12 @@ enum HostProbeCheck {
         for kind in totals.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
             guard let value = totals[kind] else { continue }
             print("\(kind.rawValue): received=\(value.received) sent=\(value.sent)")
+        }
+        if let candidates = reading.routeCandidates {
+            for kind in candidates.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
+                guard let value = candidates[kind] else { continue }
+                print("route_candidate_\(kind.rawValue): received=\(value.received) sent=\(value.sent)")
+            }
         }
         print(marker + "_OK")
         return 0

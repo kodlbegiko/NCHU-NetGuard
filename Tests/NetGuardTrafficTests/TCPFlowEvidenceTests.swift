@@ -71,12 +71,16 @@ final class TCPFlowEvidenceTests: XCTestCase {
         XCTAssertEqual(accumulator.coverage?.priorRows, 3)
         XCTAssertEqual(accumulator.coverage?.currentRows, 3)
         XCTAssertEqual(accumulator.coverage?.matchedRows, 1)
+        XCTAssertEqual(accumulator.matchedDeltas.count, 1)
+        XCTAssertEqual(accumulator.matchedDeltas.first?.received, 20)
+        XCTAssertEqual(accumulator.matchedDeltas.first?.interface, "en0")
         XCTAssertEqual(accumulator.coverage?.newRows, 1)
         XCTAssertEqual(accumulator.coverage?.disappearedRows, 1)
         XCTAssertEqual(accumulator.coverage?.resetRows, 1)
         XCTAssertEqual(accumulator.coverage?.elapsedSeconds, 2)
         XCTAssertNil(accumulator.ingest(current, uptime: 30))
         XCTAssertNil(accumulator.coverage)
+        XCTAssertTrue(accumulator.matchedDeltas.isEmpty)
     }
 
 

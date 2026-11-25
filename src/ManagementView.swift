@@ -703,6 +703,20 @@ struct ManagementView: View {
                             }
                         }
                     }
+                    if let candidates = reading.routeCandidates {
+                        Text("路由候選（同一批連線增量，不可與上方相加）").font(.caption)
+                        ForEach(candidates.keys.sorted(by: { $0.rawValue < $1.rawValue }), id: \.self) { kind in
+                            if let value = candidates[kind] {
+                                HStack {
+                                    Text(kind == .directLinkCandidate ? "直連候選" : kind == .gatewayCandidate ? "閘道候選" : "路由未確認")
+                                    Spacer()
+                                    Text(String(format: "↓ %.2f ↑ %.2f MiB", Double(value.received) / 1_048_576, Double(value.sent) / 1_048_576))
+                                }.font(.caption)
+                            }
+                        }
+                        Text("最多三個目的地的本機路由查詢；查詢前後一致才分類。非封包路徑證明，也非 VPN 去重或 Internet 計費。")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
                     if reading.tunnelCandidate {
                         Text("觀測到疑似隧道介面，可能存在內外層重疊。").font(.caption)
                     }
