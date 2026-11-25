@@ -52,3 +52,6 @@ Next: review exact branch CI, audit all trust boundaries, verify recovery journa
 ## Closure batch 5 (candidate)
 - Replace disk-spooled ProbeRunner with nonblocking pipe and strict in-memory output ceiling; no shell; bounded polling and timeout. Isolated Linux Swift harness passed eight cases (success, failure, timeout, overflow, exact limit, infinite producer, invalid UTF-8, allowed exit). macOS exact candidate CI pending; noncooperative child/descendant termination remains explicitly not guaranteed.
 - Remove unused legacy direct Process launchers, hardcoded wired gateway fallback, and unused media key injection path; retained active observation/notification code. Static guard prohibits direct app Process launchers. No network mutations or process-tree termination enabled.
+
+## Closure batch 6 (candidate)
+- Introduce true SwiftPM NetGuardApp executable target and separate packaged module-linkage build/smoke. Add CI gate without removing legacy build/smoke. ProbeRunner package-scoped; no public subprocess API. Exact compilation required before changing default build or claiming migration complete.

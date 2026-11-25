@@ -1,3 +1,6 @@
+#if SWIFT_PACKAGE
+import NetGuardCore
+#endif
 import Cocoa
 import SwiftUI
 import Foundation

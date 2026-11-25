@@ -12,8 +12,8 @@ public enum ProbeOutcome: Equatable, Sendable {
 /// Read-only probes with a bounded in-memory pipe, no disk spooling and no shell.
 /// A timeout stops collecting output and requests termination of our own child.
 /// A non-cooperative child/descendant can outlive the deadline; no process-tree kill.
-enum ProbeRunner {
-    static func run(_ path: String, _ arguments: [String], timeout: TimeInterval = 5,
+package enum ProbeRunner {
+    package static func run(_ path: String, _ arguments: [String], timeout: TimeInterval = 5,
                     maxBytes: Int = 1_048_576, acceptedExitCodes: Set<Int32> = [0]) -> ProbeOutcome {
         guard path.hasPrefix("/"), timeout.isFinite, timeout > 0, timeout <= 30,
               (1...4_194_304).contains(maxBytes) else { return .failed }

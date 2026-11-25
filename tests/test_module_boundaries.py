@@ -67,3 +67,14 @@ class ModuleBoundaryTests(unittest.TestCase):
             visited.add(node)
         for name in graph:
             visit(name)
+
+    def test_native_executable_target_isolated_from_core(self):
+        manifest = json.loads((ROOT / "docs/module-ownership.json").read_text())
+        package = (ROOT / "Package.swift").read_text()
+        match = re.search(r'\.executableTarget\(name: "NetGuardApp", dependencies: \[([^\]]*)\], path: "src"', package)
+        self.assertIsNotNone(match)
+        self.assertEqual(re.findall(r'"([^"]+)"', match.group(1)),
+                         manifest["app_targets"]["NetGuardApp"]["dependencies"])
+        for path in (ROOT / "src").glob("*.swift"):
+            self.assertIn("#if SWIFT_PACKAGE\nimport NetGuardCore\n#endif", path.read_text())
+        self.assertIn("swift build -c release --product NCHUTraffic", (ROOT / "Makefile").read_text())

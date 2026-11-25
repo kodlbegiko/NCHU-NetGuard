@@ -1,3 +1,6 @@
+#if SWIFT_PACKAGE
+import NetGuardCore
+#endif
 import Foundation
 
 /// The local compatibility check emits only coarse outcome categories.

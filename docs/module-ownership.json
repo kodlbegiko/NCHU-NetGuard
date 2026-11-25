@@ -118,5 +118,14 @@
     "DestinationEvidence.swift": "NetGuardTraffic",
     "TCPFlowEvidence.swift": "NetGuardTraffic",
     "AgentHistoryStore.swift": "NetGuardData"
+  },
+  "app_targets": {
+    "NetGuardApp": {
+      "dependencies": [
+        "NetGuardCore"
+      ],
+      "path": "src",
+      "owner": 0
+    }
   }
 }
