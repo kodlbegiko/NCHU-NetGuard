@@ -1,0 +1,31 @@
+# R4 P0/P1 master tracker — closure candidate
+Baseline: 49b28d60fe1056c14afb5f75e6d2d3cb19d2b1fe; candidate CI [45649994495](https://github.com/kodlbegiko/NCHU-NetGuard/actions/runs/45649994495) success. Hosted parser/flow checks are non-gating and not device evidence. Foundation ref 335c5be8 was not advanced (API error, ref re-read confirmed). Main unchanged. Local working tree not accessible to this agent.
+
+Status vocabulary: Not Started / In Progress / Implemented / Tested / CI Verified / Device Verified / Blocked. A row is not closed until its own acceptance evidence is present. This is an initial inventory, not a full source audit; split rows into atomic findings as work proceeds.
+
+| ID | Priority | Module / root concern | Acceptance / dependencies | Status and evidence |
+|---|---|---|---|---|
+| NG-001 | P0 | Security: legacy TLS bypass | Standard trust; negative certificate fixtures; no fallback | Implemented baseline; security audit open |
+| NG-002 | P0 | Traffic: scope, counter gaps, interface/VPN double count | Directional independent baselines; discontinuity/IPv6/UDP/VPN fixture and host evidence; unknown scope explicit | In Progress; experimental flow is not billing |
+| NG-003 | P0 | Network: command outcome and timeout | Fixed argv, bounded subprocess output and lifecycle; verified outcomes | In Progress; real mutation disabled |
+| NG-004 | P0 | Recovery: snapshot, transaction, crash durability | Simulated failure injection, durable journal, authorization, separately authorized device rollback | In Progress; real adapter disabled |
+| NG-005 | P0 | Security/workflow: unsafe process control | No unauthorized process controls; identity and consent gates | Implemented safe mode; full review open |
+| NG-006 | P1 | Runtime: hardcoded paths/interfaces | Portable build/run, dynamic discovery and hardware tests | In Progress |
+| NG-007 | P1 | CLI JSON and history parity | Versioned validated JSON, SQLite parity, regression checks | In Progress |
+| NG-008 | P1 | Provider: fragile ranking and stale data | Official policy, fixtures, identity, error/freshness, on-campus reconciliation | In Progress; policy and device evidence outstanding |
+| NG-009 | P1 | Network: unreliable service classification | Verified IPv4/IPv6/DNS/VPN attribution or explicit unknown | In Progress |
+| NG-010 | P1 | Runtime/UI: flattened compilation and bridge trust | True module linkage, contract guards, native UI parity, accessibility and security tests | In Progress |
+| NG-012 | P1 | Accounting units and day/reset | Verified provider units and reset; separate estimates | In Progress |
+| R4-P0-JOURNAL-READ | P0 | Recovery: whole-file load before byte limit | Bounded read before decode; oversized journal rejected and preserved | Implemented in closure candidate; added regression test, CI pending |
+| R4-P0-PROVIDER | P0 | Provider billing reconciliation | Official policy and on-campus observations; unknown if unavailable | In Progress; external evidence required |
+| R4-P0-AUTH | P0 | Recovery: real authorization and network mutation | Explicit consent, device rollback evidence; no live mutation in CI | Blocked for device execution; engineering review remains |
+| R4-P1-CONTRACT | P1 | Contracts: freeze and compatibility | Registry, golden fixtures, drift gate, owner approval | In Progress |
+| R4-P1-MODULE | P1 | Architecture: parallel unlock | Exact HEAD CI, independent modules, integrator approval | In Progress |
+| R4-P1-DATA | P1 | Data: retention, concurrency, migrations and backup | Fault injection, cross-process exclusion, integrity and V1/V2 tests | In Progress |
+| R4-P1-WORKFLOW | P1 | Observation: AI attribution, sleep/idle | Identity, coverage, lifecycle and real host tests | In Progress |
+| R4-P1-POLICY | P1 | Forecast/policy | Validated profiles, stale/gap handling, regression tests | In Progress |
+| R4-P1-UX | P1 | Native UI/accessibility | UX gates, normal startup and human interaction evidence | In Progress |
+| R4-P1-PERF | P1 | Performance | Reproducible actual M4 benchmark, budgets, long-running tests | Blocked for physical-device measurements |
+| R4-P1-QA | P1 | QA/integration | Exact closure HEAD local and independent CI, regression review | In Progress |
+
+Next: review exact branch CI, audit all trust boundaries, verify recovery journal durability/locking and lifecycle, provider policy, module migration and contracts. No main merge, paid services, real network mutation, or freeze approval implied.

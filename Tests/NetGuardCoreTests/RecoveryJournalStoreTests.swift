@@ -39,6 +39,19 @@ final class RecoveryJournalStoreTests: XCTestCase {
             XCTAssertEqual(try Data(contentsOf: store.url), bad)
         }
     }
+    func testOversizedJournalRejectedWithoutOverwriting() throws {
+        try withStore { store in
+            let payload = Data(repeating: 0x20, count: 1_048_577)
+            try payload.write(to: store.url)
+            XCTAssertThrowsError(try store.load()) {
+                XCTAssertEqual($0 as? JournalValidationError, .oversized)
+            }
+            XCTAssertThrowsError(try store.save(RecoveryJournalEntry(plan: plan()))) {
+                XCTAssertEqual($0 as? JournalValidationError, .oversized)
+            }
+            XCTAssertEqual(try Data(contentsOf: store.url), payload)
+        }
+    }
     func testOtherTransactionCannotReplaceJournal() throws {
         try withStore { store in
             let first = RecoveryJournalEntry(plan: plan())

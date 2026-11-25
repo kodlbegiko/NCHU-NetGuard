@@ -35,8 +35,19 @@ public struct RecoveryJournalStore: Sendable {
 
     public func load() throws -> RecoveryJournalEntry? {
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        let data = try Data(contentsOf: url, options: .mappedIfSafe)
-        guard data.count <= 1_048_576 else { throw JournalValidationError.oversized }
+        // Enforce the byte ceiling while reading, before decoding. Checking
+        // Data.count after loading the entire file does not bound resource use.
+        let limit = 1_048_576
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var data = Data()
+        while data.count <= limit {
+            let remaining = limit + 1 - data.count
+            let chunk = try handle.read(upToCount: min(65_536, remaining)) ?? Data()
+            if chunk.isEmpty { break }
+            data.append(chunk)
+        }
+        guard data.count <= limit else { throw JournalValidationError.oversized }
         let entry = try JSONDecoder().decode(RecoveryJournalEntry.self, from: data)
         try entry.validate()
         return entry
