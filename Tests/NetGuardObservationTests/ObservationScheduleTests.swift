@@ -33,4 +33,16 @@ final class ObservationScheduleTests: XCTestCase {
         XCTAssertTrue(TunnelEvidence.description(defaultInterface: "en0", candidates: ["utun3"]).contains("不代表"))
         XCTAssertTrue(TunnelEvidence.description(defaultInterface: "utun3", candidates: []).contains("未確認"))
     }
+
+    func testBackgroundCadenceRequiresConsentAndRespectsPause() {
+        var s = ObservationSchedule()
+        XCTAssertFalse(s.takeApps(now: 0, visible: false, busy: true, allowed: true))
+        XCTAssertTrue(s.takeApps(now: 0, visible: false, busy: true, allowed: true, backgroundEnabled: true))
+        XCTAssertFalse(s.takeApps(now: 19, visible: false, busy: true, allowed: true, backgroundEnabled: true))
+        XCTAssertTrue(s.takeApps(now: 20, visible: false, busy: true, allowed: true, backgroundEnabled: true))
+        XCTAssertFalse(s.takeApps(now: 55, visible: false, busy: false, allowed: false, backgroundEnabled: true))
+        XCTAssertTrue(s.takeApps(now: 55, visible: false, busy: false, allowed: true, backgroundEnabled: true))
+        XCTAssertFalse(s.takePing(now: 55, visible: false, busy: true, allowed: true))
+    }
+
 }
