@@ -33,3 +33,15 @@ jobs:
 
       - name: Native fixture smoke (no production startup)
         run: python3 scripts/smoke_test.py --app build/NCHUTraffic.app
+
+      - name: Host parser compatibility evidence (non-gating)
+        run: |
+          set +e
+          build/NCHUTraffic.app/Contents/MacOS/NCHUTraffic --netguard-host-check
+          rc=$?
+          set -e
+          if [ "$rc" -eq 2 ]; then
+            echo "::warning::Hosted environment did not provide sufficient compatible observations; local host acceptance still required."
+          elif [ "$rc" -ne 0 ]; then
+            exit "$rc"
+          fi
