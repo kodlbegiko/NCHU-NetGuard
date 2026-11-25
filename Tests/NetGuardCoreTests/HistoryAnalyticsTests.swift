@@ -30,4 +30,11 @@ final class HistoryAnalyticsTests: XCTestCase {
         let day = try HistoryDay(day: "2026-11-24", total: 1, download: nil, upload: nil)
         XCTAssertThrowsError(try HistoryAnalytics.period(endingBefore: "2026-11-25", days: 7, records: [day,day]))
     }
+
+    func testScopedExportExplicitlyLabelsScope() throws {
+        let report = try HistoryAnalytics.period(endingBefore: "2026-11-25", days: 1, records: [])
+        XCTAssertEqual(report.csv(scope: .campusWifi),
+            "date,total_bytes,download_bytes,upload_bytes,status,scope\r\n2026-11-24,,,,missing,campusWifi\r\n")
+    }
+
 }
