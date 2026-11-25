@@ -1048,8 +1048,8 @@
       var titleEl = document.getElementById('tooltip-date-title');
       var detEl = document.getElementById('tooltip-details');
       if (titleEl && detEl) {
-        var statusBadge = d.statusLevel === 'danger' ? '🔴 超標' : (d.statusLevel === 'warning' ? '🟡 警戒' : '🟢 正常');
-        var dateLabel = d.isToday ? '🌟 今日 (' + d.shortDate + ')' : d.shortDate + ' (' + d.dayLabel + ')';
+        var statusBadge = d.observed === true ? '已記錄（非配額）' : '無紀錄';
+        var dateLabel = d.shortDate + ' (' + d.dayLabel + ')';
         titleEl.textContent = dateLabel + ' ' + statusBadge;
         detEl.textContent = d.totalStr + ' (↓' + d.dlStr + ' • ↑' + d.ulStr + ')';
       }
@@ -1094,12 +1094,11 @@
         document.getElementById('mode-tag').innerText = '配額未確認';
         document.getElementById('mode-tag').className = 'mode-tag ext';
 
-        if (data.extTotalStr) document.getElementById('ext-total').innerText = data.extTotalStr;
-        if (data.extDlStr) document.getElementById('ext-dl').innerText = data.extDlStr;
-        if (data.extUlStr) document.getElementById('ext-ul').innerText = data.extUlStr;
-        if (data.extDlStr && data.extUlStr) {
-          document.getElementById('ext-sub-summary').innerText = '下載: ' + data.extDlStr + '  •  上傳: ' + data.extUlStr;
-        }
+        const available = data.externalUsageAvailable === true;
+        document.getElementById('ext-total').textContent = available ? (data.extTotalStr || '未量測') : '未確認';
+        document.getElementById('ext-dl').textContent = available ? (data.extDlStr || '未量測') : '未確認';
+        document.getElementById('ext-ul').textContent = available ? (data.extUlStr || '未量測') : '未確認';
+        document.getElementById('ext-sub-summary').textContent = available ? '下載: ' + data.extDlStr + '  •  上傳: ' + data.extUlStr : '此網路用量尚未確認';
         if (data.speedStr) document.getElementById('ext-speed-indicator').innerText = '⚡ ' + data.speedStr;
       }
 
@@ -1124,7 +1123,7 @@
         var subTotalLim = document.getElementById('sub-total-quota-limit');
         if (subTotalLim) subTotalLim.innerText = '限 ' + data.quotaTotalGB + ' GiB';
         var qTip = document.getElementById('history-quota-tip');
-        if (qTip) qTip.innerText = '限額 ' + data.quotaTotalGB + ' GiB';
+        if (qTip) qTip.textContent = '跨範圍歷史，不代表配額';
       }
       if (data.remTotalStr) {
         var subRemTotal = document.getElementById('sub-rem-total');
@@ -1148,7 +1147,7 @@
       if (data.ulPctStr) document.getElementById('ul-progress').style.width = data.ulPctStr;
       if (data.usedUlStr) document.getElementById('used-ul-text').innerText = '已傳 ' + data.usedUlStr;
 
-      var netNote = isQuotaRestricted ? (data.isCampusWifi ? '校園Wi-Fi' : '宿網') : '外網';
+      var netNote = isQuotaRestricted ? (data.isCampusWifi ? '校園Wi-Fi' : '宿網') : '配額未確認';
       var ipInfo = data.currentIP ? (' • ' + data.currentIP + ' (' + netNote + ')') : '';
       if (data.date) document.getElementById('date-label').innerText = data.date + ipInfo;
 
@@ -1341,7 +1340,7 @@
           const bars = document.getElementById('chart-bars-wrap');
           bars.replaceChildren();
           cd.days.slice(0, 7).forEach(function(d, index) {
-            const pct = Math.max(0, Math.min(132, parseFloat(d.pctOfQuota) || 0));
+            const fraction = Math.max(0, Math.min(1, Number(d.relativeHeight) || 0));
             const col = document.createElement('div');
             col.className = 'chart-col' + (d.isToday ? ' is-today' : '');
             col.tabIndex = 0;
@@ -1353,7 +1352,7 @@
             track.className = 'col-bar-track';
             const fill = document.createElement('div');
             fill.className = 'col-bar-fill ' + (['safe','warning','danger'].includes(d.statusLevel) ? d.statusLevel : 'unknown');
-            fill.style.height = Math.max(3, Math.min(50, Math.round(pct / 100 * 38))) + 'px';
+            fill.style.height = d.observed === true ? Math.max(3, Math.round(fraction * 50)) + 'px' : '0px';
             track.append(fill);
             const label = document.createElement('div');
             label.className = 'col-bottom-label';
@@ -1369,7 +1368,7 @@
         }
       }
 
-      if (data.history && data.history.length > 0) {
+      if (Array.isArray(data.history)) {
         const history = document.getElementById('history-container');
         history.replaceChildren();
         data.history.slice(0, 32).forEach(function(item) {

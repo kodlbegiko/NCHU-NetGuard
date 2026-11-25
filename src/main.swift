@@ -1746,203 +1746,76 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             appsArray.append(["name": item.name, "bytes": formatBytes(item.bytes)])
         }
 
-        // 構建極致清楚的歷史對比清單 (包含今天 + 過去數日)
+        // Only observed scope rows belong in the local history list. The
+        // aggregate daily history spans scopes and is not a campus quota.
         var histArray: [[String: String]] = []
         let todayShortDate = String(currentDateString.suffix(5))
-        
-        if isDormNetwork {
-            histArray.append([
-                "label": "今日 (宿網有線)",
-                "date": todayShortDate,
-                "total": formatBytes(dormTodayInBytes + dormTodayOutBytes),
-                "dl": formatBytes(dormTodayInBytes),
-                "ul": formatBytes(dormTodayOutBytes),
-                "pct": String(format: "%.1f%%", min((dormTodayInBytes / (7.0 * 1024 * 1024 * 1024)) * 100.0, 100.0))
-            ])
-            if (wifiTodayInBytes + wifiTodayOutBytes) > 0 {
-                histArray.append([
-                    "label": "今日 (校園 Wi-Fi)",
-                    "date": todayShortDate,
-                    "total": formatBytes(wifiTodayInBytes + wifiTodayOutBytes),
-                    "dl": formatBytes(wifiTodayInBytes),
-                    "ul": formatBytes(wifiTodayOutBytes),
-                    "pct": String(format: "%.1f%%", min((wifiTodayInBytes / (10.0 * 1024 * 1024 * 1024)) * 100.0, 100.0))
-                ])
-            }
-        } else if isCampusWifi {
-            histArray.append([
-                "label": "今日 (校園 Wi-Fi)",
-                "date": todayShortDate,
-                "total": formatBytes(wifiTodayInBytes + wifiTodayOutBytes),
-                "dl": formatBytes(wifiTodayInBytes),
-                "ul": formatBytes(wifiTodayOutBytes),
-                "pct": String(format: "%.1f%%", min((wifiTodayInBytes / (10.0 * 1024 * 1024 * 1024)) * 100.0, 100.0))
-            ])
-            if (dormTodayInBytes + dormTodayOutBytes) > 0 {
-                histArray.append([
-                    "label": "今日 (宿網有線)",
-                    "date": todayShortDate,
-                    "total": formatBytes(dormTodayInBytes + dormTodayOutBytes),
-                    "dl": formatBytes(dormTodayInBytes),
-                    "ul": formatBytes(dormTodayOutBytes),
-                    "pct": String(format: "%.1f%%", min((dormTodayInBytes / (7.0 * 1024 * 1024 * 1024)) * 100.0, 100.0))
-                ])
-            }
-        } else {
-            let extTotal = extTodayInBytes + extTodayOutBytes
-            histArray.append([
-                "label": "今日 (非宿網/熱點)",
-                "date": todayShortDate,
-                "total": formatBytes(extTotal),
-                "dl": formatBytes(extTodayInBytes),
-                "ul": formatBytes(extTodayOutBytes),
-                "pct": "配額未知"
-            ])
-            if (dormTodayInBytes + dormTodayOutBytes) > 0 {
-                histArray.append([
-                    "label": "今日 (宿網有線)",
-                    "date": todayShortDate,
-                    "total": formatBytes(dormTodayInBytes + dormTodayOutBytes),
-                    "dl": formatBytes(dormTodayInBytes),
-                    "ul": formatBytes(dormTodayOutBytes),
-                    "pct": String(format: "%.1f%%", min((dormTodayInBytes / (7.0 * 1024 * 1024 * 1024)) * 100.0, 100.0))
-                ])
-            }
+        let todayObserved = !clockHeld && !persistenceBlocked && !accountingOverflow &&
+            currentDateString == getTodayString() && measuredSampleCount > 0
+        for (scope, label) in [(NetworkScope.dorm, "宿網"), (.campusWifi, "校園 Wi-Fi"), (.external, "外部網路")] {
+            guard hasLocalScopeEvidence(scope) else { continue }
+            let totals = trafficLedger.totals(for: scope)
+            let rx = Double(totals.received), tx = Double(totals.sent)
+            histArray.append(["label": "今日 " + label + "（已觀測）", "date": todayShortDate,
+                "total": formatBytes(rx + tx), "dl": formatBytes(rx), "ul": formatBytes(tx), "pct": "本機紀錄"])
         }
-        
-        // 2. 過去歷史紀錄 (按日期降序)
         let history = TrafficHistoryManager.shared.loadHistory()
-        for d in history.keys.filter({ $0 != self.currentDateString }).sorted().suffix(5).reversed() {
-            if let rec = history[d] {
-                let shortDate = String(d.suffix(5))
-                let relLabel = getRelativeDateLabel(targetDateStr: d)
-                let pct = min(max((rec.total / totalQuotaBytes) * 100.0, 0.0), 100.0)
-                histArray.append([
-                    "label": relLabel,
-                    "date": shortDate,
-                    "total": formatBytes(rec.total),
-                    "dl": rec.dl.map { formatBytes($0) } ?? "未知",
-                    "ul": rec.ul.map { formatBytes($0) } ?? "未知",
-                    "pct": String(format: "%.1f%%", pct)
-                ])
-            }
+        for day in history.keys.filter({ $0 < currentDateString }).sorted().suffix(5).reversed() {
+            guard let record = history[day] else { continue }
+            histArray.append(["label": getRelativeDateLabel(targetDateStr: day), "date": String(day.suffix(5)),
+                "total": formatBytes(record.total), "dl": record.dl.map { formatBytes($0) } ?? "未知",
+                "ul": record.ul.map { formatBytes($0) } ?? "未知", "pct": "跨範圍合計"])
         }
-        
-        // 3. 構建近 7 日趨勢柱狀圖與統計分析資料 (由 6 天前到今天)
-        var chartDays: [[String: Any]] = []
-        let cal = Calendar.current
+
+        // Use the same calendar as the accepted daily accounting boundary.
+        // Chart height is relative to observed bytes, never to a campus quota.
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "Asia/Taipei")!
         let dateFormatter = DateFormatter()
+        dateFormatter.calendar = cal
+        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dateFormatter.timeZone = cal.timeZone
         dateFormatter.dateFormat = "yyyy-MM-dd"
-        
         let weekdaySymbols = ["日", "一", "二", "三", "四", "五", "六"]
         let todayDate = dateFormatter.date(from: currentDateString) ?? Date()
-        var total7DayBytes: Double = 0
-        var yesterdayTotalBytes: Double = 0
-        var todayCombinedBytes: Double = 0
-        var maxBytesVal: Double = 0
-        var maxBytesDateLabel: String = ""
-        
+        var chartDays: [[String: Any]] = []
+        var observedTotals: [Double] = []
+        var peak = 0.0
         for i in (0...6).reversed() {
-            guard let d = cal.date(byAdding: .day, value: -i, to: todayDate) else { continue }
-            let dateStr = dateFormatter.string(from: d)
-            let shortDate = String(dateStr.suffix(5))
-            let weekdayIndex = cal.component(.weekday, from: d) - 1
-            let weekdayStr = (weekdayIndex >= 0 && weekdayIndex < 7) ? weekdaySymbols[weekdayIndex] : ""
-            
-            let isToday = (i == 0)
-            let dayLabel: String
-            if isToday {
-                dayLabel = "今天"
-            } else if i == 1 {
-                dayLabel = "昨天"
-            } else {
-                dayLabel = "\(weekdayStr)"
-            }
-            
-            let dayTotal: Double
-            let dayDl: Double?
-            let dayUl: Double?
-            
-            if isToday {
-                let rx = dormTodayInBytes + wifiTodayInBytes + extTodayInBytes + unattributedInBytes
-                let tx = dormTodayOutBytes + wifiTodayOutBytes + extTodayOutBytes + unattributedOutBytes
-                dayDl = rx
-                dayUl = tx
-                dayTotal = rx + tx
-                todayCombinedBytes = dayTotal
-            } else {
-                if let rec = history[dateStr] {
-                    dayTotal = rec.total
-                    dayDl = rec.dl
-                    dayUl = rec.ul
-                } else {
-                    dayTotal = 0
-                    dayDl = nil
-                    dayUl = nil
-                }
-                if i == 1 {
-                    yesterdayTotalBytes = dayTotal
-                }
-            }
-            
-            total7DayBytes += dayTotal
-            if dayTotal > maxBytesVal {
-                maxBytesVal = dayTotal
-                maxBytesDateLabel = isToday ? "今天" : (i == 1 ? "昨天" : shortDate)
-            }
-            
-            let pctOfQuota = (totalQuotaBytes > 0) ? (dayTotal / totalQuotaBytes) * 100.0 : 0.0
-            let statusLevel: String
-            if pctOfQuota >= 85.0 {
-                statusLevel = "danger"
-            } else if pctOfQuota >= 60.0 {
-                statusLevel = "warning"
-            } else {
-                statusLevel = "safe"
-            }
-            
-            chartDays.append([
-                "date": dateStr,
-                "shortDate": shortDate,
-                "dayLabel": dayLabel,
-                "weekday": weekdayStr,
-                "totalBytes": dayTotal,
-                "totalGB": String(format: "%.2f", dayTotal / (1024 * 1024 * 1024)),
-                "dlStr": dayDl.map { formatBytes($0) } ?? "未知",
-                "ulStr": dayUl.map { formatBytes($0) } ?? "未知",
-                "totalStr": (isToday || history[dateStr] != nil) ? formatBytes(dayTotal) : "無紀錄",
-                "pctOfQuota": String(format: "%.1f", min(pctOfQuota, 140.0)),
-                "statusLevel": statusLevel,
-                "isToday": isToday
-            ])
+            guard let date = cal.date(byAdding: .day, value: -i, to: todayDate) else { continue }
+            let day = dateFormatter.string(from: date)
+            let weekday = weekdaySymbols[cal.component(.weekday, from: date) - 1]
+            let isToday = i == 0
+            let observed = isToday ? todayObserved : history[day] != nil
+            let rx = isToday ? (observed ? Double(trafficLedger.aggregate.received) : nil) : history[day]?.dl
+            let tx = isToday ? (observed ? Double(trafficLedger.aggregate.sent) : nil) : history[day]?.ul
+            let total = isToday ? (observed ? Double(trafficLedger.aggregate.received) + Double(trafficLedger.aggregate.sent) : 0) : (history[day]?.total ?? 0)
+            if observed { observedTotals.append(total); peak = max(peak, total) }
+            chartDays.append(["date": day, "shortDate": String(day.suffix(5)),
+                "dayLabel": isToday ? "本日帳本" : (i == 1 ? "前一日" : weekday), "weekday": weekday,
+                "totalBytes": total, "dlStr": rx.map { formatBytes($0) } ?? "未知",
+                "ulStr": tx.map { formatBytes($0) } ?? "未知",
+                "totalStr": observed ? formatBytes(total) : "無紀錄",
+                "observed": observed, "statusLevel": "unknown", "isToday": isToday])
         }
-        
-        let recordedDays = chartDays.filter { ($0["totalStr"] as? String) != "無紀錄" }.count
-        let avg7DayGB = (total7DayBytes / Double(max(1, recordedDays))) / (1024 * 1024 * 1024)
-        var diffVsYesterdayPct = 0.0
-        var diffTrend = "flat"
-        if yesterdayTotalBytes > 0 {
-            diffVsYesterdayPct = ((todayCombinedBytes - yesterdayTotalBytes) / yesterdayTotalBytes) * 100.0
-            if diffVsYesterdayPct > 5.0 {
-                diffTrend = "up"
-            } else if diffVsYesterdayPct < -5.0 {
-                diffTrend = "down"
-            }
+        for index in chartDays.indices {
+            let total = chartDays[index]["totalBytes"] as? Double ?? 0
+            chartDays[index]["relativeHeight"] = peak > 0 ? total / peak : 0
         }
-        
-        let diffSign = diffVsYesterdayPct >= 0 ? "+" : ""
+        let average = observedTotals.isEmpty ? "無紀錄" : formatBytes(observedTotals.reduce(0, +) / Double(observedTotals.count))
         let chartData: [String: Any] = [
-            "days": chartDays,
-            "avg7DayStr": String(format: "%.1f GiB（有紀錄日）", avg7DayGB),
-            "diffVsYesterdayStr": yesterdayTotalBytes > 0 ? String(format: "%@%.0f%%", diffSign, diffVsYesterdayPct) : "無法比較",
-            "diffTrend": diffTrend,
-            "maxWeekStr": String(format: "%.1f GiB (%@)", maxBytesVal / (1024 * 1024 * 1024), maxBytesDateLabel),
-            "quotaGBStr": String(format: "%.0f GiB", totalQuotaBytes / (1024 * 1024 * 1024))
+            "days": chartDays, "avg7DayStr": average + "（有紀錄日）",
+            "diffVsYesterdayStr": "不同觀測時段，未直接比較", "diffTrend": "flat",
+            "maxWeekStr": observedTotals.isEmpty ? "無紀錄" : formatBytes(peak),
+            "quotaGBStr": "跨範圍用量，非配額"
         ]
-        
+
         let pingFresh = lastPingUptime.map { ProcessInfo.processInfo.systemUptime - $0 <= 120 } ?? false
         let pingStr = isConnected && pingFresh && pingLatencyMs >= 0 ? String(format: "%.1f ms", pingLatencyMs) : "未量測"
-        let speedStr = String(format: "↓ %@   ↑ %@", formatSpeed(currentDownSpeed), formatSpeed(currentUpSpeed))
+        let nowUptime = ProcessInfo.processInfo.systemUptime
+        let rateFresh = lastSampleUptime.map { nowUptime >= $0 && nowUptime - $0 <= 5 } ?? false
+        let speedStr = activeSpeedMeasured && rateFresh && !clockHeld && workflowPowerGuard.allowsSampling
+            ? String(format: "↓ %@   ↑ %@", formatSpeed(currentDownSpeed), formatSpeed(currentUpSpeed)) : "未量測"
         let extTotal = extTodayInBytes + extTodayOutBytes
         
         let forecast = forecastPresentation()
@@ -1953,7 +1826,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             "isDorm": isDormNetwork,
             "isCampusWifi": isCampusWifi,
             "isQuotaRestricted": isQuotaRestricted,
-            "localEstimateAvailable": hasLocalScopeEvidence(sampledScopes[activeInterface] ?? .unknown),
+            "localEstimateAvailable": localQuotaAssessment() != nil,
+            "externalUsageAvailable": !isQuotaRestricted && hasLocalScopeEvidence(.external),
             "networkTypeName": networkTypeName,
             "providerStatus": providerStatusText,
             "focusEnabled": workflowPowerGuard.focusEnabled,
@@ -1987,15 +1861,15 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             "remUlStr": String(format: "%.2f", remUlGB),
             "ulPctStr": String(format: "%.1f%%", ulPct),
             "usedUlStr": formatBytes(ulUsed),
-            "dormDlStr": formatBytes(dormTodayInBytes),
-            "dormUlStr": formatBytes(dormTodayOutBytes),
-            "dormTotalStr": formatBytes(dormTodayInBytes + dormTodayOutBytes),
-            "wifiDlStr": formatBytes(wifiTodayInBytes),
-            "wifiUlStr": formatBytes(wifiTodayOutBytes),
-            "wifiTotalStr": formatBytes(wifiTodayInBytes + wifiTodayOutBytes),
-            "extTotalStr": formatBytes(extTotal),
-            "extDlStr": formatBytes(extTodayInBytes),
-            "extUlStr": formatBytes(extTodayOutBytes),
+            "dormDlStr": hasLocalScopeEvidence(.dorm) ? formatBytes(dormTodayInBytes) : "未量測",
+            "dormUlStr": hasLocalScopeEvidence(.dorm) ? formatBytes(dormTodayOutBytes) : "未量測",
+            "dormTotalStr": hasLocalScopeEvidence(.dorm) ? formatBytes(dormTodayInBytes + dormTodayOutBytes) : "未量測",
+            "wifiDlStr": hasLocalScopeEvidence(.campusWifi) ? formatBytes(wifiTodayInBytes) : "未量測",
+            "wifiUlStr": hasLocalScopeEvidence(.campusWifi) ? formatBytes(wifiTodayOutBytes) : "未量測",
+            "wifiTotalStr": hasLocalScopeEvidence(.campusWifi) ? formatBytes(wifiTodayInBytes + wifiTodayOutBytes) : "未量測",
+            "extTotalStr": hasLocalScopeEvidence(.external) ? formatBytes(extTotal) : "未量測",
+            "extDlStr": hasLocalScopeEvidence(.external) ? formatBytes(extTodayInBytes) : "未量測",
+            "extUlStr": hasLocalScopeEvidence(.external) ? formatBytes(extTodayOutBytes) : "未量測",
             "isLidGuardEnabled": isLidGuardEnabled,
             "isIdleGuardEnabled": isIdleGuardEnabled,
             "isAutoWifiFailoverEnabled": isAutoWifiFailoverEnabled,
