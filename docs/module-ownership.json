@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "core_owners": {
+    "TrafficAccounting.swift": 1,
+    "ScopedAccounting.swift": 1,
+    "Contracts.swift": 0,
+    "ContractValidation.swift": 0,
+    "Diagnostics.swift": 2,
+    "NetworkQuality.swift": 2,
+    "AppTrafficSample.swift": 2,
+    "ProbeRunner.swift": 3,
+    "RecoveryJournalStore.swift": 3,
+    "RecoveryTransaction.swift": 3,
+    "SimulatedNetworkAdapter.swift": 3,
+    "PolicyEngine.swift": 5,
+    "PredictionEngine.swift": 5,
+    "WorkflowPowerGuard.swift": 6,
+    "HistoryStore.swift": 7,
+    "ProviderObservation.swift": 7,
+    "UsageMigration.swift": 7
+  },
+  "shared_paths": {
+    "src/main.swift": 0,
+    "Makefile": 0,
+    "Package.swift": 0,
+    "docs/contracts/": 0,
+    "src/Resources/popover.html": 4,
+    "scripts/traffic_monitor.py": 7,
+    ".github/workflows/": 8,
+    "Tests/": 8,
+    "tests/": 8
+  }
+}
