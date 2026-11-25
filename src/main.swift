@@ -262,6 +262,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var unattributedInBytes: Double = 0
     var unattributedOutBytes: Double = 0
     var sampleGapCount: Int = 0
+    var measuredSampleCount: UInt64 = 0
     var workflowPowerGuard = WorkflowPowerGuard()
     var predictionEngine = PredictionEngine()
     var predictionScope: NetworkScope = .unknown
@@ -1412,6 +1413,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 unattributedInBytes = Double(usage.unattributedIn)
                 unattributedOutBytes = Double(usage.unattributedOut)
                 sampleGapCount = Int(usage.sampleGapCount)
+                measuredSampleCount = usage.measuredSampleCount
                 if json["alert_ledger_valid"] as? Bool == false {
                     alertLedgerBlockedDay = today
                 } else if let raw = json["alert_ledger"] {
@@ -1431,8 +1433,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                     Double(usage.externalIn) + Double(usage.unattributedIn)
                 let ul = Double(usage.dormOut) + Double(usage.wifiOut) +
                     Double(usage.externalOut) + Double(usage.unattributedOut)
-                if dl + ul > 0 {
-                    TrafficHistoryManager.shared.recordDay(date: usage.date, dl: dl, ul: ul)
+                if dl + ul > 0 || usage.measuredSampleCount > 0 {
+                    guard TrafficHistoryManager.shared.recordDay(date: usage.date, dl: dl, ul: ul) else {
+                        throw HistoryStoreError.database("previous day history unavailable")
+                    }
                 }
             }
             persistenceStatus = "已驗證本機紀錄"
@@ -1457,11 +1461,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             "unattributed_in": unattributedInBytes,
             "unattributed_out": unattributedOutBytes,
             "sample_gap_count": sampleGapCount,
+            "measured_sample_count": NSNumber(value: measuredSampleCount),
             "today_in": dormTodayInBytes,
             "today_out": dormTodayOutBytes,
             "network_mode_override": networkModeOverride,
-            "last_raw_in": NSNumber(value: lastRawIBytes),
-            "last_raw_out": NSNumber(value: lastRawOBytes),
             "display_mode": displayMode,
             "alert_enabled": isAlertEnabled,
             "alert_ledger": quotaAlertLedger.persistedTiers(day: currentDateString),
@@ -1477,9 +1480,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             "speed_auto_switch_enabled": isSpeedAutoSwitchEnabled,
             "p2p_shield_auto_kill_enabled": isP2PShieldAutoKillEnabled,
             "is_dorm": isDormNetwork,
-            "is_campus_wifi": isCampusWifi,
-            "current_ip": currentIP,
-            "active_interface": activeInterface
+            "is_campus_wifi": isCampusWifi
         ]
         if let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted]) {
             do {
@@ -1631,7 +1632,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         scopedAccumulator.reset()
         activeSpeedMeasured = false
         let samples = readScopedInterfaces()
-        sampledScopes = Dictionary(uniqueKeysWithValues: samples.map { ($0.counters.interfaceID, $0.scope) })
+        sampledScopes = InterfaceScopeProjection.scopes(samples)
         let uptime = ProcessInfo.processInfo.systemUptime
         _ = scopedAccumulator.ingest(samples, day: currentDateString, uptime: uptime)
         lastSampleUptime = uptime
@@ -1698,8 +1699,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             if !currentDateString.isEmpty {
                 let totalDl = dormTodayInBytes + wifiTodayInBytes + extTodayInBytes + unattributedInBytes
                 let totalUl = dormTodayOutBytes + wifiTodayOutBytes + extTodayOutBytes + unattributedOutBytes
-                if (totalDl + totalUl) > 0 {
+                if totalDl + totalUl > 0 || measuredSampleCount > 0 {
                     if !TrafficHistoryManager.shared.recordDay(date: currentDateString, dl: totalDl, ul: totalUl) {
+                        savePersistedState()
                         // Preserve the existing daily file when history cannot be saved.
                         let url = URL(fileURLWithPath: stateFilePath)
                         do {
@@ -1720,6 +1722,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             unattributedInBytes = 0
             unattributedOutBytes = 0
             sampleGapCount = 0
+            measuredSampleCount = 0
             scopedAccumulator.reset()
             predictionEngine.reset()
             predictionScope = .unknown
@@ -1798,7 +1801,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         }
         
         let samples = readScopedInterfaces()
-        sampledScopes = Dictionary(uniqueKeysWithValues: samples.map { ($0.counters.interfaceID, $0.scope) })
+        sampledScopes = InterfaceScopeProjection.scopes(samples)
         let uptime = ProcessInfo.processInfo.systemUptime
         let elapsed = lastSampleUptime.map { max(uptime - $0, 0.001) } ?? 1
         let deltas = scopedAccumulator.ingest(samples, day: currentDateString, uptime: uptime)
@@ -1806,13 +1809,16 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         currentDownSpeed = 0
         currentUpSpeed = 0
         activeSpeedMeasured = false
-        if samples.isEmpty || deltas.values.contains(where: { $0.delta.quality == .unknown }) {
+        if samples.isEmpty || deltas.values.contains(where: { $0.delta.quality != .measured }) {
             sampleGapCount += 1
+        }
+        if deltas.values.contains(where: { $0.delta.quality == .measured }) {
+            measuredSampleCount = min(measuredSampleCount + 1, 9_007_199_254_740_991)
         }
         for (name, value) in deltas where value.delta.quality == .measured {
             let rx = Double(value.delta.received)
             let tx = Double(value.delta.sent)
-            if name == activeInterface {
+            if name == activeInterface && value.scope == sampledScopes[name] {
                 activeSpeedMeasured = true
                 currentDownSpeed = rx / elapsed
                 currentUpSpeed = tx / elapsed
