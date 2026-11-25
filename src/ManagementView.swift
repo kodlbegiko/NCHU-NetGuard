@@ -6,6 +6,9 @@ final class ManagementModel: ObservableObject {
     @Published var automation: AutomationSnapshot?
     @Published var connectionSession: ConnectionSessionReading?
     @Published var connectionSessionStatus = "尚未開始"
+    @Published var connectionArchiveRows: [SavedConnectionSession] = []
+    @Published var connectionArchiveStatus = "尚未讀取本機紀錄"
+    @Published var connectionArchiveBusy = false
     @Published var historyEnabled = false
     @Published var historyBusy = false
     @Published var historyRetention = 30
@@ -25,11 +28,17 @@ struct ManagementView: View {
     let testDNS: () -> Void
     let startConnectionSession: (String, String) -> Void
     let stopConnectionSession: () -> Void
+    let saveConnectionArchive: () -> Void
+    let loadConnectionArchive: () -> Void
+    let deleteConnectionArchive: (UUID) -> Void
     let setHistoryRetention: (Int) -> Void
     let deleteHistory: () -> Void
     @State private var tab = 0
     @State private var connectionLabel = ""
     @State private var connectionLimit = ""
+    @State private var showConnectionArchive = false
+    @State private var confirmConnectionDeletion = false
+    @State private var pendingConnectionDeletion: UUID?
     @State private var selectedInterface: String? = nil
     @State private var processQuery = ""
     @State private var processOrder = 0
@@ -342,9 +351,57 @@ struct ManagementView: View {
                 Button("停止連線計量", action: stopConnectionSession)
             }
             Text(model.connectionSessionStatus).font(.caption)
+            connectionArchivePanel
             Text("包含 LAN 流量，與原有帳本重疊；不是電信商帳單，不可與原有總量相加。")
                 .font(.caption2).foregroundStyle(.secondary)
             Divider()
+        }
+    }
+
+
+    private var connectionArchivePanel: some View {
+        DisclosureGroup("已保存的單次連線紀錄", isExpanded: $showConnectionArchive) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("僅在手動保存時寫入本機；相同名稱仍為獨立紀錄。未保存的計量不會跨 App 重啟保留。")
+                    .font(.caption2).foregroundStyle(.secondary)
+                HStack {
+                    Button("保存本次計量", action: saveConnectionArchive)
+                        .disabled(model.connectionArchiveBusy || model.connectionSession?.stopped != true || (model.connectionSession?.intervals ?? 0) == 0)
+                    Button("讀取紀錄", action: loadConnectionArchive)
+                        .disabled(model.connectionArchiveBusy)
+                }
+                if model.connectionArchiveBusy { ProgressView().controlSize(.small) }
+                Text(model.connectionArchiveStatus).font(.caption)
+                ForEach(model.connectionArchiveRows) { row in
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(row.label).lineLimit(2)
+                            Text(row.savedAt, style: .date).font(.caption)
+                            Text(String(format: "觀測 %.2f / %.2f GB · %d 個區間", Double(row.total) / 1e9, Double(row.limitBytes) / 1e9, row.intervals))
+                                .font(.caption)
+                            Text(String(format: "下載 %.2f · 上傳 %.2f GB", Double(row.received) / 1e9, Double(row.sent) / 1e9))
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("刪除", role: .destructive) {
+                            pendingConnectionDeletion = row.id
+                            confirmConnectionDeletion = true
+                        }.disabled(model.connectionArchiveBusy)
+                    }
+                    Divider()
+                }
+                Text("最多保存 1000 筆；不含 IP、SSID 或硬體識別，不包含在一般流量資料庫備份中。")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .alert("刪除這筆連線紀錄？", isPresented: $confirmConnectionDeletion) {
+            Button("取消", role: .cancel) { pendingConnectionDeletion = nil }
+            Button("刪除", role: .destructive) {
+                if let id = pendingConnectionDeletion { deleteConnectionArchive(id) }
+                pendingConnectionDeletion = nil
+            }
+        } message: {
+            Text("僅刪除選取的本機紀錄，不影響一般流量帳本。")
         }
     }
 
