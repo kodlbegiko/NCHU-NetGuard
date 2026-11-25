@@ -261,3 +261,8 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 
 - Fixed the CI smoke initialization failure by setting explicit content size and deferring hosting view geometry checks. Integrated repair-only SHA 41b278c795112de65865b4a6c3ad9299030ff89e; run 45647338414 pending. Previous CI 45644908290 passed 161 Swift tests, static/Python, app build and bundle but failed smoke; host check skipped.
 - Experimental dual-stack TCP adapter adds bracketed IPv6 canonicalization and accepted-row continuity metrics, including matched, new, disappeared and reset/changed rows. Two synthetic tests. No real socket generation identifier, scoped literals, UDP or full traffic coverage. No active ledger updates. Candidate branch carries the same smoke repair content but requires merge ancestry reconciliation and exact-head CI before integration. No paid services or release.
+
+## Forty-seventh iteration
+
+- Reconciled staged flow work and smoke-repair ancestry without forced updates. Added separate experimental UDP peer parsing, protocol-isolated deltas, tunnel candidate signal and unverified overlap disclosure, make udp-check and independent non-gating hosted flow diagnostics. Two synthetic regression tests. No QUIC identification from port, no real VPN deduplication, no production ledger integration or actual whole-network split.
+- Repair CI 45647338414 passed all gating stages including native smoke (four hosted views). Host evidence: ps compatible; process nettop compatible; IPv4 default route compatible; IPv6 default route incompatible; overall inconclusive. Repair SHA 41b278c795112de65865b4a6c3ad9299030ff89e. Candidate eligible for fast-forward and exact-HEAD CI. No paid services or release.
