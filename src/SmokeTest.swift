@@ -63,7 +63,7 @@ final class NetGuardSmokeDelegate: NSObject, NSApplicationDelegate {
         host(ManagementView(model: management, refresh: {}, openProvider: {},
             setAlerts: { _ in }, setFocus: { _ in }, setHistoryEnabled: { _ in },
             setProcessBackground: { _ in }, reloadHistory: {}, testDNS: {}, measureFlow: { _ in },
-            configureTrafficEvents: { _ in }, saveEventArchive: {}, loadEventArchive: {},
+            configureTrafficEvents: { _ in }, setEventNotifications: { _ in }, saveEventArchive: {}, loadEventArchive: {},
             clearEventArchive: {}, clearTrafficEvents: {}, startConnectionSession: { _, _ in },
             stopConnectionSession: {}, saveConnectionArchive: {}, loadConnectionArchive: {},
             deleteConnectionArchive: { _ in }, setHistoryRetention: { _ in }, deleteHistory: {}),

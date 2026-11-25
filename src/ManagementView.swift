@@ -7,6 +7,9 @@ final class ManagementModel: ObservableObject {
     @Published var flowReading: HostProbeCheck.FlowCheckReading?
     @Published var flowStatus = "尚未進行連線層觀測"
     @Published var eventRules = TrafficEventRules.standard
+    @Published var eventNotificationsEnabled = false
+    @Published var eventNotificationBusy = false
+    @Published var eventNotificationStatus = "預設關閉；需主動授權"
     @Published var eventArchiveRows: [TrafficObservationEvent] = []
     @Published var eventArchiveBusy = false
     @Published var eventArchiveStatus = "尚未讀取保存紀錄"
@@ -35,6 +38,7 @@ struct ManagementView: View {
     let testDNS: () -> Void
     let measureFlow: (FlowTransport) -> Void
     let configureTrafficEvents: (TrafficEventRules) -> Void
+    let setEventNotifications: (Bool) -> Void
     let saveEventArchive: () -> Void
     let loadEventArchive: () -> Void
     let clearEventArchive: () -> Void
@@ -514,6 +518,12 @@ struct ManagementView: View {
                 Text("目前規則：持續高流量 \(model.eventRules.highMiB) MiB/s、\(model.eventRules.highSeconds) 秒；突增至少 \(model.eventRules.surgeMiB) MiB/s 且達基準 \(model.eventRules.surgeMultiplier) 倍。不是惡意流量或違規判定。")
                     .font(.caption2).foregroundStyle(.secondary)
                 eventRulesPanel
+                Toggle("本次執行允許異常流量通知", isOn: Binding(get: { model.eventNotificationsEnabled }, set: setEventNotifications))
+                    .disabled(model.eventNotificationBusy)
+                if model.eventNotificationBusy { ProgressView().controlSize(.small) }
+                Text(model.eventNotificationStatus).font(.caption)
+                Text("僅新發生的高流量或突增事件；全域冷卻 120 秒，重要工作模式暫停通知。不補發歷史事件。")
+                    .font(.caption2).foregroundStyle(.secondary)
                 if events.isEmpty {
                     Text("尚無符合規則的觀測事件；不代表網路安全或完整覆蓋。").font(.caption)
                 }
@@ -543,7 +553,7 @@ struct ManagementView: View {
                 }
                 Button("清除本次事件", role: .destructive) { confirmClearTrafficEvents = true }
                     .disabled(events.isEmpty)
-                Text("本次最多保留 100 筆於記憶體；僅手動保存時寫入磁碟，不通知或阻斷連線。").font(.caption2).foregroundStyle(.secondary)
+                Text("本次最多保留 100 筆於記憶體；僅手動保存時寫入磁碟；通知需另行授權，不阻斷連線。").font(.caption2).foregroundStyle(.secondary)
                 savedEventsPanel(events)
             }
         }

@@ -85,4 +85,28 @@ final class TrafficEventDetectorTests: XCTestCase {
         XCTAssertEqual(detector.recent().map(\.kind), [.surge])
     }
 
+
+    func testEventNotificationCooldownAndDeduplication() throws {
+        var detector = TrafficEventDetector()
+        for t in 0...10 {
+            detector.ingest(identity: "test", uptime: Double(t), date: Date(), download: 6_000_000, upload: 0)
+        }
+        let first = try XCTUnwrap(detector.recent().first)
+        var gate = TrafficEventNotificationGate()
+        XCTAssertFalse(gate.reserve(first, uptime: .nan))
+        XCTAssertTrue(gate.reserve(first, uptime: 10))
+        XCTAssertFalse(gate.reserve(first, uptime: 130))
+        detector.resetContinuity()
+        for t in 20...30 {
+            detector.ingest(identity: "test", uptime: Double(t), date: Date(), download: 6_000_000, upload: 0)
+        }
+        let second = try XCTUnwrap(detector.recent().first)
+        XCTAssertFalse(gate.reserve(second, uptime: 129))
+        XCTAssertTrue(gate.reserve(second, uptime: 130))
+        detector.ingest(identity: nil, uptime: 31, date: Date(), download: nil, upload: nil)
+        let gap = try XCTUnwrap(detector.recent().first)
+        XCTAssertEqual(gap.kind, .observationGap)
+        XCTAssertFalse(gate.reserve(gap, uptime: 250))
+    }
+
 }

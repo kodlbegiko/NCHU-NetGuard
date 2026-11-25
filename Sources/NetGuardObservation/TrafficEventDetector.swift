@@ -145,3 +145,22 @@ public struct TrafficEventDetector: Sendable {
         if baseline.count > 120 { baseline.removeFirst(baseline.count - 120) }
     }
 }
+
+
+/// Session-only notification attempt policy. No retries or historical replay.
+/// A cooldown is reserved before asynchronous delivery; failure does not
+/// refund it. The caller supplies only newly detected live events.
+public struct TrafficEventNotificationGate: Sendable {
+    private var lastAttempt: TimeInterval?
+    private var recentIDs: [UUID] = []
+    public init() {}
+    public mutating func reserve(_ event: TrafficObservationEvent, uptime: TimeInterval) -> Bool {
+        guard event.isValid, event.kind != .observationGap,
+              uptime.isFinite, uptime >= 0, !recentIDs.contains(event.id),
+              lastAttempt.map({ uptime >= $0 && uptime - $0 >= 120 }) ?? true else { return false }
+        lastAttempt = uptime
+        recentIDs.append(event.id)
+        if recentIDs.count > 100 { recentIDs.removeFirst() }
+        return true
+    }
+}

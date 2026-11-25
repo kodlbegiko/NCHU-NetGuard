@@ -5,6 +5,7 @@ import SwiftUI
 import IOKit
 import SystemConfiguration
 import Network
+import UserNotifications
 
 // MARK: - 歷史紀錄模型與管理器
 struct DayTrafficRecord {
@@ -277,6 +278,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var observedInterfaceRates: [String: ObservedInterfaceRate] = [:]
     var throughputWindow = ThroughputWindow()
     var trafficEventDetector = TrafficEventDetector()
+    private var eventNotificationGate = TrafficEventNotificationGate()
+    private var eventNotificationToken = UUID()
     private let eventArchiveQueue = DispatchQueue(label: "NetGuard.event-archive", qos: .utility)
     private var eventArchiveBusy = false
     private var historyBundleBusy = false
@@ -1285,6 +1288,59 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func setEventNotifications(_ enabled: Bool) {
+        eventNotificationToken = UUID()
+        let token = eventNotificationToken
+        managementModel.eventNotificationsEnabled = false
+        managementModel.eventNotificationBusy = enabled
+        managementModel.eventNotificationStatus = enabled ? "等待 macOS 通知授權" : "本次執行已關閉通知"
+        guard enabled else { return }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { [weak self] granted, error in
+            let accepted = granted && error == nil
+            DispatchQueue.main.async {
+                guard let self, self.eventNotificationToken == token else { return }
+                self.managementModel.eventNotificationBusy = false
+                self.managementModel.eventNotificationsEnabled = accepted
+                self.managementModel.eventNotificationStatus = accepted ? "已授權本次執行；每 120 秒最多嘗試一次" : "未取得通知授權；請檢查 macOS 通知設定"
+            }
+        }
+    }
+
+    private func notifyNewTrafficEvent(_ event: TrafficObservationEvent, uptime: TimeInterval) {
+        guard managementModel.eventNotificationsEnabled, workflowPowerGuard.allowsOptionalProbes,
+              eventNotificationGate.reserve(event, uptime: uptime) else { return }
+        let token = eventNotificationToken
+        let generation = workflowPowerGuard.generation
+        let route = routeEventToken
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { [weak self] settings in
+            let allowed = settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
+            DispatchQueue.main.async {
+                guard let self, self.eventNotificationToken == token,
+                      self.managementModel.eventNotificationsEnabled,
+                      self.workflowPowerGuard.generation == generation,
+                      self.workflowPowerGuard.allowsOptionalProbes,
+                      self.routeEventToken == route else { return }
+                guard allowed else {
+                    self.managementModel.eventNotificationsEnabled = false
+                    self.managementModel.eventNotificationStatus = "系統通知授權已不可用；本次通知已關閉"
+                    return
+                }
+                let content = UNMutableNotificationContent()
+                content.title = "NetGuard · " + event.kind.title
+                content.body = String(format: "本機觀測合計速率 %.2f MiB/s。請確認傳輸用途；非安全或配額判定。", (event.bytesPerSecond ?? 0) / 1_048_576)
+                let request = UNNotificationRequest(identifier: "netguard.event." + event.id.uuidString, content: content, trigger: nil)
+                center.add(request) { [weak self] error in
+                    let accepted = error == nil
+                    DispatchQueue.main.async {
+                        guard let self, self.eventNotificationToken == token else { return }
+                        self.managementModel.eventNotificationStatus = accepted ? "系統已接受通知請求；不保證顯示" : "通知請求失敗；冷卻期間不重試"
+                    }
+                }
+            }
+        }
+    }
+
     private func configureTrafficEvents(_ rules: TrafficEventRules) {
         guard let data = try? JSONEncoder().encode(rules),
               let validated = TrafficEventRules.validatedDecode(data) else { return }
@@ -1411,6 +1467,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 testDNS: { [weak self] in self?.testDNS() },
                 measureFlow: { [weak self] in self?.measureExperimentalFlow($0) },
                 configureTrafficEvents: { [weak self] rules in self?.configureTrafficEvents(rules) },
+                setEventNotifications: { [weak self] enabled in self?.setEventNotifications(enabled) },
                 saveEventArchive: { [weak self] in
                     guard let self else { return }
                     let events = self.trafficEventDetector.recent()
@@ -2675,8 +2732,12 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             let identity = activeInterface + "|" + sample.identity + "|" + sample.scope.rawValue
             throughputWindow.ingest(identity: identity, uptime: uptime,
                 download: currentDownSpeed, upload: currentUpSpeed)
+            let priorEventID = trafficEventDetector.recent().first?.id
             trafficEventDetector.ingest(identity: identity, uptime: uptime, date: Date(),
                 download: currentDownSpeed, upload: currentUpSpeed)
+            if let event = trafficEventDetector.recent().first, event.id != priorEventID {
+                notifyNewTrafficEvent(event, uptime: uptime)
+            }
         } else {
             throughputWindow.reset()
             trafficEventDetector.ingest(identity: nil, uptime: uptime, date: Date(), download: nil, upload: nil)

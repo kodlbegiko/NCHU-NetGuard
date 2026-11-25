@@ -96,4 +96,5 @@ public typealias FlowTransport = NetGuardTraffic.FlowTransport
 public typealias DefaultRouteParseStatus = NetGuardObservation.DefaultRouteParseStatus
 public typealias DefaultRouteParseResult = NetGuardObservation.DefaultRouteParseResult
 public typealias FlowParseDiagnostics = NetGuardTraffic.FlowParseDiagnostics
+public typealias TrafficEventNotificationGate = NetGuardObservation.TrafficEventNotificationGate
 #endif
