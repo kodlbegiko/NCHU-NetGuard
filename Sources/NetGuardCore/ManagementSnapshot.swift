@@ -36,6 +36,8 @@ public struct ManagementSnapshot: Equatable, Sendable {
     public let processStatus: String
     public let sessionUsage: ProcessUsageReport?
     public let agentUsage: ProcessUsageReport?
+    public let processBackgroundEnabled: Bool
+    public let processObservationStatus: String
     public let connectionStatus: String
     public let latencyStatus: String
     public let tunnelStatus: String
@@ -52,7 +54,8 @@ public struct ManagementSnapshot: Equatable, Sendable {
                 rates: [String: ObservedInterfaceRate] = [:], tunnelCandidates: [String] = [],
                 sessionUsage: ProcessUsageReport? = nil,
                 echoStatus: String = "ICMP 尚未量測", dnsStatus: String = "DNS 尚未量測",
-                agentUsage: ProcessUsageReport? = nil) {
+                agentUsage: ProcessUsageReport? = nil,
+                processBackgroundEnabled: Bool = false, processObservationStatus: String = "僅開啟面板時觀測") {
         self.interfaces = scopes.keys.sorted().map {
             ObservedInterfaceRow(name: $0, scope: scopes[$0] ?? .unknown,
                                  isDefault: connectionKnown && $0 == defaultInterface, rate: rates[$0])
@@ -65,6 +68,8 @@ public struct ManagementSnapshot: Equatable, Sendable {
         self.focusEnabled = focusEnabled
         self.sessionUsage = sessionUsage
         self.agentUsage = agentUsage
+        self.processBackgroundEnabled = processBackgroundEnabled
+        self.processObservationStatus = processObservationStatus
         let fresh = processAge.map { $0.isFinite && $0 >= 0 && $0 <= 30 } ?? false
         if focusEnabled {
             processes = []
