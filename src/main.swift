@@ -1170,6 +1170,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             "activeInterface": activeInterface,
             "unattributedTotalStr": formatBytes(unattributedInBytes + unattributedOutBytes),
             "sampleGapCount": sampleGapCount,
+            "persistenceStatus": persistenceStatus,
             "observedInterfaces": sampledScopes.keys.sorted().joined(separator: ", "),
             "date": currentDateString,
             "quotaTotalGB": String(format: "%.0f", totalQuotaBytes / (1024 * 1024 * 1024)),
@@ -1247,64 +1248,63 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         }
     }
 
+    var persistenceStatus = "尚未載入"
+    var persistenceBlocked = false
+
     func loadPersistedState() {
         let today = getTodayString()
-        if FileManager.default.fileExists(atPath: stateFilePath),
-           let data = try? Data(contentsOf: URL(fileURLWithPath: stateFilePath)),
-           let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] {
-            
-            let savedDate = json["date"] as? String ?? ""
-            if savedDate == today {
-                self.dormTodayInBytes = json["dorm_in"] as? Double ?? (json["today_in"] as? Double ?? 0.0)
-                self.dormTodayOutBytes = json["dorm_out"] as? Double ?? (json["today_out"] as? Double ?? 0.0)
-                self.wifiTodayInBytes = json["wifi_in"] as? Double ?? 0.0
-                self.wifiTodayOutBytes = json["wifi_out"] as? Double ?? 0.0
-                self.extTodayInBytes = json["ext_in"] as? Double ?? 0.0
-                self.extTodayOutBytes = json["ext_out"] as? Double ?? 0.0
-                self.unattributedInBytes = json["unattributed_in"] as? Double ?? 0
-                self.unattributedOutBytes = json["unattributed_out"] as? Double ?? 0
-                self.sampleGapCount = json["sample_gap_count"] as? Int ?? 0
-                self.networkModeOverride = json["network_mode_override"] as? Int ?? 0
-                self.lastRawIBytes = (json["last_raw_in"] as? NSNumber)?.uint64Value ?? 0
-                self.lastRawOBytes = (json["last_raw_out"] as? NSNumber)?.uint64Value ?? 0
-                self.displayMode = json["display_mode"] as? Int ?? 0
-                self.isAlertEnabled = json["alert_enabled"] as? Bool ?? true
-                self.isLidGuardEnabled = json["lid_guard_enabled"] as? Bool ?? true
-                self.isIdleGuardEnabled = json["idle_guard_enabled"] as? Bool ?? true
-                self.isAutoWifiFailoverEnabled = false
-                self.isWiredTemporarilyDisabled = false
-                self.disabledWiredServiceName = json["disabled_wired_service_name"] as? String ?? "USB 10/100/1000 LAN"
-                self.isSplitRoutingEnabled = false
-                self.isMidnightScheduleEnabled = false
-                self.isSpeedAutoSwitchEnabled = false
-                self.isP2PShieldAutoKillEnabled = false
+        let url = URL(fileURLWithPath: stateFilePath)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            persistenceStatus = "新紀錄"
+            return
+        }
+        do {
+            let data = try Data(contentsOf: url)
+            let usage = try UsageMigration.decode(data)
+            guard usage.date <= today else { throw UsageMigrationError.invalidDate }
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+            // Import display preferences only, never restore unsafe automation or
+            // stale hardware baselines/network identity from legacy storage.
+            let mode = json["display_mode"] as? Int ?? 0
+            displayMode = (0...4).contains(mode) ? mode : 0
+            isAlertEnabled = json["alert_enabled"] as? Bool ?? true
+            isLidGuardEnabled = json["lid_guard_enabled"] as? Bool ?? true
+            isIdleGuardEnabled = json["idle_guard_enabled"] as? Bool ?? true
+            if usage.date == today {
+                dormTodayInBytes = Double(usage.dormIn)
+                dormTodayOutBytes = Double(usage.dormOut)
+                wifiTodayInBytes = Double(usage.wifiIn)
+                wifiTodayOutBytes = Double(usage.wifiOut)
+                extTodayInBytes = Double(usage.externalIn)
+                extTodayOutBytes = Double(usage.externalOut)
+                unattributedInBytes = Double(usage.unattributedIn)
+                unattributedOutBytes = Double(usage.unattributedOut)
+                sampleGapCount = Int(usage.sampleGapCount)
             } else {
-                if !savedDate.isEmpty {
-                    let oldDl = (json["dorm_in"] as? Double ?? (json["today_in"] as? Double ?? 0)) + (json["wifi_in"] as? Double ?? 0)
-                    let oldUl = (json["dorm_out"] as? Double ?? (json["today_out"] as? Double ?? 0)) + (json["wifi_out"] as? Double ?? 0)
-                    if (oldDl + oldUl) > 0 {
-                        TrafficHistoryManager.shared.recordDay(date: savedDate, dl: oldDl, ul: oldUl)
-                    }
+                // Preserve the complete original file before replacing a prior day.
+                let backup = url.deletingLastPathComponent().appendingPathComponent(
+                    ".nchu_traffic_archive-" + usage.date + "-" + UUID().uuidString + ".json")
+                try FileManager.default.copyItem(at: url, to: backup)
+                let dl = Double(usage.dormIn) + Double(usage.wifiIn) +
+                    Double(usage.externalIn) + Double(usage.unattributedIn)
+                let ul = Double(usage.dormOut) + Double(usage.wifiOut) +
+                    Double(usage.externalOut) + Double(usage.unattributedOut)
+                if dl + ul > 0 {
+                    TrafficHistoryManager.shared.recordDay(date: usage.date, dl: dl, ul: ul)
                 }
-                self.currentDateString = today
-                self.dormTodayInBytes = 0.0
-                self.dormTodayOutBytes = 0.0
-                self.wifiTodayInBytes = 0.0
-                self.wifiTodayOutBytes = 0.0
-                self.extTodayInBytes = 0.0
-                self.extTodayOutBytes = 0.0
-                self.alertTierSent = 0
-                self.isEmergencyBrakeActive = false
-                if self.isWiredTemporarilyDisabled {
-                    self.restoreWiredNetwork(reason: "每日 00:00 額度重設")
-                }
-                savePersistedState()
             }
+            persistenceStatus = "已驗證本機紀錄"
+        } catch {
+            // Keep invalid/future/unsupported data intact for manual recovery.
+            persistenceBlocked = true
+            persistenceStatus = "舊紀錄無法驗證，已停止寫入以保護原始檔"
         }
     }
 
     func savePersistedState() {
+        guard !persistenceBlocked else { return }
         let dict: [String: Any] = [
+            "schema_version": 1,
             "date": currentDateString,
             "dorm_in": dormTodayInBytes,
             "dorm_out": dormTodayOutBytes,
@@ -1338,7 +1338,12 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             "active_interface": activeInterface
         ]
         if let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted]) {
-            try? data.write(to: URL(fileURLWithPath: stateFilePath), options: .atomic)
+            do {
+                try data.write(to: URL(fileURLWithPath: stateFilePath), options: .atomic)
+                persistenceStatus = "本機紀錄已儲存"
+            } catch {
+                persistenceStatus = "本機紀錄寫入失敗"
+            }
         }
     }
 
@@ -1614,8 +1619,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         let todayStr = getTodayString()
         if todayStr != currentDateString {
             if !currentDateString.isEmpty {
-                let totalDl = dormTodayInBytes + wifiTodayInBytes + extTodayInBytes
-                let totalUl = dormTodayOutBytes + wifiTodayOutBytes + extTodayOutBytes
+                let totalDl = dormTodayInBytes + wifiTodayInBytes + extTodayInBytes + unattributedInBytes
+                let totalUl = dormTodayOutBytes + wifiTodayOutBytes + extTodayOutBytes + unattributedOutBytes
                 if (totalDl + totalUl) > 0 {
                     TrafficHistoryManager.shared.recordDay(date: currentDateString, dl: totalDl, ul: totalUl)
                 }
