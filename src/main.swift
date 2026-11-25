@@ -3239,6 +3239,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 }
 
 let app = NSApplication.shared
-let delegate = RealtimeTrafficApp()
+// Fixture mode bypasses the production delegate entirely.
+let delegate: NSApplicationDelegate = CommandLine.arguments.dropFirst().contains("--netguard-smoke")
+    ? NetGuardSmokeDelegate() : RealtimeTrafficApp()
 app.delegate = delegate
-app.run()
+withExtendedLifetime(delegate) { app.run() }
