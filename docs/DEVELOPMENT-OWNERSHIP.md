@@ -10,7 +10,7 @@ Status: proposed allocation; broad parallel implementation remains locked. No re
 | 3 Security/recovery | RecoveryTransaction.swift, RecoveryJournalStore.swift, SimulatedNetworkAdapter.swift, future authorization layer |
 | 4 UX | src/Resources/popover.html, future Apps/NetGuardApp/; UX-01–08 |
 | 5 Policy/forecast | PolicyEngine.swift, PredictionEngine.swift, future policy/forecast modules |
-| 6 Workflows/power | future WorkflowGuard/ and PowerGuard/ |
+| 6 Workflows/power | WorkflowPowerGuard.swift, future workflow/power adapters |
 | 7 Data/provider | HistoryStore.swift, UsageMigration.swift, ProviderObservation.swift, scripts/traffic_monitor.py, future DataStore/ and CampusProviders/ |
 | 8 QA/CI | Tests/, tests/, .github/workflows/, evidence and integration checks |
 
