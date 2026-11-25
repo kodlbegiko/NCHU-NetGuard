@@ -1,9 +1,21 @@
+.PHONY: all build install test clean
+APP := build/NCHUTraffic.app
+INSTALL_DIR ?= $(HOME)/Applications
+
+all: build
+
 build:
-	mkdir -p build/NCHUTraffic.app/Contents/MacOS
-	mkdir -p build/NCHUTraffic.app/Contents/Resources
-	swiftc -O src/main.swift -o build/NCHUTraffic.app/Contents/MacOS/NCHUTraffic
-	cp src/Info.plist build/NCHUTraffic.app/Contents/
-	cp src/Resources/popover.html build/NCHUTraffic.app/Contents/Resources/
+	mkdir -p "$(APP)/Contents/MacOS" "$(APP)/Contents/Resources"
+	swiftc -O src/main.swift -o "$(APP)/Contents/MacOS/NCHUTraffic"
+	cp src/Info.plist "$(APP)/Contents/"
+	cp src/Resources/popover.html scripts/traffic_monitor.py "$(APP)/Contents/Resources/"
+
+install: build
+	mkdir -p "$(INSTALL_DIR)"
+	ditto "$(APP)" "$(INSTALL_DIR)/NCHUTraffic.app"
+
+test:
+	python3 -m unittest discover -s tests -p 'test_*.py' -v
 
 clean:
 	rm -rf build
