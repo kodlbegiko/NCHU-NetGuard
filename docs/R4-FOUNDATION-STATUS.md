@@ -148,3 +148,9 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 - Verified preceding integrated commit b5a79f0dcd97be640e1135db3c7dffcea74dea35 via CI 45635305449: 96 Swift and 13 Python tests, app and bundle passed.
 - Added original bounded active-interface throughput chart, median probe latency and mean adjacent-probe variation, current process snapshot search and ordering, and five new tests. No historical per-app attribution or packet jitter claim. No third-party code imported. See COMPETITIVE-BENCHMARK.md for upstream feature/license evidence and priorities.
 - Candidate requires new exact-HEAD CI and local UI verification. No paid services, release, or host mutation.
+
+## Twenty-fifth iteration
+
+- Added ObservationSchedule and TunnelEvidence, path-event invalidation with NWPathMonitor, IPv4 discovery fallback, and adaptive optional ping/nettop scheduling. Removed redundant legacy periodic speed-guard timer. Sampling remains at one second; no measured resource improvement claimed.
+- Added current physical-interface rates and read-only selection in native management. Unknown/unavailable rates remain absent; interface selection does not alter routing or accounting. Tunnel-name hints are not verified VPN identity or route coverage. Added four tests. Sleep now records the sample gap before persisting.
+- The preceding CI run 45636226533 passed core tests and was still building the app at time of writing. Candidate remains staged until prior integrated CI is terminal; exact candidate tests/build and real-device behavior are unverified. No paid services, host mutations or release.
