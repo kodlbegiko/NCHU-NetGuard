@@ -42,4 +42,17 @@ final class ObservationRuleTests: XCTestCase {
         XCTAssertEqual(try edited.removing(updated.id).rules, [])
         XCTAssertThrowsError(try edited.replacing(.init(priority: 10, action: .notify)))
     }
+    func testEditingCannotLaunderInvalidSourceOrUnknownSchema() throws {
+        let rule = ObservationRule(priority: 10, connected: false, action: .observe)
+        let invalid = ObservationRuleSet(rules: [rule, rule])
+        XCTAssertThrowsError(try invalid.replacing(rule))
+        XCTAssertThrowsError(try invalid.removing(rule.id))
+        let valid = ObservationRuleSet(rules: [rule])
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(valid)) as? [String: Any])
+        json["schemaVersion"] = 999
+        let unsupported = try JSONDecoder().decode(ObservationRuleSet.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertThrowsError(try unsupported.replacing(rule))
+        XCTAssertThrowsError(try unsupported.removing(rule.id))
+        XCTAssertEqual(try valid.replacing(rule).rules.first?.connected, false)
+    }
 }

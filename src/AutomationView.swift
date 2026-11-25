@@ -14,7 +14,7 @@ struct AutomationView: View {
     @State private var scope = NetworkScope.unknown
     @State private var tier = -1
     @State private var focus = -1
-    @State private var needsConnection = false
+    @State private var connection = -1
     @State private var action = ObservationRuleAction.observe
     @State private var validationStatus = ""
 
@@ -88,7 +88,7 @@ struct AutomationView: View {
         scope = rule?.scope ?? .unknown
         tier = rule?.minimumQuotaTier?.rawValue ?? -1
         focus = rule?.focusEnabled.map { $0 ? 1 : 0 } ?? -1
-        needsConnection = rule?.connected == true
+        connection = rule?.connected.map { $0 ? 1 : 0 } ?? -1
         action = rule?.action ?? .observe
         validationStatus = ""
     }
@@ -96,7 +96,7 @@ struct AutomationView: View {
         do {
             let rule = ObservationRule(id: editingID ?? UUID(), priority: priority,
                 scope: scope == .unknown ? nil : scope, minimumQuotaTier: LocalQuotaTier(rawValue: tier),
-                connected: needsConnection ? true : nil, focusEnabled: focus == -1 ? nil : focus == 1,
+                connected: connection == -1 ? nil : connection == 1, focusEnabled: focus == -1 ? nil : focus == 1,
                 action: action)
             saveRules(try set.replacing(rule))
             edit(nil)
@@ -140,6 +140,7 @@ struct AutomationView: View {
                 }
                 Picker("本機配額門檻", selection: $tier) {
                     Text("不限").tag(-1)
+                    Text("任何已量測門檻").tag(0)
                     Text("70%").tag(1)
                     Text("85%").tag(2)
                     Text("95%").tag(3)
@@ -149,7 +150,11 @@ struct AutomationView: View {
                     Text("一般").tag(0)
                     Text("重要工作").tag(1)
                 }
-                Toggle("需已觀測到連線", isOn: $needsConnection)
+                Picker("連線條件", selection: $connection) {
+                    Text("不限").tag(-1)
+                    Text("已觀測連線").tag(1)
+                    Text("明確確認未連線").tag(0)
+                }
                 Picker("預覽建議", selection: $action) {
                     ForEach([ObservationRuleAction.observe, .notify, .deferAction], id: \.self) { value in
                         Text(actionLabel(value)).tag(value)

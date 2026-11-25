@@ -162,6 +162,7 @@ public struct ObservationRuleSet: Codable, Equatable, Sendable {
         else { throw ContractError.invalidField("observationRules") }
     }
     public func replacing(_ rule: ObservationRule) throws -> Self {
+        try validate()
         var updated = rules.filter { $0.id != rule.id }
         updated.append(rule)
         let result = Self(rules: updated)
@@ -169,6 +170,7 @@ public struct ObservationRuleSet: Codable, Equatable, Sendable {
         return result
     }
     public func removing(_ id: UUID) throws -> Self {
+        try validate()
         let result = Self(rules: rules.filter { $0.id != id })
         try result.validate()
         return result
