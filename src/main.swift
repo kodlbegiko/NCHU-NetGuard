@@ -291,8 +291,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var isSpeedAutoSwitchEnabled: Bool = false
     var wiredPingMs: Double = 4.0
     var wifiPingMs: Double = 46.3
-    var wiredSpeedMbps: Double = 22.8
-    var wifiSpeedMbps: Double = 1.0
+    var wiredSpeedMbps: Double = 0
+    var wifiSpeedMbps: Double = 0
     var wiredReachable: Bool = true
     var wifiReachable: Bool = true
     var isRunningSpeedRace: Bool = false
@@ -1245,108 +1245,56 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     var isDetectingNetwork: Bool = false
     
+    private static func discoverDefaultIPv4() -> (interface: String, ip: String) {
+        guard case .success(let route) = ProbeRunner.run("/sbin/route", ["-n", "get", "default"], timeout: 2),
+              let line = route.components(separatedBy: .newlines).first(where: {
+                  $0.trimmingCharacters(in: .whitespaces).hasPrefix("interface:")
+              }),
+              let separator = line.firstIndex(of: ":") else { return ("", "") }
+        let name = line[line.index(after: separator)...].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name.count <= 32,
+              name.range(of: #"^[a-zA-Z0-9]+$"#, options: .regularExpression) != nil,
+              case .success(let address) = ProbeRunner.run("/usr/sbin/ipconfig", ["getifaddr", name], timeout: 2)
+        else { return (name, "") }
+        let ip = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        var parsed = in_addr()
+        guard inet_pton(AF_INET, ip, &parsed) == 1 else { return (name, "") }
+        return (name, ip)
+    }
+
+    private func applyDiscoveredNetwork(interface: String, ip: String) {
+        if activeInterface != interface || currentIP != ip {
+            networkQuality.reset()
+            lastPingUptime = nil
+            pingLatencyMs = -1
+            providerObservation = nil
+            providerRequestID = UUID()
+            providerRequestInFlight = false
+            providerLastAttempt = nil
+        }
+        activeInterface = interface
+        currentIP = ip
+        // A default IPv4 route and address do not prove internet reachability.
+        isConnected = !interface.isEmpty && !ip.isEmpty
+    }
+
     func detectActiveNetworkSync() {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/sbin/route")
-        process.arguments = ["get", "default"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        try? process.run()
-        process.waitUntilExit()
-        
-        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        var foundInterface = ""
-        for line in out.components(separatedBy: .newlines) {
-            if line.contains("interface:") {
-                let parts = line.components(separatedBy: ":")
-                if parts.count >= 2 {
-                    foundInterface = parts[1].trimmingCharacters(in: .whitespaces)
-                }
-            }
-        }
-        self.activeInterface = foundInterface
-        
-        let ipProcess = Process()
-        ipProcess.executableURL = URL(fileURLWithPath: "/usr/sbin/ipconfig")
-        ipProcess.arguments = ["getifaddr", self.activeInterface]
-        let ipPipe = Pipe()
-        ipProcess.standardOutput = ipPipe
-        try? ipProcess.run()
-        ipProcess.waitUntilExit()
-        let ipOut = String(data: ipPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !ipOut.isEmpty {
-            self.currentIP = ipOut
-            self.isConnected = true
-        } else {
-            self.isConnected = false
-                    self.currentIP = ""
-        }
+        // Start in an unknown state; discovery is performed off the main thread.
+        detectActiveNetwork()
     }
 
     func detectActiveNetwork(completion: (() -> Void)? = nil) {
-        guard !isDetectingNetwork else { return }
+        guard !isDetectingNetwork, workflowPowerGuard.allowsSampling else { return }
         isDetectingNetwork = true
-        
+        let generation = workflowPowerGuard.generation
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            guard let self = self else { return }
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/sbin/route")
-            process.arguments = ["get", "default"]
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            try? process.run()
-            process.waitUntilExit()
-            
-            let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            var foundInterface = ""
-            for line in out.components(separatedBy: .newlines) {
-                if line.contains("interface:") {
-                    let parts = line.components(separatedBy: ":")
-                    if parts.count >= 2 {
-                        foundInterface = parts[1].trimmingCharacters(in: .whitespaces)
-                    }
-                }
-            }
-            
-            let ipProcess = Process()
-            ipProcess.executableURL = URL(fileURLWithPath: "/usr/sbin/ipconfig")
-            ipProcess.arguments = ["getifaddr", foundInterface]
-            let ipPipe = Pipe()
-            ipProcess.standardOutput = ipPipe
-            try? ipProcess.run()
-            ipProcess.waitUntilExit()
-            let ipOut = String(data: ipPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            
-
+            let observed = RealtimeTrafficApp.discoverDefaultIPv4()
             DispatchQueue.main.async {
-                let ifaceChanged = (self.activeInterface != foundInterface)
-                if ifaceChanged || self.currentIP != ipOut {
-                    self.networkQuality.reset()
-                    self.lastPingUptime = nil
-                    self.pingLatencyMs = -1
-                    self.providerObservation = nil
-                    self.providerRequestID = UUID()
-                    self.providerRequestInFlight = false
-                    self.providerLastAttempt = nil
-                }
-                self.activeInterface = foundInterface
-                if !ipOut.isEmpty {
-                    self.currentIP = ipOut
-                    self.isConnected = true
-                } else {
-                    self.isConnected = false
-                    self.currentIP = ""
-                }
-                
-                // 若連線網卡切換，立即重新採樣硬體計數器，防止產生虛假巨大流量突波
-                if ifaceChanged {
-                    if let b = self.getInterfaceBytes(name: foundInterface) {
-                        self.lastRawIBytes = b.ibytes
-                        self.lastRawOBytes = b.obytes
-                        self.lastTimestamp = Date().timeIntervalSince1970
-                    }
-                }
+                guard let self else { return }
                 self.isDetectingNetwork = false
+                guard self.workflowPowerGuard.generation == generation,
+                      self.workflowPowerGuard.allowsSampling else { return }
+                self.applyDiscoveredNetwork(interface: observed.interface, ip: observed.ip)
                 completion?()
             }
         }
