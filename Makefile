@@ -14,7 +14,7 @@ build:
 build-module:
 	swift build -c release --product NCHUTraffic
 	mkdir -p "build/module/NCHUTraffic.app/Contents/MacOS" "build/module/NCHUTraffic.app/Contents/Resources"
-	cp "$(swift build -c release --show-bin-path)/NCHUTraffic" "build/module/NCHUTraffic.app/Contents/MacOS/NCHUTraffic"
+	cp "$$(swift build -c release --show-bin-path)/NCHUTraffic" "build/module/NCHUTraffic.app/Contents/MacOS/NCHUTraffic"
 	cp src/Info.plist "build/module/NCHUTraffic.app/Contents/"
 	cp src/Resources/popover.html scripts/traffic_monitor.py "build/module/NCHUTraffic.app/Contents/Resources/"
 

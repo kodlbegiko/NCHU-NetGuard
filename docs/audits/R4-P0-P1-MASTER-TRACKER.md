@@ -65,3 +65,6 @@ Next: review exact branch CI, audit all trust boundaries, verify recovery journa
 
 ## Closure batch 9 (candidate)
 - Integrate checked integer ledger into runtime; legacy UI consumes lossless Double projections, persistent counters emitted as integers, restore checked atomically, overflow prevents quota assessment and marks partial. Manual reset now resets sampling baselines and preserves measured daily totals; menu label updated. Exact CI and real-device verification pending.
+
+## Closure batch 10 (candidate)
+- Exact batch 6 CI 45651898611: native SwiftPM compilation/link succeeded, packaging failed because GNU Make expanded the shell substitution. Escape the dollar sign; retain the mandatory module smoke gate. Batches 3–5 full CI passed (45651479816, 45651595602, 45651739919). Exact cumulative CI still required.
