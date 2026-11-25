@@ -93,3 +93,6 @@ Next: review exact branch CI, audit all trust boundaries, verify recovery journa
 
 ## Full roadmap integration increment 3
 - Introduce same-boundary directional reconciliation for independently route-classified flow deltas, with explicit LAN/Internet/unknown buckets, duplicate/overflow rejection and unmatched byte remainder. Socket payload and physical wire totals remain separate; no address-only inference. Added deterministic tests. This is an adapter-facing pure projection, NOT validated live Internet-only accounting, VPN deduplication, or provider billing. No live adapter activated.
+
+## Full roadmap integration increment 4
+- Add versioned bounded read-only rule set and deterministic multi-condition preview. Priority, tied-action conflict, unknown higher-priority evidence and invalid-rule rejection are explicit. Three regression tests. No mutation or notification dispatched by the evaluator; runtime editor, persistence, scheduling and cooldown remain unimplemented. Existing quota alerts unchanged.
