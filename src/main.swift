@@ -59,23 +59,18 @@ class TrafficHistoryManager {
 }
 
 // MARK: - HTTPS 憑證處理器 (支援校園內網伺服器安全存取)
-class InsecureCertDelegate: NSObject, URLSessionDelegate {
-    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        if let trust = challenge.protectionSpace.serverTrust {
-            completionHandler(.useCredential, URLCredential(trust: trust))
-        } else {
-            completionHandler(.performDefaultHandling, nil)
-        }
-    }
-}
+// Use URLSession's default certificate and hostname validation.
 
-// MARK: - JavaScript 訊息處理器
+    // MARK: - JavaScript 訊息處理器
 class ScriptHandler: NSObject, WKScriptMessageHandler {
     weak var app: RealtimeTrafficApp?
     init(app: RealtimeTrafficApp) { self.app = app }
     
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let action = message.body as? String else { return }
+        guard message.frameInfo.isMainFrame,
+              message.frameInfo.request.url?.isFileURL == true,
+              message.frameInfo.request.url?.standardizedFileURL == Bundle.main.url(forResource: "popover", withExtension: "html")?.standardizedFileURL,
+              let action = message.body as? String else { return }
         DispatchQueue.main.async { [weak self] in
             switch action {
             case "refresh":
@@ -244,7 +239,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var pausedPIDs: [pid_t] = []
     
     // 宿網避難與自動切換 Wi-Fi 守護 (Auto Wi-Fi Failover Guard)
-    var isAutoWifiFailoverEnabled: Bool = true
+    var isAutoWifiFailoverEnabled: Bool = false
     var isWiredTemporarilyDisabled: Bool = false
     var disabledWiredServiceName: String = "USB 10/100/1000 LAN"
     var isSwitchingNetwork: Bool = false
@@ -256,7 +251,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var hasTriggeredMidnightToday: Bool = false
     
     // 雙網卡即時競速與慢速自動切換引擎 (Smart Speed Race & Auto-Switch Engine)
-    var isSpeedAutoSwitchEnabled: Bool = true
+    var isSpeedAutoSwitchEnabled: Bool = false
     var wiredPingMs: Double = 4.0
     var wifiPingMs: Double = 46.3
     var wiredSpeedMbps: Double = 22.8
@@ -269,7 +264,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var speedGuardTimer: Timer?
     
     // 方向 2: 違規風險防禦與計中黑名單主動預警 (NCHU Security & Blacklist Early Warning)
-    var isP2PShieldAutoKillEnabled: Bool = true
+    var isP2PShieldAutoKillEnabled: Bool = false
     var isP2PDetected: Bool = false
     var p2pAppName: String = ""
     var hasAlertedCurrentP2P: Bool = false
@@ -372,122 +367,15 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     // 設定 Codex 與受控開發工具的「有線宿網 VIP 豁免靜態路由」
     func applyCodexWiredExemptionRoutes(wiredService: String, gateway: String) {
-        let pRoute = Process()
-        pRoute.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-        pRoute.arguments = [
-            "-setadditionalroutes", wiredService,
-            "104.18.0.0", "255.254.0.0", gateway,    // OpenAI / ChatGPT / Codex / Cloudflare API
-            "172.64.0.0", "255.248.0.0", gateway,    // OpenAI / Codex WebSockets & CUA
-            "160.79.104.0", "255.255.254.0", gateway,// Anthropic / Claude API
-            "140.82.112.0", "255.255.240.0", gateway,// GitHub / Git / API
-            "185.199.108.0", "255.255.252.0", gateway,// GitHub Raw & Pages
-            "151.101.0.0", "255.255.0.0", gateway,   // NPM / PyPI / Python / Fastly Dev Registry
-            "140.120.0.0", "255.255.0.0", gateway    // 興大校內高速學術網段
-        ]
-        try? pRoute.run()
-        pRoute.waitUntilExit()
+        // Disabled until transactional routing and authorization are implemented.
     }
 
     func activateLidGuard(reason: String, freezeRenderers: Bool = false) {
-        guard isLidGuardEnabled else { return }
-        let codexActive = isCodexEcosystemActive()
-        
-        // 1. 發送系統級多媒體暫停 (瞬停背景音樂/影片)
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.sendSystemMediaPause()
-            usleep(400_000)
-            if self?.isAudioPlaying() == true {
-                self?.sendSystemMediaPause()
-            }
-        }
-        
-        // 2. 備用 AppleScript（僅暫停 <video>/<audio> 標籤播放，絕不干擾 Codex 操控之網頁 DOM 或腳本執行）
-        DispatchQueue.global(qos: .utility).async {
-            let scriptSource = """
-            tell application "Google Chrome"
-                if it is running then
-                    repeat with w in windows
-                        repeat with t in tabs of w
-                            try
-                                execute t javascript "document.querySelectorAll('video, audio').forEach(el => { el.pause(); });"
-                            end try
-                        end repeat
-                    end repeat
-                end if
-            end tell
-            """
-            if let script = NSAppleScript(source: scriptSource) {
-                var err: NSDictionary?
-                script.executeAndReturnError(&err)
-            }
-        }
-        
-        // 3. 暫停高耗流量之背景同步與下載工具（Codex 與其調用的軟體享有 100% 豁免權）
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            var stopped: [pid_t] = self.pausedPIDs
-            
-            var targetApps = ["Google Drive", "OneDrive", "Dropbox", "qBittorrent", "Transmission", "Steam"]
-            // 若 Codex 正在運行或操控電腦 (SkyComputerUseService / cua_node)，豁免 Chrome Renderers 免於凍結！
-            if freezeRenderers && !codexActive {
-                targetApps.append("Google Chrome Helper (Renderer)")
-            }
-            
-            for appName in targetApps {
-                let p = Process()
-                p.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-                p.arguments = ["-f", appName]
-                let pipe = Pipe()
-                p.standardOutput = pipe
-                try? p.run()
-                p.waitUntilExit()
-                let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-                for line in out.components(separatedBy: .newlines) {
-                    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !trimmed.isEmpty, let pidVal = Int32(trimmed) else { continue }
-                    let checkProc = Process()
-                    checkProc.executableURL = URL(fileURLWithPath: "/bin/ps")
-                    checkProc.arguments = ["-p", "\(pidVal)", "-o", "command="]
-                    let checkPipe = Pipe()
-                    checkProc.standardOutput = checkPipe
-                    try? checkProc.run()
-                    checkProc.waitUntilExit()
-                    let cmdOut = String(data: checkPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-                    if self.isExemptProcessForCodex(cmdOut: cmdOut) {
-                        continue
-                    }
-                    
-                    if !stopped.contains(pidVal) {
-                        kill(pidVal, SIGSTOP)
-                        stopped.append(pidVal)
-                    }
-                }
-            }
-            
-            DispatchQueue.main.async {
-                self.pausedPIDs = stopped
-            }
-        }
-        
-        sendSystemNotification(
-            title: "🌙 流量防護已生效 (\(reason))",
-            body: codexActive ? "已暫停背景同步，同時為 Codex 與受控軟體保留 100% 網路豁免權！" : "已自動硬體級急停影音串流與背景同步，嚴防暗中消耗宿網！"
-        )
+        sendSystemNotification(title: "流量防護提醒", body: "\(reason)：請檢查背景傳輸；安全模式不會暫停或終止程式。", isCritical: true)
     }
 
     func deactivateLidGuard(reason: String) {
-        // 恢復暫停的背景程序
-        if !pausedPIDs.isEmpty {
-            for pid in pausedPIDs {
-                kill(pid, SIGCONT)
-            }
-            pausedPIDs.removeAll()
-        }
-        
-        sendSystemNotification(
-            title: "☀️ 歡迎回來 (\(reason))",
-            body: "已解除背景凍結，恢復正常運行。"
-        )
+        pausedPIDs.removeAll()
     }
 
     func activateIdleGuard(reason: String) {
@@ -556,245 +444,27 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     // 免拔線自動避難切換：切換至校園 Wi-Fi，同時為 Codex 及受控開發軟體保留有線專線豁免權！
     func switchToWifi(reason: String) {
-        guard !isSwitchingNetwork else { return }
-        isSwitchingNetwork = true
-        
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            
-            // 1. 確保 Wi-Fi 與有線網卡皆為開啟狀態（保持有線網卡開啟以維持 Codex 有線 VIP 豁免路由與雙網測速）
-            let wiredService = self.getWiredServiceName()
-            self.disabledWiredServiceName = wiredService
-            
-            let pPower = Process()
-            pPower.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-            pPower.arguments = ["-setairportpower", "en0", "on"]
-            try? pPower.run()
-            pPower.waitUntilExit()
-            
-            let pEnableWired = Process()
-            pEnableWired.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-            pEnableWired.arguments = ["-setnetworkserviceenabled", wiredService, "on"]
-            try? pEnableWired.run()
-            pEnableWired.waitUntilExit()
-            
-            // 2. 調整服務順序，將 Wi-Fi 移至第一優先序位（使一般大流量網頁預設走 Wi-Fi）
-            var services = self.getAllNetworkServices()
-            if let wifiIdx = services.firstIndex(of: "Wi-Fi") {
-                services.remove(at: wifiIdx)
-                services.insert("Wi-Fi", at: 0)
-                let pOrder = Process()
-                pOrder.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-                pOrder.arguments = ["-ordernetworkservices"] + services
-                try? pOrder.run()
-                pOrder.waitUntilExit()
-            }
-            
-            // 3. 為 Codex 與其操控的開發工具 (OpenAI / GitHub / NPM / PyPI / 校內) 綁定有線 4ms VIP 豁免路由！
-            let gateway = self.getWiredGatewayIP(service: wiredService)
-            self.applyCodexWiredExemptionRoutes(wiredService: wiredService, gateway: gateway)
-            
-            DispatchQueue.main.async {
-                self.isWiredTemporarilyDisabled = true
-                self.savePersistedState()
-                
-                self.detectActiveNetwork {
-                    self.isSwitchingNetwork = false
-                    self.updateStatusBar()
-                    self.pushDataToWebUI()
-                }
-                
-                self.sendSystemNotification(
-                    title: "🔀 已切換至校園 Wi-Fi（Codex 享有線豁免權）！",
-                    body: "原因：\(reason)。一般網頁已改走 Wi-Fi，Codex 與開發工具仍獨享 4ms 有線極速通道！"
-                )
-            }
-        }
+        reportNetworkMutationUnavailable()
     }
 
-    // 恢復有線網路連線 (啟用網卡並重設為最高順位)
     func restoreWiredNetwork(reason: String) {
-        guard !isSwitchingNetwork else { return }
-        isSwitchingNetwork = true
-        
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            let wiredService = self.disabledWiredServiceName
-            
-            // 1. 啟用有線網路服務
-            let pEnable = Process()
-            pEnable.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-            pEnable.arguments = ["-setnetworkserviceenabled", wiredService, "on"]
-            try? pEnable.run()
-            pEnable.waitUntilExit()
-            
-            // 2. 清除有線與 Wi-Fi 附加路由並關閉 Wi-Fi 電源（確保有線額度用完前 100% 走有線，0 流量消耗 Wi-Fi，且路由完全純淨）
-            let pClearWired = Process()
-            pClearWired.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-            pClearWired.arguments = ["-setadditionalroutes", wiredService]
-            try? pClearWired.run()
-            pClearWired.waitUntilExit()
-            
-            let pClearWifi = Process()
-            pClearWifi.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-            pClearWifi.arguments = ["-setadditionalroutes", "Wi-Fi"]
-            try? pClearWifi.run()
-            pClearWifi.waitUntilExit()
-            
-            let pWifiOff = Process()
-            pWifiOff.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-            pWifiOff.arguments = ["-setairportpower", "en0", "off"]
-            try? pWifiOff.run()
-            pWifiOff.waitUntilExit()
-            
-            // 3. 將有線服務順位調回第一
-            var services = self.getAllNetworkServices()
-            if let wiredIdx = services.firstIndex(of: wiredService) {
-                services.remove(at: wiredIdx)
-                services.insert(wiredService, at: 0)
-                let pOrder = Process()
-                pOrder.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-                pOrder.arguments = ["-ordernetworkservices"] + services
-                try? pOrder.run()
-                pOrder.waitUntilExit()
-            }
-            
-            DispatchQueue.main.async {
-                self.isWiredTemporarilyDisabled = false
-                self.isSplitRoutingEnabled = false
-                self.savePersistedState()
-                
-                // 等候 2 秒 DHCP 重新配置 IP
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                    self.detectActiveNetwork {
-                        self.isSwitchingNetwork = false
-                        self.updateStatusBar()
-                        self.pushDataToWebUI()
-                    }
-                }
-            }
-        }
+        reportNetworkMutationUnavailable()
     }
 
-    // MARK: - 方向 1: 智慧網路調度與雙軌分流 (Smart Dual-Interface Routing & Split Tunneling)
     func applySplitRouting() {
-        let wiredService = getWiredServiceName()
-        let wifiService = "Wi-Fi"
-        
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            if self.isSplitRoutingEnabled {
-                // 1. 確保有線網卡開啟
-                let pEnable = Process()
-                pEnable.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-                pEnable.arguments = ["-setnetworkserviceenabled", wiredService, "on"]
-                try? pEnable.run()
-                pEnable.waitUntilExit()
-                
-                if !self.isWiredTemporarilyDisabled {
-                    // 【有線優先模式】：清除有線額外附加路由，讓預設閘道完全承載所有連線（保證 ChatGPT 與校內網站暢通）
-                    let pClearWired = Process()
-                    pClearWired.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-                    pClearWired.arguments = ["-setadditionalroutes", wiredService]
-                    try? pClearWired.run()
-                    pClearWired.waitUntilExit()
-                    
-                    var services = self.getAllNetworkServices()
-                    if let wiredIdx = services.firstIndex(of: wiredService) {
-                        services.remove(at: wiredIdx)
-                        services.insert(wiredService, at: 0)
-                        let pOrder = Process()
-                        pOrder.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-                        pOrder.arguments = ["-ordernetworkservices"] + services
-                        try? pOrder.run()
-                        pOrder.waitUntilExit()
-                    }
-                    
-                    // 僅將純大流量影音快取伺服器 (YouTube Video CDN 74.125/216.58) 與 Apple 背景更新 (17.253/17.248) 分流至 Wi-Fi
-                    // 保留 Google 搜尋/API (142.250.*) 與所有網站給有線網路，確保 Codex 操作 Chrome/其他軟體時極速載入！
-                    let wifiGw = self.getServiceGatewayIP(service: wifiService, fallback: "10.10.0.254")
-                    let pWifiRoute = Process()
-                    pWifiRoute.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-                    pWifiRoute.arguments = [
-                        "-setadditionalroutes", wifiService,
-                        "74.125.0.0", "255.255.0.0", wifiGw,
-                        "216.58.192.0", "255.255.224.0", wifiGw,
-                        "17.253.0.0", "255.255.0.0", wifiGw,
-                        "17.248.128.0", "255.255.192.0", wifiGw
-                    ]
-                    try? pWifiRoute.run()
-                    pWifiRoute.waitUntilExit()
-                    
-                    DispatchQueue.main.async {
-                        self.sendSystemNotification(
-                            title: "🛡️ Codex 及受控軟體有線豁免已生效！",
-                            body: "Codex 與其操控的瀏覽器/開發工具全面獨享 4ms 有線宿網；純影音快取與系統更新自動分流至 Wi-Fi。"
-                        )
-                        self.detectActiveNetwork {
-                            self.pushDataToWebUI()
-                        }
-                    }
-                } else {
-                    // 【Wi-Fi 備援 + Codex/校內千兆 VIP 豁免分流模式】
-                    var services = self.getAllNetworkServices()
-                    if let wifiIdx = services.firstIndex(of: wifiService) {
-                        services.remove(at: wifiIdx)
-                        services.insert(wifiService, at: 0)
-                        let pOrder = Process()
-                        pOrder.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-                        pOrder.arguments = ["-ordernetworkservices"] + services
-                        try? pOrder.run()
-                        pOrder.waitUntilExit()
-                    }
-                    
-                    let wiredGw = self.getWiredGatewayIP(service: wiredService)
-                    self.applyCodexWiredExemptionRoutes(wiredService: wiredService, gateway: wiredGw)
-                    
-                    DispatchQueue.main.async {
-                        self.sendSystemNotification(
-                            title: "🔀 雙軌智慧分流（含 Codex 有線豁免）已啟動！",
-                            body: "Codex/GitHub/校內服務強制走 4ms 千兆有線，其餘流量走 Wi-Fi。"
-                        )
-                        self.detectActiveNetwork {
-                            self.pushDataToWebUI()
-                        }
-                    }
-                }
-            } else {
-                // 關閉分流：清除附加路由
-                for svc in [wiredService, wifiService] {
-                    let pClear = Process()
-                    pClear.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-                    pClear.arguments = ["-setadditionalroutes", svc]
-                    try? pClear.run()
-                    pClear.waitUntilExit()
-                }
-                
-                // 恢復有線網路第一順位
-                var services = self.getAllNetworkServices()
-                if let wiredIdx = services.firstIndex(of: wiredService) {
-                    services.remove(at: wiredIdx)
-                    services.insert(wiredService, at: 0)
-                    let pOrder = Process()
-                    pOrder.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-                    pOrder.arguments = ["-ordernetworkservices"] + services
-                    try? pOrder.run()
-                    pOrder.waitUntilExit()
-                }
-                
-                DispatchQueue.main.async {
-                    self.sendSystemNotification(
-                        title: "雙軌智慧分流已關閉",
-                        body: "已恢復標準網路順位，清除附加靜態路由。"
-                    )
-                    self.detectActiveNetwork {
-                        self.pushDataToWebUI()
-                    }
-                }
-            }
-        }
+        reportNetworkMutationUnavailable()
     }
-    
+
+    func reportNetworkMutationUnavailable() {
+        isSwitchingNetwork = false
+        isSplitRoutingEnabled = false
+        isAutoWifiFailoverEnabled = false
+        isSpeedAutoSwitchEnabled = false
+        isMidnightScheduleEnabled = false
+        sendSystemNotification(title: "R4.0 安全模式", body: "網路設定修改暫停，請使用 macOS 系統設定手動管理連線。", isCritical: true)
+        if popover != nil && popover.isShown { pushDataToWebUI() }
+    }
+
     func getServiceGatewayIP(service: String, fallback: String) -> String {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
@@ -1004,7 +674,6 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     func checkP2PHazard() {
         let p2pKeywords = ["qbittorrent", "transmission", "bitcomet", "thunder", "xunlei", "folx", "deluge", "utorrent", "bittorrent", "webtorrent", "aria2c", "motrix", "biglybt"]
         var foundP2PName: String? = nil
-        var foundApp: NSRunningApplication? = nil
         
         for app in NSWorkspace.shared.runningApplications {
             let name = (app.localizedName ?? "").lowercased()
@@ -1012,7 +681,6 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             for kw in p2pKeywords {
                 if name.contains(kw) || bid.contains(kw) {
                     foundP2PName = app.localizedName ?? kw
-                    foundApp = app
                     break
                 }
             }
@@ -1030,15 +698,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                         self.hasAlertedCurrentP2P = true
                         self.sendSystemNotification(
                             title: "🚨 興大宿網違規風險警告！",
-                            body: "偵測到 P2P 軟體（\(name)）正在運行！宿網嚴禁 P2P，違者將遭計中鎖孔 6 小時以上！"
+                            body: "偵測到可能具有 P2P 功能的軟體（\(name)），不代表已違規。請確認使用情形。", isCritical: true
                         )
-                        if self.isP2PShieldAutoKillEnabled {
-                            foundApp?.terminate()
-                            self.sendSystemNotification(
-                                title: "🛡️ P2P 盾牌已自動攔截！",
-                                body: "已為您即時終止 \(name)，保護宿網孔避免遭計中鎖孔。"
-                            )
-                        }
+
                     }
                 }
             } else {
@@ -1053,35 +715,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     func killCurrentP2PApp() {
-        let p2pKeywords = ["qbittorrent", "transmission", "bitcomet", "thunder", "xunlei", "folx", "deluge", "utorrent", "bittorrent", "webtorrent", "aria2c", "motrix", "biglybt"]
-        for app in NSWorkspace.shared.runningApplications {
-            let name = (app.localizedName ?? "").lowercased()
-            let bid = (app.bundleIdentifier ?? "").lowercased()
-            for kw in p2pKeywords {
-                if name.contains(kw) || bid.contains(kw) {
-                    app.terminate()
-                    DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) {
-                        if !app.isTerminated {
-                            kill(app.processIdentifier, SIGKILL)
-                        }
-                    }
-                    break
-                }
-            }
-        }
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-        p.arguments = ["-x", "aria2c"]
-        try? p.run()
-        
-        self.isP2PDetected = false
-        self.p2pAppName = ""
-        self.pushDataToWebUI()
-        
-        self.sendSystemNotification(
-            title: "🛑 已強制終止 P2P 軟體",
-            body: "P2P 軟體已成功關閉，宿網環境安全。"
-        )
+        sendSystemNotification(title: "P2P 風險提醒", body: "安全模式不會終止程式；請確認應用程式與傳輸用途後自行關閉。", isCritical: true)
     }
 
     func checkIpBlocklist() {
@@ -1090,7 +724,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)", forHTTPHeaderField: "User-Agent")
         
         let config = URLSessionConfiguration.ephemeral
-        let session = URLSession(configuration: config, delegate: InsecureCertDelegate(), delegateQueue: nil)
+        let session = URLSession(configuration: config)
         
         let task = session.dataTask(with: request) { [weak self] data, response, error in
             guard let self = self else { return }
@@ -1281,8 +915,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         vc.view = webView
         popover.contentViewController = vc
         
-        let htmlURL = Bundle.main.url(forResource: "popover", withExtension: "html") ??
-                      URL(fileURLWithPath: "/Users/liuchuxiang/電腦優化/NCHUTraffic.app/Contents/Resources/popover.html")
+        guard let htmlURL = Bundle.main.url(forResource: "popover", withExtension: "html") else {
+            webView.loadHTMLString("<p>NetGuard: missing bundled interface.</p>", baseURL: nil)
+            return
+        }
         webView.loadFileURL(htmlURL, allowingReadAccessTo: htmlURL.deletingLastPathComponent())
     }
 
@@ -1672,13 +1308,13 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 self.isAlertEnabled = json["alert_enabled"] as? Bool ?? true
                 self.isLidGuardEnabled = json["lid_guard_enabled"] as? Bool ?? true
                 self.isIdleGuardEnabled = json["idle_guard_enabled"] as? Bool ?? true
-                self.isAutoWifiFailoverEnabled = json["auto_wifi_failover_enabled"] as? Bool ?? true
-                self.isWiredTemporarilyDisabled = json["is_wired_temporarily_disabled"] as? Bool ?? false
+                self.isAutoWifiFailoverEnabled = false
+                self.isWiredTemporarilyDisabled = false
                 self.disabledWiredServiceName = json["disabled_wired_service_name"] as? String ?? "USB 10/100/1000 LAN"
-                self.isSplitRoutingEnabled = json["split_routing_enabled"] as? Bool ?? (json["is_split_routing_enabled"] as? Bool ?? true)
-                self.isMidnightScheduleEnabled = json["midnight_schedule_enabled"] as? Bool ?? false
-                self.isSpeedAutoSwitchEnabled = json["speed_auto_switch_enabled"] as? Bool ?? true
-                self.isP2PShieldAutoKillEnabled = json["p2p_shield_auto_kill_enabled"] as? Bool ?? true
+                self.isSplitRoutingEnabled = false
+                self.isMidnightScheduleEnabled = false
+                self.isSpeedAutoSwitchEnabled = false
+                self.isP2PShieldAutoKillEnabled = false
             } else {
                 if !savedDate.isEmpty {
                     let oldDl = (json["dorm_in"] as? Double ?? (json["today_in"] as? Double ?? 0)) + (json["wifi_in"] as? Double ?? 0)
@@ -1736,7 +1372,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             "active_interface": activeInterface
         ]
         if let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted]) {
-            try? data.write(to: URL(fileURLWithPath: stateFilePath))
+            try? data.write(to: URL(fileURLWithPath: stateFilePath), options: .atomic)
         }
     }
 
@@ -1813,14 +1449,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             ipProcess.waitUntilExit()
             let ipOut = String(data: ipPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             
-            if ipOut.isEmpty {
-                let pWifiOn = Process()
-                pWifiOn.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-                pWifiOn.arguments = ["-setairportpower", "en0", "on"]
-                try? pWifiOn.run()
-                pWifiOn.waitUntilExit()
-            }
-            
+
             DispatchQueue.main.async {
                 let ifaceChanged = (self.activeInterface != foundInterface)
                 self.activeInterface = foundInterface
@@ -1853,8 +1482,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         for ptr in sequence(first: first, next: { $0.pointee.ifa_next }) {
             let ifa = ptr.pointee
             let ifaName = String(cString: ifa.ifa_name)
-            if ifaName == name && ifa.ifa_addr.pointee.sa_family == UInt8(AF_LINK) {
-                let data = unsafeBitCast(ifa.ifa_data, to: UnsafeMutablePointer<if_data>.self)
+            if ifaName == name, let address = ifa.ifa_addr, address.pointee.sa_family == UInt8(AF_LINK), let raw = ifa.ifa_data {
+                let data = raw.assumingMemoryBound(to: if_data.self)
                 return (UInt64(data.pointee.ifi_ibytes), UInt64(data.pointee.ifi_obytes))
             }
         }
@@ -2109,11 +1738,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             // 緊急急停煞車：僅在下載達到 90% (只剩不到 700 MB 即將斷網鎖卡) 時，才發出唯一一次緊急通知
             if dlUsagePct >= 90.0 && !isEmergencyBrakeActive {
                 isEmergencyBrakeActive = true
-                sendSystemMediaPause()
-                activateLidGuard(reason: "🚨 7GB 下載額度已達 90% 急停煞車", freezeRenderers: false)
                 sendSystemNotification(
                     title: "🚨 宿網額度僅剩 \(String(format: "%.0f MB", remDlGB * 1024))！",
-                    body: "已自動暫停背景影音與同步以防斷網鎖卡（Codex 享有豁免權不受影響）。",
+                    body: "請檢查非必要背景傳輸；安全模式不會停止任何程式。",
                     isCritical: true
                 )
             }
@@ -2252,7 +1879,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         }
         DispatchQueue.global(qos: .background).async { [weak self] in
             guard let self = self else { return }
-            let scriptPath = "/Users/liuchuxiang/電腦優化/traffic_monitor.py"
+            guard let scriptPath = Bundle.main.url(forResource: "traffic_monitor", withExtension: "py")?.path else {
+                DispatchQueue.main.async { self.top100Data = nil }
+                return
+            }
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
             process.arguments = [scriptPath, "--json"]
@@ -2283,7 +1913,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         if isLaunchAtLoginEnabled() {
             try? FileManager.default.removeItem(atPath: launchAgentPath)
         } else {
-            let appPath = "/Users/liuchuxiang/Applications/NCHUTraffic.app/Contents/MacOS/NCHUTraffic"
+            guard let appPath = Bundle.main.executableURL?.path else { return }
+            try? FileManager.default.createDirectory(at: URL(fileURLWithPath: launchAgentPath).deletingLastPathComponent(), withIntermediateDirectories: true)
+            let escapedAppPath = appPath.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
             let plistContent = """
             <?xml version="1.0" encoding="UTF-8"?>
             <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -2293,7 +1925,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 <string>tw.edu.nchu.dorm.traffic</string>
                 <key>ProgramArguments</key>
                 <array>
-                    <string>\(appPath)</string>
+                    <string>\(escapedAppPath)</string>
                 </array>
                 <key>RunAtLoad</key>
                 <true/>
@@ -2465,9 +2097,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     @objc func handleToggleWifiFailover() {
-        isAutoWifiFailoverEnabled = !isAutoWifiFailoverEnabled
-        savePersistedState()
-        pushDataToWebUI()
+        reportNetworkMutationUnavailable()
     }
 
     @objc func handleManualSwitchToWifi() {
@@ -2489,25 +2119,15 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     @objc func handleToggleSplitRouting() {
-        isSplitRoutingEnabled = !isSplitRoutingEnabled
-        savePersistedState()
-        applySplitRouting()
-        pushDataToWebUI()
+        reportNetworkMutationUnavailable()
     }
 
     @objc func handleToggleMidnightSchedule() {
-        isMidnightScheduleEnabled = !isMidnightScheduleEnabled
-        savePersistedState()
-        pushDataToWebUI()
+        reportNetworkMutationUnavailable()
     }
 
     @objc func handleToggleSpeedAutoSwitch() {
-        isSpeedAutoSwitchEnabled = !isSpeedAutoSwitchEnabled
-        savePersistedState()
-        pushDataToWebUI()
-        if isSpeedAutoSwitchEnabled {
-            evaluateDualNetworkSpeedAndSwitch(forceSpeedBurst: true, manualTrigger: false)
-        }
+        reportNetworkMutationUnavailable()
     }
 
     @objc func handleRunSpeedRaceNow() {
@@ -2515,8 +2135,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     @objc func handleToggleP2PShield() {
-        isP2PShieldAutoKillEnabled = !isP2PShieldAutoKillEnabled
-        savePersistedState()
+        isP2PShieldAutoKillEnabled = false
+        killCurrentP2PApp()
         pushDataToWebUI()
     }
 
@@ -2586,13 +2206,6 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     @objc func quitApp() {
-        if isWiredTemporarilyDisabled {
-            let pEnable = Process()
-            pEnable.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-            pEnable.arguments = ["-setnetworkserviceenabled", disabledWiredServiceName, "on"]
-            try? pEnable.run()
-            pEnable.waitUntilExit()
-        }
         savePersistedState()
         NSApplication.shared.terminate(nil)
     }
