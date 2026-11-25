@@ -93,6 +93,15 @@ class FoundationTests(unittest.TestCase):
             self.assertNotRegex(path.read_text(), r"\bProcess\s*\(")
         self.assertNotIn("140.120.251.126", (ROOT / "src/main.swift").read_text())
 
+    def test_legacy_bridge_has_no_markup_sink_or_dynamic_code(self):
+        html = (ROOT / "src/Resources/popover.html").read_text()
+        swift = (ROOT / "src/main.swift").read_text()
+        self.assertNotIn("innerHTML", html)
+        self.assertIn("connect-src 'none'", html)
+        self.assertIn("callAsyncJavaScript", swift)
+        self.assertNotIn("evaluateJavaScript(js", swift)
+        self.assertIn("navigationDelegate = self", swift)
+
     def test_portability(self):
         self.assertNotIn("/Users/", (ROOT / "src/main.swift").read_text())
         self.assertIn("scripts/traffic_monitor.py", (ROOT / "Makefile").read_text())

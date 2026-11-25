@@ -36,10 +36,11 @@ class TrafficHistoryManager {
             let database = try HistoryStore(url: directory.appendingPathComponent("history.sqlite"))
             let legacy = home.appendingPathComponent(".nchu_traffic_history.json")
             // Keep legacy source intact. Import cannot overwrite newer SQLite rows.
-            if FileManager.default.fileExists(atPath: legacy.path) {
-                do { try database.importLegacy(Data(contentsOf: legacy)) }
-                catch { healthy = false }
-            }
+            do {
+                if let data = try HistoryFileAccess.read(legacy, limit: 4 * 1024 * 1024) {
+                    try database.importLegacy(data)
+                }
+            } catch { healthy = false }
             store = database
             try refreshCache()
         } catch {
@@ -150,7 +151,7 @@ class ScriptHandler: NSObject, WKScriptMessageHandler {
 }
 
 // MARK: - 主應用程式
-class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
+class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var statusItem: NSStatusItem!
     var popover: NSPopover!
     var webView: WKWebView!
@@ -965,6 +966,14 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         }
     }
 
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        let bundled = Bundle.main.url(forResource: "popover", withExtension: "html")?.standardizedFileURL
+        let requested = navigationAction.request.url?.standardizedFileURL
+        decisionHandler(navigationAction.targetFrame?.isMainFrame == true &&
+                        requested?.isFileURL == true && requested == bundled ? .allow : .cancel)
+    }
+
     func setupPopoverUI() {
         popover = NSPopover()
         let availableHeight = NSScreen.main?.visibleFrame.height ?? 650
@@ -990,9 +999,11 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         let controller = WKUserContentController()
         controller.add(ScriptHandler(app: self), name: "nativeApp")
         config.userContentController = controller
+        config.websiteDataStore = .nonPersistent()
         
         let vc = NSViewController()
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 380, height: panelHeight), configuration: config)
+        webView.navigationDelegate = self
         webView.setValue(false, forKey: "drawsBackground")
         vc.view = webView
         popover.contentViewController = vc
@@ -1001,7 +1012,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             webView.loadHTMLString("<p>NetGuard: missing bundled interface.</p>", baseURL: nil)
             return
         }
-        webView.loadFileURL(htmlURL, allowingReadAccessTo: htmlURL.deletingLastPathComponent())
+        webView.loadFileURL(htmlURL, allowingReadAccessTo: htmlURL)
     }
 
     func updateQuickPanel() {
@@ -1021,7 +1032,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             ? "↓ " + formatSpeed(currentDownSpeed) + "   ↑ " + formatSpeed(currentUpSpeed) : "未量測"
         let state = QuickPanelState(networkName: scope == .unknown ? "網路歸屬未確認" : networkTypeName,
             connectionKnown: isConnected && workflowPowerGuard.allowsSampling,
-            scope: compatible ? scope : .unknown,
+            scope: compatible && !accountingOverflow && !persistenceBlocked ? scope : .unknown,
             received: dl, sent: ul, receiveLimit: dlQuotaBytes, sendLimit: ulQuotaBytes,
             speedText: speed, diagnostic: diagnostic, forecast: forecastPresentation().message,
             provider: providerStatusText, focusEnabled: workflowPowerGuard.focusEnabled, alertsEnabled: isAlertEnabled,
@@ -1785,7 +1796,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 "total": formatBytes(extTotal),
                 "dl": formatBytes(extTodayInBytes),
                 "ul": formatBytes(extTodayOutBytes),
-                "pct": "自由"
+                "pct": "配額未知"
             ])
             if (dormTodayInBytes + dormTodayOutBytes) > 0 {
                 histArray.append([
@@ -1922,11 +1933,11 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         let diffSign = diffVsYesterdayPct >= 0 ? "+" : ""
         let chartData: [String: Any] = [
             "days": chartDays,
-            "avg7DayStr": String(format: "%.1f GB（有紀錄日）", avg7DayGB),
+            "avg7DayStr": String(format: "%.1f GiB（有紀錄日）", avg7DayGB),
             "diffVsYesterdayStr": yesterdayTotalBytes > 0 ? String(format: "%@%.0f%%", diffSign, diffVsYesterdayPct) : "無法比較",
             "diffTrend": diffTrend,
-            "maxWeekStr": String(format: "%.1f GB (%@)", maxBytesVal / (1024 * 1024 * 1024), maxBytesDateLabel),
-            "quotaGBStr": String(format: "%.0f GB", totalQuotaBytes / (1024 * 1024 * 1024))
+            "maxWeekStr": String(format: "%.1f GiB (%@)", maxBytesVal / (1024 * 1024 * 1024), maxBytesDateLabel),
+            "quotaGBStr": String(format: "%.0f GiB", totalQuotaBytes / (1024 * 1024 * 1024))
         ]
         
         let pingFresh = lastPingUptime.map { ProcessInfo.processInfo.systemUptime - $0 <= 120 } ?? false
@@ -1942,6 +1953,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             "isDorm": isDormNetwork,
             "isCampusWifi": isCampusWifi,
             "isQuotaRestricted": isQuotaRestricted,
+            "localEstimateAvailable": !accountingOverflow && !persistenceBlocked,
             "networkTypeName": networkTypeName,
             "providerStatus": providerStatusText,
             "focusEnabled": workflowPowerGuard.focusEnabled,
@@ -2015,11 +2027,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             "chartData": chartData
         ]
         
-        if let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: []),
-           let jsonStr = String(data: jsonData, encoding: .utf8) {
-            let js = "if (window.updateStats) { window.updateStats(\(jsonStr)); }"
-            webView?.evaluateJavaScript(js, completionHandler: nil)
-        }
+        webView?.callAsyncJavaScript("if (window.updateStats) { window.updateStats(stats); }",
+                                     arguments: ["stats": payload], in: nil, contentWorld: .page,
+                                     completionHandler: nil)
     }
 
     @objc func systemDidWake() {
@@ -2048,12 +2058,11 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     func loadPersistedState() {
         let today = getTodayString()
         let url = URL(fileURLWithPath: stateFilePath)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            persistenceStatus = "新紀錄"
-            return
-        }
         do {
-            let data = try Data(contentsOf: url)
+            guard let data = try HistoryFileAccess.read(url, limit: 1_048_576) else {
+                persistenceStatus = "新紀錄"
+                return
+            }
             let usage = try UsageMigration.decode(data)
             guard usage.date <= today else { throw UsageMigrationError.invalidDate }
             let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
@@ -2100,7 +2109,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                     Double(usage.externalIn) + Double(usage.unattributedIn)
                 let ul = Double(usage.dormOut) + Double(usage.wifiOut) +
                     Double(usage.externalOut) + Double(usage.unattributedOut)
-                if dl + ul > 0 || usage.measuredSampleCount > 0 {
+                if json["accounting_overflow"] as? Bool != true && (dl + ul > 0 || usage.measuredSampleCount > 0) {
                     guard TrafficHistoryManager.shared.recordDay(date: usage.date, dl: dl, ul: ul, preserveExisting: true) else {
                         throw HistoryStoreError.database("previous day history unavailable")
                     }
@@ -2503,7 +2512,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 let totalDl = dormTodayInBytes + wifiTodayInBytes + extTodayInBytes + unattributedInBytes
                 let totalUl = dormTodayOutBytes + wifiTodayOutBytes + extTodayOutBytes + unattributedOutBytes
                 if totalDl + totalUl > 0 || measuredSampleCount > 0 {
-                    if !TrafficHistoryManager.shared.recordDay(date: currentDateString, dl: totalDl, ul: totalUl, scopes: scopedHistoryRows()) {
+                    if accountingOverflow || !TrafficHistoryManager.shared.recordDay(date: currentDateString, dl: totalDl, ul: totalUl, scopes: scopedHistoryRows()) {
                         savePersistedState()
                         if persistenceStatus != "本機紀錄已儲存" { persistenceBlocked = true }
                         // Preserve the existing daily file when history cannot be saved.
@@ -2765,11 +2774,11 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     func formatBytes(_ b: Double) -> String {
         if b >= 1024 * 1024 * 1024 {
-            return String(format: "%.2f GB", b / (1024 * 1024 * 1024))
+            return String(format: "%.2f GiB", b / (1024 * 1024 * 1024))
         } else if b >= 1024 * 1024 {
-            return String(format: "%.1f MB", b / (1024 * 1024))
+            return String(format: "%.1f MiB", b / (1024 * 1024))
         } else if b >= 1024 {
-            return String(format: "%.0f KB", b / 1024)
+            return String(format: "%.0f KiB", b / 1024)
         } else {
             return String(format: "%.0f B", b)
         }
@@ -2823,17 +2832,17 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             
             switch displayMode {
             case 0:
-                button.title = String(format: "%@ %.2fG", statusIcon, displayGB)
+                button.title = String(format: "%@ %.2f GiB", statusIcon, displayGB)
             case 1:
-                button.title = String(format: "%@ 剩 %.2fG", statusIcon, displayGB)
+                button.title = String(format: "%@ 剩 %.2f GiB", statusIcon, displayGB)
             case 2:
                 button.title = String(format: "%@ ↓%@ ↑%@", statusIcon, formatSpeed(currentDownSpeed), formatSpeed(currentUpSpeed))
             case 3:
-                button.title = String(format: "%@ %.2fG", dotIcon, displayGB)
+                button.title = String(format: "%@ %.2f GiB", dotIcon, displayGB)
             case 4:
-                button.title = String(format: "%.2fG", displayGB)
+                button.title = String(format: "%.2f GiB", displayGB)
             default:
-                button.title = String(format: "%@ %.2fG", statusIcon, displayGB)
+                button.title = String(format: "%@ %.2f GiB", statusIcon, displayGB)
             }
         } else {
             // 非宿網 / 外部網路模式 (無配額限制，暢連無負擔)

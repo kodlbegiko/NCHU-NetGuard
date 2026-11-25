@@ -7,8 +7,8 @@ import Glibc
 
 /// Cooperating writers use a stable lock file, never the replaced data inode.
 /// No blocking on another writer; callers must report/retry a busy write.
-enum HistoryFileAccess {
-    static func withWriteLock<T>(directory: URL, _ body: () throws -> T) throws -> T {
+package enum HistoryFileAccess {
+    package static func withWriteLock<T>(directory: URL, _ body: () throws -> T) throws -> T {
         guard directory.isFileURL else { throw HistoryStoreError.invalidRecord }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let parent = open(directory.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
@@ -29,7 +29,7 @@ enum HistoryFileAccess {
               info.st_nlink == 1, info.st_uid == geteuid() else { throw HistoryStoreError.invalidRecord }
     }
 
-    static func read(_ url: URL, limit: Int) throws -> Data? {
+    package static func read(_ url: URL, limit: Int) throws -> Data? {
         let parent = open(url.deletingLastPathComponent().path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         if parent < 0 {
             if errno == ENOENT { return nil }

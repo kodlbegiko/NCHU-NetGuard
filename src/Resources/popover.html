@@ -2,6 +2,7 @@
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
   <style>
     :root {
       /* Dark Theme (Default) */
@@ -761,7 +762,7 @@
 
       <div style="display: flex; align-items: baseline; gap: 6px; margin: 4px 0 6px 0;">
         <span style="font-size: 34px; font-weight: 800; letter-spacing: -0.8px; color: var(--text-main); font-variant-numeric: tabular-nums;" id="rem-total">10.00</span>
-        <span style="font-size: 13px; color: var(--text-muted); font-weight: 500;" id="total-quota-limit">/ 10.00 GB</span>
+        <span style="font-size: 13px; color: var(--text-muted); font-weight: 500;" id="total-quota-limit">/ 10.00 GiB</span>
       </div>
 
       <div class="progress-track">
@@ -769,7 +770,7 @@
       </div>
 
       <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; margin-top: 5px;">
-        <span style="color: var(--text-sub); font-variant-numeric: tabular-nums; white-space: nowrap;" id="used-total-text">今日已載: 0 MB</span>
+        <span style="color: var(--text-sub); font-variant-numeric: tabular-nums; white-space: nowrap;" id="used-total-text">今日已載: 0 MiB</span>
         <span style="color: var(--speed-text); font-weight: 600; font-variant-numeric: tabular-nums; background: var(--speed-bg); padding: 2px 7px; border-radius: 5px; white-space: nowrap;" id="speed-indicator">⚡ ↓ 0 B/s  ↑ 0 B/s</span>
       </div>
 
@@ -791,12 +792,12 @@
           <span style="font-size: 9.5px; padding: 1px 5px; border-radius: 4px; background: var(--bubble-bg); color: var(--text-muted); white-space: nowrap;" id="sub-total-quota-limit">限 15G</span>
         </div>
         <div style="font-size: 18px; font-weight: 700; margin: 4px 0 2px 0; color: var(--text-main); font-variant-numeric: tabular-nums;" id="sub-rem-total">
-          15.00 <span style="font-size: 11px; font-weight: 500; color: var(--text-muted);">GB 剩</span>
+          15.00 <span style="font-size: 11px; font-weight: 500; color: var(--text-muted);">GiB 剩</span>
         </div>
         <div class="progress-track" style="height: 5px; margin: 4px 0;">
           <div class="progress-bar" id="sub-total-progress" style="width: 0.0%; background: linear-gradient(90deg, #10b981, #06b6d4);"></div>
         </div>
-        <div style="font-size: 10px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap;" id="sub-used-total-text">總計已用 0 MB</div>
+        <div style="font-size: 10px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap;" id="sub-used-total-text">總計已用 0 MiB</div>
       </div>
 
       <div class="card">
@@ -805,12 +806,12 @@
           <span style="font-size: 9.5px; padding: 1px 5px; border-radius: 4px; background: var(--bubble-bg); color: var(--text-muted); white-space: nowrap;" id="ul-quota-limit">限 5G</span>
         </div>
         <div style="font-size: 18px; font-weight: 700; margin: 4px 0 2px 0; color: var(--text-main); font-variant-numeric: tabular-nums;" id="rem-ul">
-          5.00 <span style="font-size: 11px; font-weight: 500; color: var(--text-muted);">GB 剩</span>
+          5.00 <span style="font-size: 11px; font-weight: 500; color: var(--text-muted);">GiB 剩</span>
         </div>
         <div class="progress-track" style="height: 5px; margin: 4px 0;">
           <div class="progress-bar" id="ul-progress" style="width: 0.0%; background: linear-gradient(90deg, #6366f1, #38bdf8);"></div>
         </div>
-        <div style="font-size: 10px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap;" id="used-ul-text">已傳 0 MB</div>
+        <div style="font-size: 10px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap;" id="used-ul-text">已傳 0 MiB</div>
       </div>
     </div>
   </div>
@@ -1049,8 +1050,8 @@
       if (titleEl && detEl) {
         var statusBadge = d.statusLevel === 'danger' ? '🔴 超標' : (d.statusLevel === 'warning' ? '🟡 警戒' : '🟢 正常');
         var dateLabel = d.isToday ? '🌟 今日 (' + d.shortDate + ')' : d.shortDate + ' (' + d.dayLabel + ')';
-        titleEl.innerHTML = dateLabel + ' ' + statusBadge;
-        detEl.innerHTML = '<b>' + d.totalStr + '</b> (↓' + d.dlStr + ' • ↑' + d.ulStr + ')';
+        titleEl.textContent = dateLabel + ' ' + statusBadge;
+        detEl.textContent = d.totalStr + ' (↓' + d.dlStr + ' • ↑' + d.ulStr + ')';
       }
     }
 
@@ -1069,7 +1070,7 @@
       focusButton.setAttribute('aria-pressed', data.focusEnabled ? 'true' : 'false');
       document.getElementById('workflow-status').textContent = data.workflowStatus || '監控狀態未知';
 
-      var isQuotaRestricted = (data.isQuotaRestricted === true || data.isDorm === true || data.isCampusWifi === true);
+      var isQuotaRestricted = data.localEstimateAvailable === true && data.isQuotaRestricted === true;
       if (isQuotaRestricted) {
         document.getElementById('dorm-view').style.display = 'block';
         document.getElementById('ext-view').style.display = 'none';
@@ -1109,7 +1110,7 @@
       if (data.remDlStr) document.getElementById('rem-total').innerText = data.remDlStr;
       if (data.quotaDlGB) {
         var totalLim = document.getElementById('total-quota-limit');
-        if (totalLim) totalLim.innerText = '/ ' + data.quotaDlGB + '.00 GB';
+        if (totalLim) totalLim.innerText = '/ ' + data.quotaDlGB + '.00 GiB';
       }
       if (data.dlPctStr) {
         document.getElementById('usage-pct').innerText = '已載 ' + data.dlPctStr;
@@ -1121,13 +1122,13 @@
       // Subcard 1: Total Quota (下 + 上)
       if (data.quotaTotalGB) {
         var subTotalLim = document.getElementById('sub-total-quota-limit');
-        if (subTotalLim) subTotalLim.innerText = '限 ' + data.quotaTotalGB + 'G';
+        if (subTotalLim) subTotalLim.innerText = '限 ' + data.quotaTotalGB + ' GiB';
         var qTip = document.getElementById('history-quota-tip');
-        if (qTip) qTip.innerText = '限額 ' + data.quotaTotalGB + ' GB';
+        if (qTip) qTip.innerText = '限額 ' + data.quotaTotalGB + ' GiB';
       }
       if (data.remTotalStr) {
         var subRemTotal = document.getElementById('sub-rem-total');
-        if (subRemTotal) subRemTotal.innerHTML = data.remTotalStr + ' <span style="font-size: 11px; font-weight: 500; color: var(--text-muted);">GB 剩</span>';
+        if (subRemTotal) subRemTotal.textContent = data.remTotalStr + ' GiB 剩';
       }
       if (data.usagePctStr) {
         var subTotalProg = document.getElementById('sub-total-progress');
@@ -1141,9 +1142,9 @@
       // Subcard 2: Upload Quota
       if (data.quotaUlGB) {
         var ulLim = document.getElementById('ul-quota-limit');
-        if (ulLim) ulLim.innerText = '限 ' + data.quotaUlGB + 'G';
+        if (ulLim) ulLim.innerText = '限 ' + data.quotaUlGB + ' GiB';
       }
-      if (data.remUlStr) document.getElementById('rem-ul').innerHTML = data.remUlStr + ' <span style="font-size: 11px; font-weight: 500; color: var(--text-muted);">GB 剩</span>';
+      if (data.remUlStr) document.getElementById('rem-ul').textContent = data.remUlStr + ' GiB 剩';
       if (data.ulPctStr) document.getElementById('ul-progress').style.width = data.ulPctStr;
       if (data.usedUlStr) document.getElementById('used-ul-text').innerText = '已傳 ' + data.usedUlStr;
 
@@ -1337,63 +1338,69 @@
 
         if (cd.days && cd.days.length > 0) {
           window._cachedChartDays = cd.days;
-          var barsHtml = '';
-          cd.days.forEach(function(d, index) {
-            // 計算長條高度：track 總高 50px，38px 代表 100% 配額
-            var pctNum = parseFloat(d.pctOfQuota) || 0;
-            var fillHeightPx = Math.max(3, Math.min(50, Math.round((pctNum / 100.0) * 38)));
-            var todayClass = d.isToday ? ' is-today' : '';
-            var fillClass = d.statusLevel || 'safe';
-            var displayVal = (parseFloat(d.totalGB) > 0.05 ? d.totalGB + 'G' : d.totalStr);
-            
-            barsHtml += '<div class="chart-col' + todayClass + '" onmouseover="showBarDetail(' + index + ')" onclick="showBarDetail(' + index + ')">' +
-              '<span class="col-top-val">' + displayVal + '</span>' +
-              '<div class="col-bar-track">' +
-                '<div class="col-bar-fill ' + fillClass + '" style="height: ' + fillHeightPx + 'px;"></div>' +
-              '</div>' +
-              '<div class="col-bottom-label">' + d.dayLabel + '<span class="col-bottom-date">' + d.shortDate + '</span></div>' +
-            '</div>';
+          const bars = document.getElementById('chart-bars-wrap');
+          bars.replaceChildren();
+          cd.days.slice(0, 7).forEach(function(d, index) {
+            const pct = Math.max(0, Math.min(132, parseFloat(d.pctOfQuota) || 0));
+            const col = document.createElement('div');
+            col.className = 'chart-col' + (d.isToday ? ' is-today' : '');
+            col.tabIndex = 0;
+            ['mouseover', 'click', 'focus'].forEach(event => col.addEventListener(event, () => showBarDetail(index)));
+            const top = document.createElement('span');
+            top.className = 'col-top-val';
+            top.textContent = d.totalStr || '未知';
+            const track = document.createElement('div');
+            track.className = 'col-bar-track';
+            const fill = document.createElement('div');
+            fill.className = 'col-bar-fill ' + (['safe','warning','danger'].includes(d.statusLevel) ? d.statusLevel : 'unknown');
+            fill.style.height = Math.max(3, Math.min(50, Math.round(pct / 100 * 38))) + 'px';
+            track.append(fill);
+            const label = document.createElement('div');
+            label.className = 'col-bottom-label';
+            label.textContent = d.dayLabel;
+            const date = document.createElement('span');
+            date.className = 'col-bottom-date';
+            date.textContent = d.shortDate;
+            label.append(date);
+            col.append(top, track, label);
+            bars.append(col);
           });
-          document.getElementById('chart-bars-wrap').innerHTML = barsHtml;
           showBarDetail(cd.days.length - 1);
         }
       }
 
       if (data.history && data.history.length > 0) {
-        var histHtml = '';
-        data.history.forEach(function(item) {
-          var barColor = '#10b981';
-          var statusDot = '🟢';
-          var pctWidth = item.pct;
-          var pctNum = parseFloat(item.pct) || 0;
-
-          if (item.pct === '自由') {
-            barColor = '#06b6d4';
-            statusDot = '🟢';
-            pctWidth = '100%';
-          } else if (pctNum >= 85) {
-            barColor = '#ef4444';
-            statusDot = '🔴';
-          } else if (pctNum >= 60) {
-            barColor = '#f59e0b';
-            statusDot = '🟡';
-          }
-
-          histHtml += '<div class="hist-item">' +
-            '<div class="hist-header">' +
-              '<span>' + statusDot + ' ' + item.label + ' <span style="font-size:9.5px; font-weight:normal; color:var(--text-muted);">(' + item.date + ')</span></span>' +
-              '<span style="font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, monospace; font-variant-numeric:tabular-nums; color:var(--text-main);">' + item.total + ' <span style="font-size:9.5px; font-weight:normal; color:var(--text-muted);">(' + item.pct + ')</span></span>' +
-            '</div>' +
-            '<div class="progress-track" style="height:4px; margin:4px 0 3px 0;">' +
-              '<div class="progress-bar" style="width:' + pctWidth + '; background:' + barColor + ';"></div>' +
-            '</div>' +
-            '<div class="hist-sub">' +
-              '<span>↓ 下載: ' + item.dl + '</span>' +
-              '<span>↑ 上傳: ' + item.ul + '</span>' +
-            '</div>' +
-          '</div>';
+        const history = document.getElementById('history-container');
+        history.replaceChildren();
+        data.history.slice(0, 32).forEach(function(item) {
+          const row = document.createElement('div');
+          row.className = 'hist-item';
+          const header = document.createElement('div');
+          header.className = 'hist-header';
+          const label = document.createElement('span');
+          label.textContent = item.label + ' (' + item.date + ')';
+          const total = document.createElement('span');
+          total.textContent = item.total + ' (' + item.pct + ')';
+          header.append(label, total);
+          const track = document.createElement('div');
+          track.className = 'progress-track';
+          track.style.height = '4px';
+          const fill = document.createElement('div');
+          fill.className = 'progress-bar';
+          const pct = parseFloat(item.pct);
+          fill.style.width = Number.isFinite(pct) ? Math.max(0, Math.min(100, pct)) + '%' : '0%';
+          fill.style.background = !Number.isFinite(pct) ? '#94a3b8' : pct >= 85 ? '#ef4444' : pct >= 60 ? '#f59e0b' : '#10b981';
+          track.append(fill);
+          const sub = document.createElement('div');
+          sub.className = 'hist-sub';
+          const dl = document.createElement('span');
+          dl.textContent = '↓ 下載: ' + item.dl;
+          const ul = document.createElement('span');
+          ul.textContent = '↑ 上傳: ' + item.ul;
+          sub.append(dl, ul);
+          row.append(header, track, sub);
+          history.append(row);
         });
-        document.getElementById('history-container').innerHTML = histHtml;
       }
     }
   </script>
