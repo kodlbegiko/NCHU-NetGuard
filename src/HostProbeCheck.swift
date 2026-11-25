@@ -63,23 +63,31 @@ enum HostProbeCheck {
 
     /// Explicit diagnostic: two snapshots of existing TCP connections, no
     /// generated network traffic. No raw socket or process details are printed.
-    static func runFlowCheck() -> Int32 {
+    static func runFlowCheck(transport: FlowTransport = .tcp) -> Int32 {
         func snapshot() -> ([TCPFlowCounter]?, TimeInterval) {
             let before = tree()
             let outcome = ProbeRunner.run("/usr/bin/nettop",
-                ["-m", "tcp", "-n", "-x", "-L", "1", "-J", "bytes_in,bytes_out,interface,state"], timeout: 5)
+                ["-m", transport.rawValue, "-n", "-x", "-L", "1", "-J", "bytes_in,bytes_out,interface,state"], timeout: 5)
             let uptime = ProcessInfo.processInfo.systemUptime
             let after = tree()
             guard let before, let after, case .success(let raw) = outcome else { return (nil, uptime) }
             return (TCPFlowParser.parse(raw, before: before.mapValues { $0.start },
-                after: after.mapValues { $0.start }), uptime)
+                after: after.mapValues { $0.start }, transport: transport), uptime)
         }
-        print("NETGUARD_TCP_FLOW_CHECK_V1")
+        let marker = "NETGUARD_" + transport.rawValue.uppercased() + "_FLOW_CHECK"
+        print(marker + "_V1")
         var accumulator = TCPFlowAccumulator()
         let first = snapshot()
         _ = accumulator.ingest(first.0, uptime: first.1)
         Thread.sleep(forTimeInterval: 1)
         let second = snapshot()
+        // A flow's interface is not proof of unique traffic: VPN/proxy layers
+        // can describe the same transfer. Never combine transports or use
+        // this output as a physical-interface or billing total.
+        let observedInterfaces = (first.0 ?? []) + (second.0 ?? [])
+        let tunnelCandidate = observedInterfaces.contains { TunnelEvidence.isTunnelCandidate($0.interface) }
+        print("tunnel_interface_candidate=" + (tunnelCandidate ? "observed" : "not_observed"))
+        print("overlap_exclusion=unverified")
         let result = accumulator.ingest(second.0, uptime: second.1)
         if let coverage = accumulator.coverage {
             print("prior_rows=\(coverage.priorRows) current_rows=\(coverage.currentRows) matched_rows=\(coverage.matchedRows)")
@@ -87,7 +95,7 @@ enum HostProbeCheck {
             print("matched_current_rows_fraction=\(coverage.matchedFraction) elapsed_seconds=\(coverage.elapsedSeconds)")
         }
         guard let totals = result else {
-            print("NETGUARD_TCP_FLOW_CHECK_INCONCLUSIVE")
+            print(marker + "_INCONCLUSIVE")
             return 2
         }
         for kind in totals.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
@@ -95,7 +103,7 @@ enum HostProbeCheck {
             guard let value = totals[kind] else { continue }
             print("\(kind.rawValue): received=\(value.received) sent=\(value.sent)")
         }
-        print("NETGUARD_TCP_FLOW_CHECK_OK")
+        print(marker + "_OK")
         return 0
     }
 
