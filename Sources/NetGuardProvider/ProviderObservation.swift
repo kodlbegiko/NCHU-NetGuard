@@ -31,7 +31,8 @@ public struct ProviderObservation: Codable, Equatable, Sendable {
     }
 
     public func isFresh(for day: String, now: Date, maxAge: TimeInterval = 600) -> Bool {
-        guard requestedDate == day, let stamp = retrievedAt else { return false }
+        guard maxAge.isFinite, maxAge >= 0, now.timeIntervalSinceReferenceDate.isFinite,
+              requestedDate == day, let stamp = retrievedAt else { return false }
         let fractional = ISO8601DateFormatter()
         fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let standard = ISO8601DateFormatter()

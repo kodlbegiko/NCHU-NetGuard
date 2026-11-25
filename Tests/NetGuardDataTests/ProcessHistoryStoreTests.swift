@@ -65,6 +65,24 @@ final class ProcessHistoryStoreTests: XCTestCase {
         }
     }
 
+    func testDirectDecodeRejectsOverflowAndInvalidName() {
+        for json in [
+            #"{"name":"Fixture","download":18446744073709551615,"upload":1}"#,
+            #"{"name":"","download":1,"upload":0}"#
+        ] {
+            XCTAssertThrowsError(try JSONDecoder().decode(ProcessHistoryRow.self, from: Data(json.utf8)))
+        }
+    }
+    func testOversizedHistoryPreserved() throws {
+        try withStore { store in
+            try FileManager.default.createDirectory(at: store.directory, withIntermediateDirectories: true)
+            let path = store.directory.appendingPathComponent("2026-11-25.json")
+            let payload = Data(repeating: 32, count: 2 * 1024 * 1024 + 1)
+            try payload.write(to: path)
+            XCTAssertThrowsError(try store.save(day: "2026-11-25", bucket: bucket(UUID())))
+            XCTAssertEqual(try Data(contentsOf: path), payload)
+        }
+    }
     func testRetentionUsesTaipeiDaysAndPreservesFutureAndForeignFiles() throws {
         try withStore { store in
             for day in ["2026-11-18", "2026-11-19", "2026-11-25", "2026-11-26"] {

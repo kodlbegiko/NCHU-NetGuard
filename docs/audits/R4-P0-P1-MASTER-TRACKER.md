@@ -29,3 +29,11 @@ Status vocabulary: Not Started / In Progress / Implemented / Tested / CI Verifie
 | R4-P1-QA | P1 | QA/integration | Exact closure HEAD local and independent CI, regression review | In Progress |
 
 Next: review exact branch CI, audit all trust boundaries, verify recovery journal durability/locking and lifecycle, provider policy, module migration and contracts. No main merge, paid services, real network mutation, or freeze approval implied.
+
+## Closure batch 2 (candidate, not CI verified)
+- P0 ranking ambiguity: reject duplicate identity rows even when one is malformed; regression added.
+- P0/P1 CLI honesty: missing/invalid local state and campus-only identity are not reliable dorm measurements; return unknown while retaining separate provider payload; regression added. Legacy CLI dorm quota output is intentionally suppressed pending verified scope; this is a conservative behavior change, not complete CLI parity.
+- P1 provider freshness: reject non-finite or negative age window; regression added.
+- P1 history: bounded read and validated row decoder prevent oversized reads and direct decoding of overflowing values; two regressions added.
+- P1 contract: golden fixtures now compare emitted field sets and semantic JSON values, not just decode round trips. Registry/freeze and owner approval remain open.
+- Official NCHU evidence recorded separately; live policy and billing reconciliation remain open.

@@ -35,6 +35,22 @@ class FoundationTests(unittest.TestCase):
         self.assertIsNone(result["in_top1000"])
         self.assertEqual(result["status"], "unavailable")
 
+    @patch.object(monitor, "load_state", return_value=None)
+    @patch.object(monitor.subprocess, "check_output", side_effect=["interface: en0", "192.0.2.1"])
+    def test_missing_state_never_means_zero(self, _route, _state):
+        result = monitor.query_traffic()
+        self.assertEqual(result["status"], "local_usage_unknown")
+        self.assertNotIn("used_total", result)
+
+    @patch.object(monitor, "get_top100_data", return_value={"status": "unavailable"})
+    @patch.object(monitor, "load_state", return_value={"dorm_in": 10, "dorm_out": 5})
+    @patch.object(monitor.subprocess, "check_output", side_effect=["interface: en0", "140.120.1.2"])
+    def test_campus_ip_alone_does_not_prove_dorm(self, _route, _state, provider):
+        result = monitor.query_traffic()
+        self.assertEqual(result["status"], "local_usage_unknown")
+        self.assertNotIn("rem_total", result)
+        provider.assert_called_once_with("140.120.1.2")
+
     def test_json_cli(self):
         output = subprocess.check_output([sys.executable, str(ROOT / "scripts/traffic_monitor.py"), "--json"], text=True, timeout=20)
         result = json.loads(output)

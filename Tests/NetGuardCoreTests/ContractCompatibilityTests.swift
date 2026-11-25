@@ -9,6 +9,9 @@ final class ContractCompatibilityTests: XCTestCase {
         let encoded = try JSONEncoder().encode(original)
         XCTAssertEqual(try T.decodeValidated(encoded), original)
         var fields = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let emitted = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertEqual(Set(emitted.keys), Set(fields.keys), "v1 wire field set changed")
+        XCTAssertEqual(emitted as NSDictionary, fields as NSDictionary, "v1 wire values changed")
         fields["futureOptionalField"] = "ignored"
         XCTAssertEqual(try T.decodeValidated(JSONSerialization.data(withJSONObject: fields)), original)
         fields["schemaVersion"] = 2

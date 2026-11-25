@@ -6,6 +6,13 @@ public struct ProcessHistoryRow: Codable, Equatable, Sendable, Identifiable {
     public let upload: UInt64
     public var id: String { name }
     public var total: UInt64 { download + upload }
+    private enum CodingKeys: String, CodingKey { case name, download, upload }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(name: values.decode(String.self, forKey: .name),
+                      download: values.decode(UInt64.self, forKey: .download),
+                      upload: values.decode(UInt64.self, forKey: .upload))
+    }
     public init(name: String, download: UInt64, upload: UInt64) throws {
         let (_, overflow) = download.addingReportingOverflow(upload)
         guard !name.isEmpty, name.utf8.count <= 128,
@@ -128,7 +135,14 @@ public struct ProcessHistoryStore: Sendable {
         let attrs = try FileManager.default.attributesOfItem(atPath: path.path)
         guard attrs[.type] as? FileAttributeType == .typeRegular,
               let size = attrs[.size] as? NSNumber, size.intValue <= maxBytes else { throw HistoryStoreError.invalidRecord }
-        let data = try Data(contentsOf: path)
+        let handle = try FileHandle(forReadingFrom: path)
+        defer { try? handle.close() }
+        var data = Data()
+        while data.count <= maxBytes {
+            let chunk = try handle.read(upToCount: min(65_536, maxBytes + 1 - data.count)) ?? Data()
+            if chunk.isEmpty { break }
+            data.append(chunk)
+        }
         guard data.count <= maxBytes else { throw HistoryStoreError.invalidRecord }
         let decoded = try JSONDecoder().decode([ProcessHistoryBucket].self, from: data)
         guard decoded.count <= 512, Set(decoded.map(\.id)).count == decoded.count else { throw HistoryStoreError.invalidRecord }

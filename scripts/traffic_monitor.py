@@ -42,16 +42,12 @@ def load_history():
 
 def load_state():
     today = get_today_string()
-    default_state = {
-        "date": today,
-        "today_in": 0.0,
-        "today_out": 0.0
-    }
+    default_state = None
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                if data.get("date") == today:
+                if isinstance(data, dict) and data.get("date") == today and data.get("schema_version", 1) == 1:
                     return data
         except Exception:
             pass
@@ -116,8 +112,11 @@ def parse_ranking(html, ip_addr):
     parser = RankingParser()
     parser.feed(html)
     matches = []
-    for row in parser.rows:
-        if len(row) != 6 or row[2] != target or not re.fullmatch(r"[1-9][0-9]{0,5}", row[0]):
+    identity_rows = [row for row in parser.rows if len(row) >= 3 and row[2] == target]
+    if len(identity_rows) != 1:
+        return {"status": "not_found_or_unrecognized", "in_top1000": None}
+    for row in identity_rows:
+        if len(row) != 6 or not re.fullmatch(r"[1-9][0-9]{0,5}", row[0]):
             continue
         values = []
         for field in row[3:]:
@@ -205,16 +204,26 @@ def query_traffic():
     state = load_state()
     if not ip:
         return {"schema_version": 1, "status": "network_unknown", "top100": {"status": "unavailable", "in_top1000": None}}
-    is_dorm = ip.startswith("140.120.")
-    if is_dorm:
-        local_in = state.get("dorm_in", state.get("today_in", 0.0))
-        local_out = state.get("dorm_out", state.get("today_out", 0.0))
-    else:
-        local_in = state.get("ext_in", 0.0)
-        local_out = state.get("ext_out", 0.0)
+    try:
+        campus_candidate = ipaddress.ip_address(ip) in ipaddress.ip_network("140.120.0.0/16")
+    except ValueError:
+        return {"schema_version": 1, "status": "network_unknown", "top100": {"status": "unavailable", "in_top1000": None}}
+    # A campus address alone does not distinguish campus Wi-Fi from a dorm.
+    top100 = get_top100_data(ip) if campus_candidate else {"in_top1000": None, "status": "not_applicable"}
+    unknown = {"schema_version": 1, "status": "local_usage_unknown", "date": get_today_string(),
+               "iface": iface, "ip": ip, "top100": top100}
+    if state is None or campus_candidate:
+        # Keep ranking observations available to the Swift caller independently
+        # of local scope attribution. Do not guess a dorm quota from an IP.
+        return unknown
+    local_in = state.get("ext_in")
+    local_out = state.get("ext_out")
+    if any(type(value) is not int or not 0 <= value <= 2**64 - 1 for value in (local_in, local_out)):
+        return unknown
     local_total = local_in + local_out
-    
-    top100 = get_top100_data(ip) if is_dorm else {"in_top1000": None, "status": "not_applicable"}
+    if local_total > 2**64 - 1:
+        return unknown
+    is_dorm = False
     
     in_bytes, out_bytes, total_bytes = local_in, local_out, local_total
     
@@ -250,6 +259,12 @@ def display_report():
     data = query_traffic()
     if data.get("status") == "network_unknown":
         print("網路狀態未知；無法可靠估計配額。")
+        return
+    if data.get("status") == "local_usage_unknown":
+        print("本機用量或網路歸屬未知；不估算校方剩餘配額。")
+        ranking = data.get("top100", {})
+        if ranking.get("status") == "listed":
+            print(f"校方榜單第 {ranking['rank']} 名（單位與統計時間未驗證）")
         return
     top_apps = get_top_apps()
     history = load_history()
@@ -315,6 +330,8 @@ def display_report():
     else:
         print(" ✅ \033[1;32m校內榜單：未取得可驗證的匹配資料，狀態未知\033[0m")
         
+    if not is_dorm:
+        return
     usage_pct = (data['used_total'] / data['total_quota']) * 100
     if usage_pct < 60:
         print(" 💡 \033[32m本機估計用量較低；實際校方配額仍需確認。\033[0m")
