@@ -127,7 +127,25 @@ public final class HistoryStore {
     /// Snapshot using SQLite's backup API, never by copying a live DB file.
     /// The destination must not exist. The caller owns its parent directory.
     public func backup(to destination: URL) throws {
-        guard let db, destination.isFileURL else { throw HistoryStoreError.database("backup destination") }
+        guard let db else { throw HistoryStoreError.database("backup source") }
+        try Self.backup(source: db, to: destination)
+    }
+
+    /// Independent read-only source connection for a background user export.
+    public static func backup(from source: URL, to destination: URL) throws {
+        guard source.isFileURL else { throw HistoryStoreError.database("backup source") }
+        var connection: OpaquePointer?
+        let status = sqlite3_open_v2(source.path, &connection, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil)
+        guard status == SQLITE_OK, let connection else {
+            if let connection { sqlite3_close(connection) }
+            throw HistoryStoreError.database("backup source open")
+        }
+        defer { sqlite3_close(connection) }
+        try backup(source: connection, to: destination)
+    }
+
+    private static func backup(source db: OpaquePointer, to destination: URL) throws {
+        guard destination.isFileURL else { throw HistoryStoreError.database("backup destination") }
         let fm = FileManager.default
         let temporary = destination.deletingLastPathComponent().appendingPathComponent(".netguard-backup-" + UUID().uuidString)
         guard !fm.fileExists(atPath: destination.path),
