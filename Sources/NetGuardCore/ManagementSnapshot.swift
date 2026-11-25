@@ -38,6 +38,8 @@ public struct ManagementSnapshot: Equatable, Sendable {
     public let connectionStatus: String
     public let latencyStatus: String
     public let tunnelStatus: String
+    public let echoStatus: String
+    public let dnsStatus: String
     public let findings: [DiagnosticFinding]
     public let providerStatus: String
     public let focusEnabled: Bool
@@ -47,13 +49,16 @@ public struct ManagementSnapshot: Equatable, Sendable {
                 processRows: [ProcessSampleRow], processAge: TimeInterval?,
                 focusEnabled: Bool, diagnosticInput: DiagnosticInput, providerStatus: String,
                 rates: [String: ObservedInterfaceRate] = [:], tunnelCandidates: [String] = [],
-                sessionUsage: ProcessUsageReport? = nil) {
+                sessionUsage: ProcessUsageReport? = nil,
+                echoStatus: String = "ICMP 尚未量測", dnsStatus: String = "DNS 尚未量測") {
         self.interfaces = scopes.keys.sorted().map {
             ObservedInterfaceRow(name: $0, scope: scopes[$0] ?? .unknown,
                                  isDefault: connectionKnown && $0 == defaultInterface, rate: rates[$0])
         }
         self.connectionStatus = connectionKnown ? "已辨識預設 IPv4 路由；不代表網際網路可用" : "連線尚未確認"
         self.latencyStatus = latencyStatus
+        self.echoStatus = echoStatus
+        self.dnsStatus = dnsStatus
         self.tunnelStatus = TunnelEvidence.description(defaultInterface: connectionKnown ? defaultInterface : "", candidates: tunnelCandidates)
         self.focusEnabled = focusEnabled
         self.sessionUsage = sessionUsage
