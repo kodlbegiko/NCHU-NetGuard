@@ -19,6 +19,7 @@ public struct QuickPanelState: Equatable, Sendable {
     public let download: QuickPanelBudget?
     public let upload: QuickPanelBudget?
     public let speedText: String
+    public let throughput: [ThroughputPoint]
     public let diagnostic: String
     public let forecast: String
     public let provider: String
@@ -28,12 +29,13 @@ public struct QuickPanelState: Equatable, Sendable {
     public init(networkName: String, connectionKnown: Bool, scope: NetworkScope,
                 received: Double, sent: Double, receiveLimit: Double, sendLimit: Double,
                 speedText: String, diagnostic: String, forecast: String, provider: String,
-                focusEnabled: Bool, alertsEnabled: Bool) {
+                focusEnabled: Bool, alertsEnabled: Bool, throughput: [ThroughputPoint] = []) {
         self.networkName = connectionKnown ? networkName : "網路尚未確認"
         let eligible = connectionKnown && (scope == .dorm || scope == .campusWifi)
         self.download = eligible ? QuickPanelBudget(used: received, limit: receiveLimit) : nil
         self.upload = eligible ? QuickPanelBudget(used: sent, limit: sendLimit) : nil
         self.speedText = connectionKnown ? speedText : "未量測"
+        self.throughput = connectionKnown ? throughput : []
         self.diagnostic = diagnostic
         self.forecast = eligible ? forecast : "配額未確認"
         self.provider = provider
