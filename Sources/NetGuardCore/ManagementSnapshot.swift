@@ -59,3 +59,26 @@ public struct ManagementSnapshot: Equatable, Sendable {
         self.providerStatus = providerStatus
     }
 }
+
+
+public enum ProcessSampleOrdering: Int, Sendable {
+    case descendingBytes = 0, ascendingBytes = 1, name = 2
+}
+
+public enum ProcessSamplePresentation {
+    /// Filter only the already-observed snapshot; never suggest a full process inventory.
+    public static func visible(_ rows: [ProcessSampleRow], query: String, order: ProcessSampleOrdering) -> [ProcessSampleRow] {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return rows.filter { term.isEmpty || $0.name.localizedCaseInsensitiveContains(term) }.sorted {
+            switch order {
+            case .descendingBytes:
+                if $0.bytes != $1.bytes { return $0.bytes > $1.bytes }
+            case .ascendingBytes:
+                if $0.bytes != $1.bytes { return $0.bytes < $1.bytes }
+            case .name: break
+            }
+            let comparison = $0.name.localizedStandardCompare($1.name)
+            return comparison == .orderedSame ? $0.name < $1.name : comparison == .orderedAscending
+        }
+    }
+}
