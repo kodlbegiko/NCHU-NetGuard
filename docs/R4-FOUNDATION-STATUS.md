@@ -256,3 +256,8 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 
 - Added TCPFlowEvidence.swift, strict experimental numeric IPv4 established TCP hierarchy parser and adjacent matched monotonic delta accumulator; three synthetic fixture tests. Explicit local `make flow-check` samples twice via fixed read-only nettop/ps invocations, outputs only directional address-class aggregates or inconclusive status. Not part of normal monitoring, no raw output persisted, no generated traffic, no admin request, no packet capture. Actual CSV format, tuple reuse, completeness, IPv6/UDP and VPN overlap remain unresolved; no claim of real LAN/Internet separation.
 - Prior integrated CI 45644908290 still queued at last check. Iterations 44–45 staged pending prior CI and candidate validation. No paid services or release.
+
+## Forty-sixth iteration
+
+- Fixed the CI smoke initialization failure by setting explicit content size and deferring hosting view geometry checks. Integrated repair-only SHA 41b278c795112de65865b4a6c3ad9299030ff89e; run 45647338414 pending. Previous CI 45644908290 passed 161 Swift tests, static/Python, app build and bundle but failed smoke; host check skipped.
+- Experimental dual-stack TCP adapter adds bracketed IPv6 canonicalization and accepted-row continuity metrics, including matched, new, disappeared and reset/changed rows. Two synthetic tests. No real socket generation identifier, scoped literals, UDP or full traffic coverage. No active ledger updates. Candidate branch carries the same smoke repair content but requires merge ancestry reconciliation and exact-head CI before integration. No paid services or release.
