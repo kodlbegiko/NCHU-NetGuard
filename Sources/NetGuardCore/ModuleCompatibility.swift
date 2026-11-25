@@ -76,4 +76,6 @@ public typealias DualStackEvidence = NetGuardObservation.DualStackEvidence
 public typealias InterfaceAddressEvidence = NetGuardObservation.InterfaceAddressEvidence
 public typealias ConnectionSessionMeter = NetGuardTraffic.ConnectionSessionMeter
 public typealias ConnectionSessionReading = NetGuardTraffic.ConnectionSessionReading
+public typealias SavedConnectionSession = NetGuardData.SavedConnectionSession
+public typealias ConnectionHistoryStore = NetGuardData.ConnectionHistoryStore
 #endif
