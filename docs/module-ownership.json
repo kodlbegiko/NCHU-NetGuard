@@ -33,7 +33,8 @@
     "DualStackEvidence.swift": 2,
     "ConnectionSessionMeter.swift": 1,
     "ConnectionHistoryStore.swift": 7,
-    "ConnectionBudgetPeriod.swift": 7
+    "ConnectionBudgetPeriod.swift": 7,
+    "TrafficEventDetector.swift": 2
   },
   "shared_paths": {
     "src/main.swift": 0,
@@ -102,6 +103,7 @@
     "DualStackEvidence.swift": "NetGuardObservation",
     "ConnectionSessionMeter.swift": "NetGuardTraffic",
     "ConnectionHistoryStore.swift": "NetGuardData",
-    "ConnectionBudgetPeriod.swift": "NetGuardData"
+    "ConnectionBudgetPeriod.swift": "NetGuardData",
+    "TrafficEventDetector.swift": "NetGuardObservation"
   }
 }
