@@ -6,7 +6,7 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [.library(name: "NetGuardCore", targets: ["NetGuardCore"])],
     targets: [
-        .target(name: "NetGuardCore"),
+        .target(name: "NetGuardCore", linkerSettings: [.linkedLibrary("sqlite3")]),
         .testTarget(name: "NetGuardCoreTests", dependencies: ["NetGuardCore"])
     ]
 )
