@@ -246,3 +246,8 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 
 - Added HostProbeCheck.swift and --netguard-host-check / make host-check for read-only local compatibility evidence before production delegate initialization. Coarse outcomes only; no raw probe output or identity disclosure. Exit 0 is limited compatibility evidence, exit 2 is inconclusive, not acceptance. CI logs the check after native fixture smoke; hosted output is not a replacement for physical-device verification. No additional automated regression cases in this iteration.
 - Prior integrated CI 45643965729 completed successfully including Swift tests, Python/static checks, app build and bundle verification. Iterations 42–43 eligible for non-forced integration and fresh exact-HEAD verification. Fixture UI smoke and real-host check remain unverified on the new revision. No paid services or release.
+
+## Forty-fourth iteration
+
+- Added DestinationEvidence.swift: numeric IPv4/IPv6 address-space classification, mapped IPv4 handling and bounded, duplicate-rejecting, overflow-checked directional measured-flow aggregation. Four regression tests and module ownership/aliases. Public/private address space does not prove actual path, reachability or billing; the special-use range list is conservative and not exhaustive. No live flow source, actual LAN/Internet byte split or modification to the physical ledger. UI explicitly reports the split as unmeasured.
+- Prior integrated CI 45644908290 was queued at last check. Candidate remains staged until prior CI and exact candidate verification. No paid services, packet capture, new privileges or release.
