@@ -3,6 +3,7 @@ import Foundation
 
 final class ManagementModel: ObservableObject {
     @Published var snapshot: ManagementSnapshot?
+    @Published var eventRules = TrafficEventRules.standard
     @Published var automation: AutomationSnapshot?
     @Published var connectionSession: ConnectionSessionReading?
     @Published var connectionSessionStatus = "尚未開始"
@@ -26,6 +27,7 @@ struct ManagementView: View {
     let setProcessBackground: (Bool) -> Void
     let reloadHistory: () -> Void
     let testDNS: () -> Void
+    let configureTrafficEvents: (TrafficEventRules) -> Void
     let clearTrafficEvents: () -> Void
     let startConnectionSession: (String, String) -> Void
     let stopConnectionSession: () -> Void
@@ -55,6 +57,11 @@ struct ManagementView: View {
     @State private var historyHour = -1
     @State private var confirmDeleteHistory = false
     @State private var showTrafficEvents = false
+    @State private var showEventRules = false
+    @State private var highRate = "5"
+    @State private var highDuration = "10"
+    @State private var surgeRate = "1"
+    @State private var surgeFactor = "4"
     @State private var confirmClearTrafficEvents = false
 
     private func visibleProcesses(_ rows: [ProcessSampleRow]) -> [ProcessSampleRow] {
@@ -488,8 +495,9 @@ struct ManagementView: View {
     private func trafficEventsPanel(_ events: [TrafficObservationEvent]) -> some View {
         DisclosureGroup("流量事件（本次執行）", isExpanded: $showTrafficEvents) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("持續高流量：合計速率至少 5 MiB/s 持續 10 秒；突增：至少 1 MiB/s 且達前段觀測中位數 4 倍。這些是本機觀測規則，不代表惡意流量或違規。")
+                Text("目前規則：持續高流量 \(model.eventRules.highMiB) MiB/s、\(model.eventRules.highSeconds) 秒；突增至少 \(model.eventRules.surgeMiB) MiB/s 且達基準 \(model.eventRules.surgeMultiplier) 倍。不是惡意流量或違規判定。")
                     .font(.caption2).foregroundStyle(.secondary)
+                eventRulesPanel
                 if events.isEmpty {
                     Text("尚無符合規則的觀測事件；不代表網路安全或完整覆蓋。").font(.caption)
                 }
@@ -527,6 +535,48 @@ struct ManagementView: View {
         } message: {
             Text("清除事件及偵測基準，不變更流量帳本。")
         }
+    }
+
+
+    private var proposedEventRules: TrafficEventRules? {
+        guard let h = Int(highRate), let t = Int(highDuration),
+              let s = Int(surgeRate), let f = Int(surgeFactor) else { return nil }
+        return TrafficEventRules(highMiB: h, highSeconds: t, surgeMiB: s, surgeMultiplier: f)
+    }
+
+    private var eventRulesPanel: some View {
+        DisclosureGroup("調整偵測門檻", isExpanded: $showEventRules) {
+            VStack(alignment: .leading, spacing: 8) {
+                TextField("高流量 MiB/s（1–1024）", text: $highRate)
+                TextField("持續秒數（5–120）", text: $highDuration)
+                TextField("突增最低 MiB/s（1–1024）", text: $surgeRate)
+                TextField("突增倍率（2–20）", text: $surgeFactor)
+                HStack {
+                    Button("套用門檻") {
+                        if let rules = proposedEventRules { configureTrafficEvents(rules) }
+                    }.disabled(proposedEventRules == nil)
+                    Button("恢復預設") {
+                        configureTrafficEvents(.standard)
+                        loadEventRuleFields(.standard)
+                    }
+                }
+                if proposedEventRules == nil {
+                    Text("請輸入範圍內的整數。").font(.caption)
+                }
+                Text("套用後重新建立觀測基準；先前事件仍保留，門檻不會回溯重算。")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .onChange(of: showEventRules) { _, expanded in
+            if expanded { loadEventRuleFields(model.eventRules) }
+        }
+    }
+
+    private func loadEventRuleFields(_ rules: TrafficEventRules) {
+        highRate = String(rules.highMiB)
+        highDuration = String(rules.highSeconds)
+        surgeRate = String(rules.surgeMiB)
+        surgeFactor = String(rules.surgeMultiplier)
     }
 
 }
