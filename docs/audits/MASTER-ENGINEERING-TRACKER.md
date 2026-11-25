@@ -27,3 +27,5 @@ Baseline verified candidate: 07ca43ef09e1fd4fa661c1df5d0cf4a5eeb83140, [CI 45656
 | R6-EXTENSION | 6 / 2,3 | P2 | Public API feasibility, entitlement, mock and authorized device tests | In Progress for design; activation not authorized |
 
 Acceptance targets and dependencies follow ROADMAP.md, UX-PRINCIPLES.md, AGENTS.md and the full engineering plan. The rows are work packages, not atomic closure counts. Split them into findings with tests and SHA when work advances. Independent CI and device evidence must remain distinct. No P0/P1 close or parallel unlock implied.
+
+- R4-TRAFFIC: local day rollback holds the accepted ledger and disables estimates/alerts; finalized history is insert-if-absent. Persist affirmative per-scope measured interval evidence so absence is not zero. Main status, quick panel, personal budget, quota assessment and WebView estimate availability consume the guard. Alert dispatch now requires successful reservation write. Legacy history/advanced chart completeness and real-device clock/coverage validation remain open. Added pure module regression tests; exact CI pending.

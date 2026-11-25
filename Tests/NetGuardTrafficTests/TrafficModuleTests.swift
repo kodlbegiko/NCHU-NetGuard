@@ -60,6 +60,24 @@ final class TrafficModuleTests: XCTestCase {
             .init(identity: "x", route: .internet, bytes: .init(received: UInt64.max, sent: 1))
         ], boundary: .socketPayload))
     }
+    func testBackwardDayNeverRequestsRollover() {
+        XCTAssertEqual(LocalDayTransition.evaluate(previous: "2026-11-26", observed: "2026-11-25"), .backward)
+        XCTAssertEqual(LocalDayTransition.evaluate(previous: "2026-11-26", observed: "2026-11-26"), .unchanged)
+        XCTAssertEqual(LocalDayTransition.evaluate(previous: "2026-11-26", observed: "2026-11-27"), .forward)
+        XCTAssertEqual(LocalDayTransition.evaluate(previous: "", observed: "2026-11-27"), .forward)
+    }
+    func testCoverageDistinguishesMeasuredZeroAndUnknown() throws {
+        var coverage = DailyScopeCoverage()
+        coverage.observe(.init(scope: .dorm, delta: .init(received: 0, sent: 0, quality: .unknown)))
+        XCTAssertFalse(coverage.observed(.dorm))
+        coverage.observe(.init(scope: .dorm, delta: .init(received: 0, sent: 0, quality: .measured)))
+        coverage.observe(.init(scope: .unknown, delta: .init(received: 10, sent: 0, quality: .measured)))
+        XCTAssertTrue(coverage.observed(.dorm))
+        XCTAssertFalse(coverage.observed(.unknown))
+        XCTAssertEqual(DailyScopeCoverage.restore(coverage.persisted), coverage)
+        XCTAssertNil(DailyScopeCoverage.restore(["dorm", "dorm"]))
+        XCTAssertNil(DailyScopeCoverage.restore(["unknown"]))
+    }
     func testScopeProjectionRejectsAmbiguousIdentity() {
         let counters = InterfaceCounters(interfaceID: "en0", received: 1, sent: 2)
         XCTAssertEqual(InterfaceScopeProjection.scopes([

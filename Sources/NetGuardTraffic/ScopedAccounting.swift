@@ -111,3 +111,37 @@ public struct DailyTrafficLedger: Equatable, Sendable {
         return true
     }
 }
+
+
+/// The caller supplies canonical Gregorian day strings from its local calendar.
+/// Do not finalize or reopen a prior day when the wall clock moves backwards.
+public enum LocalDayTransition: Equatable, Sendable {
+    case unchanged, forward, backward
+    public static func evaluate(previous: String, observed: String) -> Self {
+        if previous == observed { return .unchanged }
+        if previous.isEmpty || observed > previous { return .forward }
+        return .backward
+    }
+}
+
+/// Evidence that a scope has at least one measured interval, not whole-day
+/// completeness or provider billing. A measured zero is different from absence.
+public struct DailyScopeCoverage: Equatable, Sendable {
+    private var scopes = Set<NetworkScope>()
+    public init() {}
+    public mutating func observe(_ value: ScopedTrafficDelta) {
+        guard value.delta.quality == .measured, value.scope != .unknown else { return }
+        scopes.insert(value.scope)
+    }
+    public func observed(_ scope: NetworkScope) -> Bool { scopes.contains(scope) }
+    public var persisted: [String] { scopes.map(\.rawValue).sorted() }
+    public static func restore(_ raw: [String]) -> Self? {
+        guard raw.count <= 3, Set(raw).count == raw.count else { return nil }
+        var result = Self()
+        for label in raw {
+            guard let scope = NetworkScope(rawValue: label), scope != .unknown else { return nil }
+            result.scopes.insert(scope)
+        }
+        return result
+    }
+}
