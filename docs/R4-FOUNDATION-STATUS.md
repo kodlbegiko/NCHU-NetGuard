@@ -62,3 +62,9 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 - Complete Foundation CI passed on ff166df03baa3d9a3c6c83c49c561e0c25b0534f, run 45627627799: Python, Swift, macOS app compilation, bundle and plist verification. No app launch or actual network mutation.
 - Added eight literal public contract compatibility fixtures and one public-construction test; explicit constructors for six formerly internal-only models; validated quota profile before policy evaluation. Documented candidate wire encoding and evolution in ADR-0001. New changes require their own exact-HEAD CI. Semantic contract review and owner approval still required before full freeze.
 - Staged the changes separately while the preceding CI completed, then advanced the foundation branch without rewriting history. No paid services or release.
+
+## Eleventh iteration
+
+- Completed an engineering review of the eight v1 model semantics, documenting missing aspirational fields and separating observation/planning data from actual authorized execution. Added size, text, date, collection and expiry checks plus five semantic Swift tests. No approval or formal freeze is inferred.
+- Added a machine-readable ownership manifest for all 17 current core source files, plus three Python architectural guards. This is not separate SwiftPM targets or an enforced CODEOWNERS permission scheme; shared legacy runtime is still serialized.
+- Staged work on test/r4-semantic-review; exact integrated HEAD CI and owner approval are required before scoped freeze. Broad parallel unlock and real network mutation remain blocked. No paid services.
