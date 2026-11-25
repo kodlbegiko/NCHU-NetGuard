@@ -214,7 +214,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var activeInterface: String = ""
     var currentIP: String = ""
     var isConnected: Bool = false
-    var pingLatencyMs: Double = 2.1
+    var pingLatencyMs: Double = -1
     var consecutivePingFailures: Int = 0
     
     var lastRawIBytes: UInt64 = 0
@@ -858,7 +858,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     func setupPopoverUI() {
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 380, height: 950)
+        let availableHeight = NSScreen.main?.visibleFrame.height ?? 650
+        let panelHeight = max(280, min(570, availableHeight - 70))
+        popover.contentSize = NSSize(width: 380, height: panelHeight)
         popover.behavior = .transient
         
         let config = WKWebViewConfiguration()
@@ -867,7 +869,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         config.userContentController = controller
         
         let vc = NSViewController()
-        webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 380, height: 950), configuration: config)
+        webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 380, height: panelHeight), configuration: config)
         webView.setValue(false, forKey: "drawsBackground")
         vc.view = webView
         popover.contentViewController = vc
@@ -1107,7 +1109,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             "quotaGBStr": String(format: "%.0f GB", totalQuotaBytes / (1024 * 1024 * 1024))
         ]
         
-        let pingStr = isConnected ? String(format: "%.1f ms", pingLatencyMs) : "中斷"
+        let pingStr = isConnected && pingLatencyMs >= 0 ? String(format: "%.1f ms", pingLatencyMs) : "未量測"
         let speedStr = String(format: "↓ %@   ↑ %@", formatSpeed(currentDownSpeed), formatSpeed(currentUpSpeed))
         let extTotal = extTodayInBytes + extTodayOutBytes
         
@@ -1166,6 +1168,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             "isCampusWifi": isCampusWifi,
             "isQuotaRestricted": isQuotaRestricted,
             "networkTypeName": networkTypeName,
+            "observationStatus": !isConnected ? "網路未確認，請檢查連線" : (isQuotaRestricted ? "監控中 · 配額為本機估計" : "監控中 · 網路配額未確認"),
             "currentIP": currentIP,
             "activeInterface": activeInterface,
             "unattributedTotalStr": formatBytes(unattributedInBytes + unattributedOutBytes),
