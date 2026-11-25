@@ -1,4 +1,5 @@
 import XCTest
+import SQLite3
 @testable import NetGuardCore
 
 final class HistoryStoreTests: XCTestCase {
@@ -84,6 +85,24 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertThrowsError(try ScopedHistoryDay(aggregate: total, scopes: [:]))
         let wrongDay = try HistoryDay(day: "2026-11-23", total: 100, download: 80, upload: 20)
         XCTAssertThrowsError(try ScopedHistoryDay(aggregate: total, scopes: [.dorm: wrongDay]))
+    }
+
+
+    func testActualV1DatabaseMigratesWithoutReclassification() throws {
+        try withURL { url in
+            var database: OpaquePointer?
+            XCTAssertEqual(sqlite3_open(url.path, &database), SQLITE_OK)
+            guard let database else { throw HistoryStoreError.database("fixture") }
+            let sql = "CREATE TABLE history_days(day TEXT PRIMARY KEY, total INTEGER NOT NULL, download INTEGER, upload INTEGER); INSERT INTO history_days VALUES('2026-11-24',100,80,20); PRAGMA user_version=1;"
+            let status = sqlite3_exec(database, sql, nil, nil, nil)
+            sqlite3_close(database)
+            XCTAssertEqual(status, SQLITE_OK)
+            let store = try HistoryStore(url: url)
+            XCTAssertEqual(try store.recent().first?.total, 100)
+            for scope in NetworkScope.allCases {
+                XCTAssertTrue(try store.recent(scope: scope).isEmpty)
+            }
+        }
     }
 
 }
