@@ -19,7 +19,8 @@
     "ProviderObservation.swift": 7,
     "UsageMigration.swift": 7,
     "QuickPanelState.swift": 0,
-    "HistoryAnalytics.swift": 7
+    "HistoryAnalytics.swift": 7,
+    "HistoryChartProjection.swift": 7
   },
   "shared_paths": {
     "src/main.swift": 0,
@@ -32,6 +33,7 @@
     "Tests/": 8,
     "tests/": 8,
     "src/QuickPanel.swift": 4,
-    "src/HistoryAnalyticsView.swift": 4
+    "src/HistoryAnalyticsView.swift": 4,
+    "src/SettingsView.swift": 4
   }
 }
