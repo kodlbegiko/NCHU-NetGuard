@@ -699,7 +699,7 @@
   </style>
 </head>
 <body>
-  <div style="padding:8px;font-size:11px;border:1px solid #888;border-radius:6px;margin-bottom:8px;">R4.0 安全模式：流量為本機估計；自動切換、分流與進程控制暫停，校方狀態需另行確認。<div id="accounting-status" style="margin-top:4px;">尚未取得介面採樣</div></div>
+  <div style="padding:8px;font-size:11px;border:1px solid #888;border-radius:6px;margin-bottom:8px;">R4.0 安全模式：流量為本機估計；自動切換、分流與進程控制暫停，校方狀態需另行確認。<div id="accounting-status" style="margin-top:4px;">尚未取得介面採樣</div><div id="provider-status" style="margin-top:4px;">校方資料尚未確認</div></div>
   <!-- Header -->
   <div class="header">
     <div style="display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1;">
@@ -1094,6 +1094,7 @@
     function updateStats(data) {
       if (!data) return;
       document.getElementById('overview-state').textContent = data.observationStatus || '網路狀態未知';
+      document.getElementById('provider-status').textContent = data.providerStatus || '校方資料未知';
 
       var isQuotaRestricted = (data.isQuotaRestricted === true || data.isDorm === true || data.isCampusWifi === true);
       if (isQuotaRestricted) {
