@@ -47,6 +47,9 @@ struct ManagementView: View {
                             Text(snapshot.tunnelStatus).font(.caption).foregroundStyle(.secondary)
                             Picker("查看網卡", selection: $selectedInterface) {
                                 Text("全部實體網卡").tag(nil as String?)
+                                if let selectedInterface, !snapshot.interfaces.contains(where: { $0.name == selectedInterface }) {
+                                    Text(selectedInterface + "（不可用）").tag(Optional(selectedInterface))
+                                }
                                 ForEach(snapshot.interfaces) { item in
                                     Text(item.name).tag(Optional(item.name))
                                 }
