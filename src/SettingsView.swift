@@ -7,6 +7,10 @@ final class NetGuardSettingsModel: ObservableObject {
     @Published var focusEnabled = false
     @Published var nativePreview = false
     @Published var displayMode = 0
+    @Published var rateUnit = RateDisplayUnit.binaryBytes
+    @Published var personalBudget: PersonalDailyBudget?
+    @Published var personalReading: PersonalBudgetReading?
+    @Published var budgetStatus = "尚未設定"
     @Published var persistenceStatus = "尚未載入"
     @Published var backupBusy = false
     @Published var backupStatus = "尚未執行備份或預檢"
@@ -18,8 +22,14 @@ struct NetGuardSettingsView: View {
     let setFocus: (Bool) -> Void
     let setNativePreview: (Bool) -> Void
     let setDisplayMode: (Int) -> Void
+    let setRateUnit: (RateDisplayUnit) -> Void
+    let saveBudget: (NetworkScope, String) -> Void
+    let clearBudget: () -> Void
     let createBackup: () -> Void
     let inspectBackup: () -> Void
+
+    @State private var budgetScope = NetworkScope.external
+    @State private var budgetGB = ""
 
     var body: some View {
         Form {
@@ -38,6 +48,36 @@ struct NetGuardSettingsView: View {
                     Text("容量與狀態符號").tag(3)
                     Text("純數字").tag(4)
                 }
+                Picker("選單列與快速面板網速", selection: Binding(get: { model.rateUnit }, set: setRateUnit)) {
+                    Text("KiB/s、MiB/s").tag(RateDisplayUnit.binaryBytes)
+                    Text("kbps、Mbps").tag(RateDisplayUnit.decimalBits)
+                }
+            }
+            Section("個人每日流量預算") {
+                if let budget = model.personalBudget {
+                    Text("已設定：\(scopeLabel(budget.scope)) · \(budget.decimalGigabytes) GB／日")
+                    if let reading = model.personalReading {
+                        ProgressView(value: reading.fraction)
+                        Text(String(format: "已觀測 %.2f GB；未扣除未觀測流量的剩餘估計 %.2f GB", Double(reading.used) / 1e9, Double(reading.remaining) / 1e9))
+                            .font(.caption)
+                    } else {
+                        Text("目前沒有可用的分類觀測").font(.caption)
+                    }
+                }
+                Picker("計量分類", selection: $budgetScope) {
+                    Text("宿網").tag(NetworkScope.dorm)
+                    Text("校園 Wi-Fi").tag(NetworkScope.campusWifi)
+                    Text("外部網路（合計）").tag(NetworkScope.external)
+                }
+                TextField("每日上限（整數 GB，1–10000）", text: $budgetGB)
+                    .textFieldStyle(.roundedBorder)
+                HStack {
+                    Button("儲存個人預算") { saveBudget(budgetScope, budgetGB) }
+                    Button("清除個人預算", action: clearBudget).disabled(model.personalBudget == nil)
+                }
+                Text(model.budgetStatus).font(.caption)
+                Text("GB = 10⁹ bytes；僅供本機分類總量參考，每日台北時間換日。不是單一熱點或 eSIM 的帳單餘額，不修改校方配額、警報或路由。")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("資料與安全") {
                 LabeledContent("本機儲存", value: model.persistenceStatus)
@@ -58,4 +98,14 @@ struct NetGuardSettingsView: View {
         .formStyle(.grouped)
         .frame(minWidth: 460, minHeight: 390)
     }
+
+    private func scopeLabel(_ scope: NetworkScope) -> String {
+        switch scope {
+        case .dorm: return "宿網"
+        case .campusWifi: return "校園 Wi-Fi"
+        case .external: return "外部網路（合計）"
+        case .unknown: return "未知"
+        }
+    }
+
 }
