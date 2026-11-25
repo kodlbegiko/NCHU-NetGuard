@@ -14,6 +14,7 @@ public struct ObservedInterfaceRow: Equatable, Sendable, Identifiable {
     public let scope: NetworkScope
     public let isDefault: Bool
     public let rate: ObservedInterfaceRate?
+    public let addressEvidence: InterfaceAddressEvidence?
     public var id: String { name }
     public var scopeLabel: String {
         switch scope {
@@ -41,6 +42,7 @@ public struct ManagementSnapshot: Equatable, Sendable {
     public let connectionStatus: String
     public let latencyStatus: String
     public let tunnelStatus: String
+    public let routeStatus: String
     public let echoStatus: String
     public let dnsStatus: String
     public let findings: [DiagnosticFinding]
@@ -55,16 +57,19 @@ public struct ManagementSnapshot: Equatable, Sendable {
                 sessionUsage: ProcessUsageReport? = nil,
                 echoStatus: String = "ICMP 尚未量測", dnsStatus: String = "DNS 尚未量測",
                 agentUsage: ProcessUsageReport? = nil,
-                processBackgroundEnabled: Bool = false, processObservationStatus: String = "僅開啟面板時觀測") {
+                processBackgroundEnabled: Bool = false, processObservationStatus: String = "僅開啟面板時觀測",
+                routeEvidence: DualStackEvidence? = nil, evidenceUptime: TimeInterval = 0,
+                addressEvidence: [String: InterfaceAddressEvidence] = [:]) {
         self.interfaces = scopes.keys.sorted().map {
             ObservedInterfaceRow(name: $0, scope: scopes[$0] ?? .unknown,
-                                 isDefault: connectionKnown && $0 == defaultInterface, rate: rates[$0])
+                                 isDefault: connectionKnown && $0 == defaultInterface, rate: rates[$0], addressEvidence: addressEvidence[$0])
         }
         self.connectionStatus = connectionKnown ? "已辨識預設 IPv4 路由；不代表網際網路可用" : "連線尚未確認"
         self.latencyStatus = latencyStatus
         self.echoStatus = echoStatus
         self.dnsStatus = dnsStatus
-        self.tunnelStatus = TunnelEvidence.description(defaultInterface: connectionKnown ? defaultInterface : "", candidates: tunnelCandidates)
+        self.routeStatus = routeEvidence?.description(at: evidenceUptime) ?? "IPv4／IPv6 預設路由尚未量測或已過期"
+        self.tunnelStatus = routeEvidence?.tunnelDescription(at: evidenceUptime, candidates: tunnelCandidates) ?? TunnelEvidence.description(defaultInterface: connectionKnown ? defaultInterface : "", candidates: tunnelCandidates)
         self.focusEnabled = focusEnabled
         self.sessionUsage = sessionUsage
         self.agentUsage = agentUsage
