@@ -2,6 +2,7 @@ import Cocoa
 import Foundation
 import WebKit
 import IOKit
+import SystemConfiguration
 
 // MARK: - 歷史紀錄模型與管理器
 struct DayTrafficRecord {
@@ -153,17 +154,14 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var isCampusWifi: Bool {
         if networkModeOverride == 2 { return true }
         if networkModeOverride != 0 { return false }
-        let isWifiIface = (activeInterface == "en0")
-        let isNchuIP = currentIP.hasPrefix("10.10.") || currentIP.hasPrefix("140.120.")
-        return isWifiIface && isNchuIP
+        return sampledScopes[activeInterface] == .campusWifi
     }
     
     // 是否為興大二村有線宿網 (每日下載上限 7GB / 上傳 4GB / 總額 11GB，超量斷網鎖卡)
     var isDormNetwork: Bool {
         if networkModeOverride == 1 { return true }
         if networkModeOverride != 0 { return false }
-        let isWiredIface = (activeInterface != "en0")
-        return isWiredIface && currentIP.hasPrefix("140.120.")
+        return sampledScopes[activeInterface] == .dorm
     }
     
     // 是否屬於受興大流量配額管控之網路 (有線宿網或校園Wi-Fi)
@@ -204,7 +202,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         } else if currentIP.hasPrefix("172.20.10.") {
             return "iPhone 個人熱點"
         } else {
-            return "外部網路 / Wi-Fi"
+            return sampledScopes[activeInterface] == .external ? "外部網路（估計）" : "網路歸屬未確認"
         }
     }
     
@@ -213,9 +211,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var isAlertEnabled: Bool = true
     
     // 實時狀態與網速計算
-    var activeInterface: String = "en0"
-    var currentIP: String = "172.20.10.2"
-    var isConnected: Bool = true
+    var activeInterface: String = ""
+    var currentIP: String = ""
+    var isConnected: Bool = false
     var pingLatencyMs: Double = 2.1
     var consecutivePingFailures: Int = 0
     
@@ -223,6 +221,12 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var lastRawOBytes: UInt64 = 0
     var lastTimestamp: TimeInterval = 0
     
+    var scopedAccumulator = ScopedCounterAccumulator()
+    var lastSampleUptime: TimeInterval?
+    var sampledScopes: [String: NetworkScope] = [:]
+    var unattributedInBytes: Double = 0
+    var unattributedOutBytes: Double = 0
+    var sampleGapCount: Int = 0
     var currentDownSpeed: Double = 0
     var currentUpSpeed: Double = 0
     
@@ -1164,6 +1168,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             "networkTypeName": networkTypeName,
             "currentIP": currentIP,
             "activeInterface": activeInterface,
+            "unattributedTotalStr": formatBytes(unattributedInBytes + unattributedOutBytes),
+            "sampleGapCount": sampleGapCount,
+            "observedInterfaces": sampledScopes.keys.sorted().joined(separator: ", "),
             "date": currentDateString,
             "quotaTotalGB": String(format: "%.0f", totalQuotaBytes / (1024 * 1024 * 1024)),
             "quotaDlGB": String(format: "%.0f", dlQuotaBytes / (1024 * 1024 * 1024)),
@@ -1254,6 +1261,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 self.wifiTodayOutBytes = json["wifi_out"] as? Double ?? 0.0
                 self.extTodayInBytes = json["ext_in"] as? Double ?? 0.0
                 self.extTodayOutBytes = json["ext_out"] as? Double ?? 0.0
+                self.unattributedInBytes = json["unattributed_in"] as? Double ?? 0
+                self.unattributedOutBytes = json["unattributed_out"] as? Double ?? 0
+                self.sampleGapCount = json["sample_gap_count"] as? Int ?? 0
                 self.networkModeOverride = json["network_mode_override"] as? Int ?? 0
                 self.lastRawIBytes = (json["last_raw_in"] as? NSNumber)?.uint64Value ?? 0
                 self.lastRawOBytes = (json["last_raw_out"] as? NSNumber)?.uint64Value ?? 0
@@ -1302,6 +1312,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             "wifi_out": wifiTodayOutBytes,
             "ext_in": extTodayInBytes,
             "ext_out": extTodayOutBytes,
+            "unattributed_in": unattributedInBytes,
+            "unattributed_out": unattributedOutBytes,
+            "sample_gap_count": sampleGapCount,
             "today_in": dormTodayInBytes,
             "today_out": dormTodayOutBytes,
             "network_mode_override": networkModeOverride,
@@ -1445,14 +1458,75 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         return nil
     }
 
-    func initHardwareCounters() {
-        if let b = getInterfaceBytes(name: self.activeInterface) {
-            if lastRawIBytes == 0 && lastRawOBytes == 0 {
-                lastRawIBytes = b.ibytes
-                lastRawOBytes = b.obytes
+    // Read physical Ethernet/Wi-Fi counters only. No VPN/loopback double counting.
+    // Interface traffic includes link-local/LAN bytes, not authoritative campus quota.
+    func readScopedInterfaces() -> [ScopedInterfaceSample] {
+        let devices = SCNetworkInterfaceCopyAll() as NSArray
+        var types: [String: String] = [:]
+        for item in devices {
+            let interface = item as! SCNetworkInterface
+            if let name = SCNetworkInterfaceGetBSDName(interface) as String?,
+               let kind = SCNetworkInterfaceGetInterfaceType(interface) as String? {
+                if kind == (kSCNetworkInterfaceTypeEthernet as String) ||
+                    kind == (kSCNetworkInterfaceTypeIEEE80211 as String) {
+                    types[name] = kind
+                }
             }
-            lastTimestamp = Date().timeIntervalSince1970
         }
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0, let first = list else { return [] }
+        defer { freeifaddrs(list) }
+        var addresses: [String: [String]] = [:]
+        var counters: [String: InterfaceCounters] = [:]
+        for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
+            let item = pointer.pointee
+            let name = String(cString: item.ifa_name)
+            guard types[name] != nil, let address = item.ifa_addr else { continue }
+            if address.pointee.sa_family == UInt8(AF_INET) || address.pointee.sa_family == UInt8(AF_INET6) {
+                var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                if getnameinfo(address, socklen_t(address.pointee.sa_len), &host,
+                               socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 {
+                    addresses[name, default: []].append(String(cString: host))
+                }
+            } else if address.pointee.sa_family == UInt8(AF_LINK), let raw = item.ifa_data {
+                let data = raw.assumingMemoryBound(to: if_data.self).pointee
+                counters[name] = InterfaceCounters(interfaceID: name,
+                    received: UInt64(data.ifi_ibytes), sent: UInt64(data.ifi_obytes))
+            }
+        }
+        return counters.keys.sorted().compactMap { name in
+            guard let counter = counters[name], let kind = types[name] else { return nil }
+            let ips = addresses[name, default: []].sorted()
+            let campus = ips.contains { $0.hasPrefix("140.120.") }
+            let hotspot = ips.contains { $0.hasPrefix("172.20.10.") }
+            var scope: NetworkScope = .unknown
+            // Explicit overrides affect only the currently selected interface.
+            if name == activeInterface && networkModeOverride != 0 && !ips.isEmpty {
+                switch networkModeOverride {
+                case 1: scope = .dorm
+                case 2: scope = .campusWifi
+                case 3: scope = .external
+                default: break
+                }
+            } else if campus {
+                scope = kind == (kSCNetworkInterfaceTypeIEEE80211 as String) ? .campusWifi : .dorm
+            } else if hotspot {
+                scope = .external
+            }
+            return ScopedInterfaceSample(counters: counter, scope: scope,
+                identity: kind + "|" + ips.joined(separator: ","))
+        }
+    }
+
+    func initHardwareCounters() {
+        scopedAccumulator.reset()
+        let samples = readScopedInterfaces()
+        sampledScopes = Dictionary(uniqueKeysWithValues: samples.map { ($0.counters.interfaceID, $0.scope) })
+        let uptime = ProcessInfo.processInfo.systemUptime
+        _ = scopedAccumulator.ingest(samples, day: currentDateString, uptime: uptime)
+        lastSampleUptime = uptime
+        currentDownSpeed = 0
+        currentUpSpeed = 0
     }
 
     func measurePingLatency() {
@@ -1553,6 +1627,12 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             wifiTodayOutBytes = 0.0
             extTodayInBytes = 0.0
             extTodayOutBytes = 0.0
+            unattributedInBytes = 0
+            unattributedOutBytes = 0
+            sampleGapCount = 0
+            scopedAccumulator.reset()
+            lastSampleUptime = nil
+            top100Data = nil
             alertTierSent = 0
             if isWiredTemporarilyDisabled {
                 restoreWiredNetwork(reason: "每日 00:00 額度重設")
@@ -1624,42 +1704,32 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             hasTriggeredMidnightToday = false
         }
         
-        guard let b = getInterfaceBytes(name: self.activeInterface) else { return }
-        let elapsed = max(now - lastTimestamp, 0.5)
-        
-        var deltaIn: UInt64 = 0
-        var deltaOut: UInt64 = 0
-        
-        if lastRawIBytes > 0 && b.ibytes >= lastRawIBytes {
-            deltaIn = b.ibytes - lastRawIBytes
-            currentDownSpeed = Double(deltaIn) / elapsed
-        } else if b.ibytes < lastRawIBytes {
-            currentDownSpeed = 0
+        let samples = readScopedInterfaces()
+        sampledScopes = Dictionary(uniqueKeysWithValues: samples.map { ($0.counters.interfaceID, $0.scope) })
+        let uptime = ProcessInfo.processInfo.systemUptime
+        let elapsed = lastSampleUptime.map { max(uptime - $0, 0.001) } ?? 1
+        let deltas = scopedAccumulator.ingest(samples, day: currentDateString, uptime: uptime)
+        lastSampleUptime = uptime
+        currentDownSpeed = 0
+        currentUpSpeed = 0
+        if samples.isEmpty || deltas.values.contains(where: { $0.delta.quality == .unknown }) {
+            sampleGapCount += 1
         }
-        
-        if lastRawOBytes > 0 && b.obytes >= lastRawOBytes {
-            deltaOut = b.obytes - lastRawOBytes
-            currentUpSpeed = Double(deltaOut) / elapsed
-        } else if b.obytes < lastRawOBytes {
-            currentUpSpeed = 0
+        for (name, value) in deltas where value.delta.quality == .measured {
+            let rx = Double(value.delta.received)
+            let tx = Double(value.delta.sent)
+            if name == activeInterface {
+                currentDownSpeed = rx / elapsed
+                currentUpSpeed = tx / elapsed
+            }
+            switch value.scope {
+            case .dorm: dormTodayInBytes += rx; dormTodayOutBytes += tx
+            case .campusWifi: wifiTodayInBytes += rx; wifiTodayOutBytes += tx
+            case .external: extTodayInBytes += rx; extTodayOutBytes += tx
+            case .unknown: unattributedInBytes += rx; unattributedOutBytes += tx
+            }
         }
-        
-        lastRawIBytes = b.ibytes
-        lastRawOBytes = b.obytes
-        lastTimestamp = now
-        
-        // 依據當前網路環境獨立累加流量，互不污染
-        if isCampusWifi {
-            wifiTodayInBytes += Double(deltaIn)
-            wifiTodayOutBytes += Double(deltaOut)
-        } else if isDormNetwork {
-            dormTodayInBytes += Double(deltaIn)
-            dormTodayOutBytes += Double(deltaOut)
-        } else {
-            extTodayInBytes += Double(deltaIn)
-            extTodayOutBytes += Double(deltaOut)
-        }
-        
+
         if Int(now) % 10 == 0 {
             savePersistedState()
         }
@@ -2146,10 +2216,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         if isWiredTemporarilyDisabled {
             restoreWiredNetwork(reason: "今日流量重置歸零")
         }
-        if let b = getInterfaceBytes(name: activeInterface) {
-            lastRawIBytes = b.ibytes
-            lastRawOBytes = b.obytes
-        }
+        initHardwareCounters()
+        sampleGapCount += 1
         savePersistedState()
         updateStatusBar()
         pushDataToWebUI()
