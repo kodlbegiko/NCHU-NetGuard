@@ -34,6 +34,30 @@ public struct QuotaAlertLedger: Codable, Equatable, Sendable {
     private var notified: [NetworkScope: LocalQuotaTier] = [:]
     public init() {}
 
+    /// Explicit persistence format: caller stores the day alongside the tiers.
+    /// These are attempts, not proof of notification delivery.
+    public func recordedTier(day: String, scope: NetworkScope) -> LocalQuotaTier {
+        self.day == day ? (notified[scope] ?? .normal) : .normal
+    }
+
+    public func persistedTiers(day: String) -> [String: Int] {
+        guard self.day == day else { return [:] }
+        return Dictionary(uniqueKeysWithValues: notified.map { ($0.key.rawValue, $0.value.rawValue) })
+    }
+
+    public mutating func restore(day: String, tiers: [String: Int]) throws {
+        var restored: [NetworkScope: LocalQuotaTier] = [:]
+        for (key, value) in tiers {
+            guard let scope = NetworkScope(rawValue: key),
+                  scope == .dorm || scope == .campusWifi,
+                  let tier = LocalQuotaTier(rawValue: value), tier > .normal
+            else { throw ContractError.invalidField("alertLedger") }
+            restored[scope] = tier
+        }
+        self.day = day
+        notified = restored
+    }
+
     /// At most one notification per increasing tier, per scope/day.
     /// Disabling alerts does not consume a notification tier.
     public mutating func shouldNotify(day: String, scope: NetworkScope,
