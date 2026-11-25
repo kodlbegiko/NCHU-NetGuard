@@ -17,7 +17,7 @@ public struct HistoryPeriod: Equatable, Sendable {
 
     /// CSV includes absent days and preserves unknown directional fields.
     /// All values are validated dates, integers, or fixed status literals.
-    public func csv() -> String {
+    public func csv(scope: NetworkScope? = nil) -> String {
         var lines = ["date,total_bytes,download_bytes,upload_bytes,status"]
         for row in rows {
             if let r = row.record {
@@ -27,6 +27,10 @@ public struct HistoryPeriod: Equatable, Sendable {
             } else {
                 lines.append(row.day + ",,,,missing")
             }
+        }
+        if let scope {
+            lines[0] += ",scope"
+            for index in lines.indices.dropFirst() { lines[index] += "," + scope.rawValue }
         }
         return lines.joined(separator: "\r\n") + "\r\n"
     }
