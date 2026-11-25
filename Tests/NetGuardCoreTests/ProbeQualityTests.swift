@@ -10,6 +10,11 @@ final class ProbeQualityTests: XCTestCase {
         XCTAssertEqual(ProbeRunner.run("/bin/sleep", ["2"], timeout: 0.1), .timedOut)
         XCTAssertEqual(ProbeRunner.run("/usr/bin/printf", ["abcdef"], maxBytes: 3), .outputLimit)
     }
+    func testExactLimitAndUnboundedProducer() {
+        XCTAssertEqual(ProbeRunner.run("/usr/bin/printf", ["abc"], maxBytes: 3), .success("abc"))
+        XCTAssertEqual(ProbeRunner.run("/usr/bin/yes", [], timeout: 2, maxBytes: 32_768), .outputLimit)
+        XCTAssertEqual(ProbeRunner.run("/usr/bin/false", [], acceptedExitCodes: [1]), .success(""))
+    }
     func testQualityRequiresFreshSamples() {
         var window = NetworkQualityWindow()
         window.ingest(latency: 20, uptime: 10)

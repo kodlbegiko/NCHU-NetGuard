@@ -1,57 +1,69 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 public enum ProbeOutcome: Equatable, Sendable {
     case success(String), failed, timedOut, outputLimit
 }
 
-/// Fixed executable and argv; no shell. Intended for short, read-only probes.
-/// Only this runner's own child may be terminated. A non-cooperative child
-/// can outlive the deadline; no guarantee of forced process-tree termination.
+/// Read-only probes with a bounded in-memory pipe, no disk spooling and no shell.
+/// A timeout stops collecting output and requests termination of our own child.
+/// A non-cooperative child/descendant can outlive the deadline; no process-tree kill.
 enum ProbeRunner {
     static func run(_ path: String, _ arguments: [String], timeout: TimeInterval = 5,
                     maxBytes: Int = 1_048_576, acceptedExitCodes: Set<Int32> = [0]) -> ProbeOutcome {
         guard path.hasPrefix("/"), timeout.isFinite, timeout > 0, timeout <= 30,
               (1...4_194_304).contains(maxBytes) else { return .failed }
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        do {
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false,
-                                                    attributes: [.posixPermissions: 0o700])
-            defer { try? FileManager.default.removeItem(at: folder) }
-            let url = folder.appendingPathComponent("stdout")
-            guard FileManager.default.createFile(atPath: url.path, contents: nil,
-                                                  attributes: [.posixPermissions: 0o600]) else { return .failed }
-            let handle = try FileHandle(forWritingTo: url)
-            defer { try? handle.close() }
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: path)
-            process.arguments = arguments
-            process.standardOutput = handle
-            process.standardError = FileHandle.nullDevice
-            process.standardInput = FileHandle.nullDevice
-            var environment = ProcessInfo.processInfo.environment
-            environment["LC_ALL"] = "C"
-            process.environment = environment
-            try process.run()
-            let start = ProcessInfo.processInfo.systemUptime
-            while process.isRunning {
-                let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
-                if size > maxBytes {
-                    if process.isRunning { process.terminate() }
-                    return .outputLimit
+        let pipe = Pipe()
+        let input = pipe.fileHandleForReading
+        defer { try? input.close(); try? pipe.fileHandleForWriting.close() }
+        let fd = input.fileDescriptor
+        let flags = fcntl(fd, F_GETFL)
+        guard flags >= 0, fcntl(fd, F_SETFL, flags | O_NONBLOCK) >= 0 else { return .failed }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = arguments
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+        var environment = ProcessInfo.processInfo.environment
+        environment["LC_ALL"] = "C"
+        process.environment = environment
+        let start = ProcessInfo.processInfo.systemUptime
+        do { try process.run() } catch { return .failed }
+        // Close the parent's write end; an EOF reflects all inherited writers.
+        try? pipe.fileHandleForWriting.close()
+        func stop(_ outcome: ProbeOutcome) -> ProbeOutcome {
+            if process.isRunning { process.terminate() }
+            return outcome
+        }
+        var output = Data()
+        var buffer = [UInt8](repeating: 0, count: min(65_536, maxBytes + 1))
+        var eof = false
+        while true {
+            if ProcessInfo.processInfo.systemUptime - start >= timeout { return stop(.timedOut) }
+            if !eof {
+                let requested = min(buffer.count, maxBytes + 1 - output.count)
+                let n = buffer.withUnsafeMutableBytes { raw in
+                    read(fd, raw.baseAddress, requested)
                 }
-                if ProcessInfo.processInfo.systemUptime - start >= timeout {
-                    if process.isRunning { process.terminate() }
-                    return .timedOut
+                if n > 0 {
+                    output.append(contentsOf: buffer.prefix(n))
+                    guard output.count <= maxBytes else { return stop(.outputLimit) }
+                    continue
                 }
-                Thread.sleep(forTimeInterval: 0.025)
+                if n == 0 { eof = true }
+                else if errno == EINTR { continue }
+                else if errno != EAGAIN && errno != EWOULDBLOCK { return stop(.failed) }
             }
-            guard process.terminationReason == .exit, acceptedExitCodes.contains(process.terminationStatus) else { return .failed }
-            let reader = try FileHandle(forReadingFrom: url)
-            defer { try? reader.close() }
-            let bytes = try reader.read(upToCount: maxBytes + 1) ?? Data()
-            guard bytes.count <= maxBytes else { return .outputLimit }
-            guard let output = String(data: bytes, encoding: .utf8) else { return .failed }
-            return .success(output)
-        } catch { return .failed }
+            if eof && !process.isRunning { break }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        guard process.terminationReason == .exit, acceptedExitCodes.contains(process.terminationStatus),
+              let text = String(data: output, encoding: .utf8) else { return .failed }
+        return .success(text)
     }
 }

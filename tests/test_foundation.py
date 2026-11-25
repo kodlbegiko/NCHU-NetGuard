@@ -66,6 +66,11 @@ class FoundationTests(unittest.TestCase):
         result = json.loads(output)
         self.assertEqual(result["schema_version"], 1)
 
+    def test_no_direct_app_process_launcher(self):
+        for path in (ROOT / "src").glob("*.swift"):
+            self.assertNotRegex(path.read_text(), r"\bProcess\s*\(")
+        self.assertNotIn("140.120.251.126", (ROOT / "src/main.swift").read_text())
+
     def test_portability(self):
         self.assertNotIn("/Users/", (ROOT / "src/main.swift").read_text())
         self.assertIn("scripts/traffic_monitor.py", (ROOT / "Makefile").read_text())

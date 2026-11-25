@@ -48,3 +48,7 @@ Next: review exact branch CI, audit all trust boundaries, verify recovery journa
 ## Closure batch 4 (candidate)
 - Machine-readable v1 contract registry for eight models, semantic boundaries and required/optional field sets; automated fixture/registry/validator agreement check. Consumer review and owner approval pending.
 - Module graph guard now verifies literal SwiftPM target dependency lists against ownership manifest and checks for dependency cycles. Actual native target migration remains open.
+
+## Closure batch 5 (candidate)
+- Replace disk-spooled ProbeRunner with nonblocking pipe and strict in-memory output ceiling; no shell; bounded polling and timeout. Isolated Linux Swift harness passed eight cases (success, failure, timeout, overflow, exact limit, infinite producer, invalid UTF-8, allowed exit). macOS exact candidate CI pending; noncooperative child/descendant termination remains explicitly not guaranteed.
+- Remove unused legacy direct Process launchers, hardcoded wired gateway fallback, and unused media key injection path; retained active observation/notification code. Static guard prohibits direct app Process launchers. No network mutations or process-tree termination enabled.

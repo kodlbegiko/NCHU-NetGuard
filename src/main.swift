@@ -414,84 +414,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         return false
     }
 
-    // 發送 macOS 系統底層「播放/暫停」多媒體鍵 (Key Code 16)，直接硬體級暫停 YouTube / Chrome / Spotify / Safari，完全無需瀏覽器 JS 權限
-    func sendSystemMediaPause() {
-        func postKey(down: Bool) {
-            let flags: UInt = down ? 0xa00 : 0xb00
-            let data1 = Int((16 << 16) | ((down ? 0xa : 0xb) << 8))
-            if let ev = NSEvent.otherEvent(
-                with: .systemDefined,
-                location: .zero,
-                modifierFlags: NSEvent.ModifierFlags(rawValue: flags),
-                timestamp: 0,
-                windowNumber: 0,
-                context: nil,
-                subtype: 8,
-                data1: data1,
-                data2: -1
-            )?.cgEvent {
-                ev.post(tap: .cghidEventTap)
-            }
-        }
-        postKey(down: true)
-        postKey(down: false)
-    }
-
-    // 檢查系統當前是否正有任何音訊核心持鎖（例如 YouTube 播放、音樂串流阻止休眠）
-    func isAudioPlaying() -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
-        process.arguments = ["-g", "assertions"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        try? process.run()
-        process.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        if let out = String(data: data, encoding: .utf8) {
-            return out.contains("coreaudiod") && (out.contains("preventuseridlesleep") || out.contains("preventuseridledisplaysleep"))
-        }
-        return false
-    }
-
     // 取得使用者距離上次敲擊鍵盤或移動滑鼠/觸控板的閒置秒數
     func getSystemIdleSeconds() -> Double {
         return CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
-    }
-
-    // 偵測 Codex 及其電腦操控代理 (SkyComputerUseService / cua_node / CodexBrowser) 是否正在運行
-    func isCodexEcosystemActive() -> Bool {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-        p.arguments = ["-f", "Codex|SkyComputerUseService|cua_node|cua-repl"]
-        let pipe = Pipe()
-        p.standardOutput = pipe
-        try? p.run()
-        p.waitUntilExit()
-        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        return !out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    // 判斷程序是否享有 Codex 及開發/操控生態系豁免權 (絕不凍結、絕不中斷)
-    func isExemptProcessForCodex(cmdOut: String) -> Bool {
-        let lower = cmdOut.lowercased()
-        let exemptKeywords = [
-            "leadops", "ai.leadops",
-            "codex", "skycomputeruseservice", "cua_node", "cua-repl", "chatgpt",
-            "antigravity", "cursor", "visual studio code", "code helper",
-            "node", "python", "git", "gh", "ssh", "docker", "orbstack",
-            "playwright", "puppeteer", "chromedriver", "webdriver", "remote-debugging"
-        ]
-        for kw in exemptKeywords {
-            if lower.contains(kw) {
-                return true
-            }
-        }
-        return false
-    }
-
-    // 設定 Codex 與受控開發工具的「有線宿網 VIP 豁免靜態路由」
-    func applyCodexWiredExemptionRoutes(wiredService: String, gateway: String) {
-        // Disabled until transactional routing and authorization are implemented.
     }
 
     func activateLidGuard(reason: String, freezeRenderers: Bool = false) {
@@ -510,58 +435,6 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     func deactivateIdleGuard(reason: String) {
         guard !isLidCurrentlyClosed else { return }
         deactivateLidGuard(reason: reason)
-    }
-
-    // 動態解析有線網卡對應的 macOS 網路服務名稱 (例如: "USB 10/100/1000 LAN")
-    func getWiredServiceName() -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-        process.arguments = ["-listnetworkserviceorder"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        try? process.run()
-        process.waitUntilExit()
-        
-        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        let targetDev = self.activeInterface.hasPrefix("en") ? self.activeInterface : "en6"
-        
-        // 解析格式: (1) USB 10/100/1000 LAN \n (Hardware Port: ..., Device: en6)
-        let lines = out.components(separatedBy: .newlines)
-        for i in 0..<lines.count {
-            if lines[i].contains("Device: \(targetDev)") || lines[i].contains("Device: en6") {
-                if i > 0 {
-                    let prevLine = lines[i - 1]
-                    if let parenIdx = prevLine.range(of: ") ") {
-                        let name = String(prevLine[parenIdx.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !name.isEmpty && !name.contains("Wi-Fi") {
-                            return name
-                        }
-                    }
-                }
-            }
-        }
-        return self.disabledWiredServiceName
-    }
-
-    // 取得所有網路服務名稱清單
-    func getAllNetworkServices() -> [String] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-        process.arguments = ["-listallnetworkservices"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        try? process.run()
-        process.waitUntilExit()
-        
-        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        var services: [String] = []
-        for line in out.components(separatedBy: .newlines) {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty && !trimmed.starts(with: "An asterisk") {
-                services.append(trimmed)
-            }
-        }
-        return services
     }
 
     // 免拔線自動避難切換：切換至校園 Wi-Fi，同時為 Codex 及受控開發軟體保留有線專線豁免權！
@@ -587,30 +460,6 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         if popover != nil && popover.isShown { pushDataToWebUI() }
     }
 
-    func getServiceGatewayIP(service: String, fallback: String) -> String {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-        p.arguments = ["-getinfo", service]
-        let pipe = Pipe()
-        p.standardOutput = pipe
-        try? p.run()
-        p.waitUntilExit()
-        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        for line in out.components(separatedBy: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.lowercased().hasPrefix("router:") {
-                let parts = trimmed.components(separatedBy: ":")
-                if parts.count >= 2 {
-                    let gw = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !gw.isEmpty && gw != "none" && gw != "null" {
-                        return gw
-                    }
-                }
-            }
-        }
-        return fallback
-    }
-
     // 探測單一網卡介面的即時延遲 (ms) 與有效傳輸速率 (Mbps)
     // Legacy speed-race controls are unavailable pending a verified, consented
     // interface-specific benchmark. Ordinary latency probes remain available.
@@ -619,46 +468,6 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             measurePingLatency()
             if popover != nil && popover.isShown { pushDataToWebUI() }
         }
-    }
-
-    func getWiredGatewayIP(service: String) -> String {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-        p.arguments = ["-getinfo", service]
-        let pipe = Pipe()
-        p.standardOutput = pipe
-        try? p.run()
-        p.waitUntilExit()
-        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        for line in out.components(separatedBy: .newlines) {
-            if line.hasPrefix("Router:") {
-                let r = line.replacingOccurrences(of: "Router:", with: "").trimmingCharacters(in: .whitespaces)
-                if !r.isEmpty && r != "none" {
-                    return r
-                }
-            }
-        }
-        
-        let pRoute = Process()
-        pRoute.executableURL = URL(fileURLWithPath: "/sbin/route")
-        pRoute.arguments = ["-n", "get", "default"]
-        let rPipe = Pipe()
-        pRoute.standardOutput = rPipe
-        try? pRoute.run()
-        pRoute.waitUntilExit()
-        let rOut = String(data: rPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        for line in rOut.components(separatedBy: .newlines) {
-            if line.contains("gateway:") {
-                let parts = line.components(separatedBy: ":")
-                if parts.count >= 2 {
-                    let gw = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !gw.isEmpty && gw.hasPrefix("140.120.") {
-                        return gw
-                    }
-                }
-            }
-        }
-        return "140.120.251.126"
     }
 
     // MARK: - 方向 2: 違規風險防禦與計中黑名單主動預警 (NCHU Security & Blacklist)
