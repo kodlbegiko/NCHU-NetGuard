@@ -190,3 +190,8 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 
 - Independent session-only opt-in for background process/AI observations; existing disk persistence consent remains separate. Background cadence 20/35 seconds, visible cadence 10/25 seconds, focus and sleep guards retain precedence, and changing consent invalidates pending baselines. Added paired-interval duration to in-memory reports and native status/toggle; two regression tests. Not complete all-day accounting or persistent coverage metadata. Short-lived processes, missed UI transitions, resource overhead and device-specific output remain limitations.
 - Previous run 45639532848 passed static/Python and Swift tests; app build still running at last check. Candidate requires exact-HEAD CI and macOS acceptance. No paid service, host mutation, sleep prevention, or release.
+
+## Thirty-third iteration
+
+- Added DualStackEvidence.swift, strict bounded route interface parser, independent IPv4/IPv6 route observations and per-interface address-family display (link-local distinction), with four regression tests. No change to physical byte accounting, IPv4 campus provider or quota policy. IPv6-only reachability, IPv6 campus classification and verified VPN attribution remain open; dual-family route observations are sequential. Native display and host command behavior require device acceptance.
+- Prior integrated run 45639532848 completed successfully: 127 Swift and 13 Python tests, app compile and bundle. Iterations 32–33 eligible for fast-forward integration and new exact-HEAD CI. No paid services, release or host mutation.
