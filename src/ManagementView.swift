@@ -17,16 +17,8 @@ struct ManagementView: View {
     @State private var processOrder = 0
 
     private func visibleProcesses(_ rows: [ProcessSampleRow]) -> [ProcessSampleRow] {
-        let query = processQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        let filtered = rows.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
-        return filtered.sorted {
-            if processOrder == 1 {
-                if $0.bytes != $1.bytes { return $0.bytes < $1.bytes }
-            } else if processOrder == 0 {
-                if $0.bytes != $1.bytes { return $0.bytes > $1.bytes }
-            }
-            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
-        }
+        ProcessSamplePresentation.visible(rows, query: processQuery,
+                                          order: ProcessSampleOrdering(rawValue: processOrder) ?? .descendingBytes)
     }
 
     var body: some View {
