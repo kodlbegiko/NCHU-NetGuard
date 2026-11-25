@@ -13,6 +13,64 @@ public enum ProbeOutcome: Equatable, Sendable {
 /// A timeout stops collecting output and requests termination of our own child.
 /// A non-cooperative child/descendant can outlive the deadline; no process-tree kill.
 package enum ProbeRunner {
+    /// All production calls pass this argument policy. The low-level pipe
+    /// runner remains separately testable with synthetic fixture commands.
+    package static func isApproved(_ path: String, _ arguments: [String]) -> Bool {
+        guard arguments.count <= 16, arguments.allSatisfy({ !$0.utf8.contains(0) && $0.utf8.count <= 4096 }) else { return false }
+        func numeric(_ literal: String, ipv6: Bool) -> Bool {
+            if ipv6 {
+                var value = in6_addr()
+                return inet_pton(AF_INET6, literal, &value) == 1
+            }
+            var value = in_addr()
+            return inet_pton(AF_INET, literal, &value) == 1
+        }
+        switch path {
+        case "/sbin/route":
+            guard arguments.count == 4, arguments[0] == "-n", arguments[1] == "get",
+                  ["-inet", "-inet6"].contains(arguments[2]) else { return false }
+            return arguments[3] == "default" || numeric(arguments[3], ipv6: arguments[2] == "-inet6")
+        case "/usr/sbin/ipconfig":
+            guard arguments.count == 2, arguments[0] == "getifaddr" else { return false }
+            let name = arguments[1]
+            return (1...32).contains(name.utf8.count) && name.utf8.allSatisfy {
+                (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0)
+            }
+        case "/bin/ps":
+            return arguments == ["-ax", "-o", "pid=,ppid=,lstart=,comm="]
+        case "/usr/bin/nettop":
+            return arguments == ["-P", "-L", "1", "-J", "bytes_in,bytes_out"] ||
+                ["tcp", "udp"].contains { mode in
+                    arguments == ["-m", mode, "-n", "-x", "-L", "1", "-J", "bytes_in,bytes_out,interface,state"]
+                }
+        case "/sbin/ping":
+            return arguments.count == 5 && Array(arguments.prefix(4)) == ["-c", "2", "-t", "3"] &&
+                ["140.120.1.2", "1.1.1.1"].contains(arguments[4])
+        case "/usr/bin/dig":
+            return arguments == ["-r", "+time=2", "+tries=1", "+noall", "+comments", "+stats", "example.com.", "A"]
+        case "/usr/bin/osascript":
+            return arguments.count == 9 && Array(arguments.prefix(7)) == ["-e", "on run argv", "-e",
+                "display notification (item 2 of argv) with title (item 1 of argv)", "-e", "end run", "--"] &&
+                arguments[7].utf8.count <= 1024
+        case "/usr/bin/python3":
+            guard arguments.count == 2, arguments[1] == "--json",
+                  let resource = Bundle.main.url(forResource: "traffic_monitor", withExtension: "py"),
+                  let directory = Bundle.main.resourceURL,
+                  arguments[0] == resource.path else { return false }
+            return resource.resolvingSymlinksInPath().deletingLastPathComponent().path ==
+                directory.resolvingSymlinksInPath().path
+        default: return false
+        }
+    }
+
+    package static func runApproved(_ path: String, _ arguments: [String], timeout: TimeInterval = 5,
+                    maxBytes: Int = 1_048_576, acceptedExitCodes: Set<Int32> = [0]) -> ProbeOutcome {
+        guard isApproved(path, arguments) else { return .failed }
+        // Python ignores environment/user-site module injection.
+        return run(path, path == "/usr/bin/python3" ? ["-I"] + arguments : arguments,
+                   timeout: timeout, maxBytes: maxBytes, acceptedExitCodes: acceptedExitCodes)
+    }
+
     package static func run(_ path: String, _ arguments: [String], timeout: TimeInterval = 5,
                     maxBytes: Int = 1_048_576, acceptedExitCodes: Set<Int32> = [0]) -> ProbeOutcome {
         guard path.hasPrefix("/"), timeout.isFinite, timeout > 0, timeout <= 30,
@@ -29,9 +87,8 @@ package enum ProbeRunner {
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
         process.standardInput = FileHandle.nullDevice
-        var environment = ProcessInfo.processInfo.environment
-        environment["LC_ALL"] = "C"
-        process.environment = environment
+        process.environment = ["LC_ALL": "C", "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": FileManager.default.homeDirectoryForCurrentUser.path]
         let start = ProcessInfo.processInfo.systemUptime
         do { try process.run() } catch { return .failed }
         // Close the parent's write end; an EOF reflects all inherited writers.

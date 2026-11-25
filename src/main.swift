@@ -2112,7 +2112,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
     var isDetectingNetwork: Bool = false
     
     private static func discoverDefaultRoute(ipv6: Bool) -> String? {
-        guard case .success(let output) = ProbeRunner.run("/sbin/route",
+        guard case .success(let output) = ProbeRunner.runApproved("/sbin/route",
             ["-n", "get", ipv6 ? "-inet6" : "-inet", "default"], timeout: 2, maxBytes: 65536)
         else { return nil }
         return DefaultRouteParser.interfaceName(output)
@@ -2120,7 +2120,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
 
     private static func discoverDefaultIPv4() -> (interface: String, ip: String) {
         guard let name = discoverDefaultRoute(ipv6: false) else { return ("", "") }
-        guard case .success(let address) = ProbeRunner.run("/usr/sbin/ipconfig", ["getifaddr", name], timeout: 2)
+        guard case .success(let address) = ProbeRunner.runApproved("/usr/sbin/ipconfig", ["getifaddr", name], timeout: 2)
         else { return (name, "") }
         let ip = address.trimmingCharacters(in: .whitespacesAndNewlines)
         var parsed = in_addr()
@@ -2319,7 +2319,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         let generation = workflowPowerGuard.generation
         syncManagementModel()
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let outcome = ProbeRunner.run("/usr/bin/dig", ["-r", "+time=2", "+tries=1", "+noall", "+comments", "+stats", "example.com.", "A"], timeout: 4, maxBytes: 65536)
+            let outcome = ProbeRunner.runApproved("/usr/bin/dig", ["-r", "+time=2", "+tries=1", "+noall", "+comments", "+stats", "example.com.", "A"], timeout: 4, maxBytes: 65536)
             let reading: DNSProbeReading?
             if case .success(let raw) = outcome { reading = DNSProbeParser.parse(raw) }
             else { reading = nil }
@@ -2356,7 +2356,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             echoTarget = target
         }
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let outcome = ProbeRunner.run("/sbin/ping", ["-c", "2", "-t", "3", target], timeout: 5, maxBytes: 65536, acceptedExitCodes: [0, 2])
+            let outcome = ProbeRunner.runApproved("/sbin/ping", ["-c", "2", "-t", "3", target], timeout: 5, maxBytes: 65536, acceptedExitCodes: [0, 2])
             let reading: EchoProbeReading?
             if case .success(let raw) = outcome { reading = EchoProbeParser.parse(raw, expectedCount: 2) }
             else { reading = nil }
@@ -2384,17 +2384,17 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         let token = processObservationToken
         DispatchQueue.global(qos: .background).async { [weak self] in
             let before: [Int: ProcessTreeNode]?
-            if collectSession, case .success(let raw) = ProbeRunner.run("/bin/ps", ["-ax", "-o", "pid=,ppid=,lstart=,comm="], timeout: 2) {
+            if collectSession, case .success(let raw) = ProbeRunner.runApproved("/bin/ps", ["-ax", "-o", "pid=,ppid=,lstart=,comm="], timeout: 2) {
                 let parsed = AgentAttribution.parseTree(raw)
                 before = parsed.isEmpty ? nil : parsed
             } else { before = nil }
-            let outcome = ProbeRunner.run("/usr/bin/nettop", ["-P", "-L", "1", "-J", "bytes_in,bytes_out"], timeout: 5)
+            let outcome = ProbeRunner.runApproved("/usr/bin/nettop", ["-P", "-L", "1", "-J", "bytes_in,bytes_out"], timeout: 5)
             let sampledAt = ProcessInfo.processInfo.systemUptime
             let sampledDate = Date()
             let counters: [ProcessCounter]?
             let attributed: [ProcessCounter]?
             if let before, case .success(let raw) = outcome,
-               case .success(let afterOutput) = ProbeRunner.run("/bin/ps", ["-ax", "-o", "pid=,ppid=,lstart=,comm="], timeout: 2) {
+               case .success(let afterOutput) = ProbeRunner.runApproved("/bin/ps", ["-ax", "-o", "pid=,ppid=,lstart=,comm="], timeout: 2) {
                 let after = AgentAttribution.parseTree(afterOutput)
                 counters = after.isEmpty ? nil : ProcessCounterParser.parse(raw, before: before.mapValues { $0.start }, after: after.mapValues { $0.start })
                 attributed = AgentAttribution.attributed(counters, before: before, after: after)
@@ -2725,7 +2725,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             lastCriticalNotificationTime = now
         }
         DispatchQueue.global(qos: .utility).async {
-            _ = ProbeRunner.run("/usr/bin/osascript", ["-e", "on run argv", "-e",
+            _ = ProbeRunner.runApproved("/usr/bin/osascript", ["-e", "on run argv", "-e",
                 "display notification (item 2 of argv) with title (item 1 of argv)",
                 "-e", "end run", "--", title, body], timeout: 5)
         }
@@ -2873,7 +2873,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                 }
             }
             guard let scriptPath = Bundle.main.url(forResource: "traffic_monitor", withExtension: "py")?.path else { return }
-            guard case .success(let output) = ProbeRunner.run("/usr/bin/python3", [scriptPath, "--json"], timeout: 15),
+            guard case .success(let output) = ProbeRunner.runApproved("/usr/bin/python3", [scriptPath, "--json"], timeout: 15),
                   let data = output.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   json["schema_version"] as? Int == 1,
@@ -2976,51 +2976,51 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         alertToggleItem.state = isAlertEnabled ? .on : .off
         menu.addItem(alertToggleItem)
         
-        let lidGuardToggleItem = NSMenuItem(title: "🛡️ 盒蓋/睡眠防偷跑守護 (暫停串流與同步)", action: #selector(handleToggleLidGuard), keyEquivalent: "")
+        let lidGuardToggleItem = NSMenuItem(title: "盒蓋／睡眠背景傳輸提醒", action: #selector(handleToggleLidGuard), keyEquivalent: "")
         lidGuardToggleItem.target = self
         lidGuardToggleItem.state = isLidGuardEnabled ? .on : .off
         menu.addItem(lidGuardToggleItem)
         
-        let idleGuardToggleItem = NSMenuItem(title: "🚶 離座閒置防偷跑守護 (10分鐘無操作暫停)", action: #selector(handleToggleIdleGuard), keyEquivalent: "")
+        let idleGuardToggleItem = NSMenuItem(title: "離座背景傳輸提醒（10 分鐘）", action: #selector(handleToggleIdleGuard), keyEquivalent: "")
         idleGuardToggleItem.target = self
         idleGuardToggleItem.state = isIdleGuardEnabled ? .on : .off
         menu.addItem(idleGuardToggleItem)
         
-        let failoverItem = NSMenuItem(title: "🔀 宿網耗盡自動切換 Wi-Fi (免拔線避難)", action: #selector(handleToggleWifiFailover), keyEquivalent: "")
+        let failoverItem = NSMenuItem(title: "自動換網（尚未開放）", action: nil, keyEquivalent: "")
         failoverItem.target = self
         failoverItem.state = isAutoWifiFailoverEnabled ? .on : .off
         menu.addItem(failoverItem)
         
-        let splitItem = NSMenuItem(title: "🔀 興大校內/外雙軌智慧分流", action: #selector(handleToggleSplitRouting), keyEquivalent: "")
+        let splitItem = NSMenuItem(title: "智慧分流（尚未開放）", action: nil, keyEquivalent: "")
         splitItem.target = self
         splitItem.state = isSplitRoutingEnabled ? .on : .off
         menu.addItem(splitItem)
         
-        let midnightItem = NSMenuItem(title: "🌙 00:00 換日大檔排程 (00:05 重置啟動)", action: #selector(handleToggleMidnightSchedule), keyEquivalent: "")
+        let midnightItem = NSMenuItem(title: "換日自動排程（尚未開放）", action: nil, keyEquivalent: "")
         midnightItem.target = self
         midnightItem.state = isMidnightScheduleEnabled ? .on : .off
         menu.addItem(midnightItem)
         
-        let p2pShieldItem = NSMenuItem(title: "🛡️ 興大宿網 P2P 違規攔截盾 (自動防禦)", action: #selector(handleToggleP2PShield), keyEquivalent: "")
+        let p2pShieldItem = NSMenuItem(title: "P2P 風險提示（不會終止程序）", action: #selector(handleToggleP2PShield), keyEquivalent: "")
         p2pShieldItem.target = self
         p2pShieldItem.state = isP2PShieldAutoKillEnabled ? .on : .off
         menu.addItem(p2pShieldItem)
         
-        let blocklistItem = NSMenuItem(title: "🔍 興大計中黑名單即時診斷", action: #selector(handleCheckBlocklistNow), keyEquivalent: "")
+        let blocklistItem = NSMenuItem(title: "校方鎖卡狀態（需官方核對）", action: #selector(handleCheckBlocklistNow), keyEquivalent: "")
         blocklistItem.target = self
         menu.addItem(blocklistItem)
         
         if isWiredTemporarilyDisabled {
-            let restoreItem = NSMenuItem(title: "🔌 立即恢復有線宿網 (目前處於 Wi-Fi 避難)", action: #selector(handleRestoreWired), keyEquivalent: "")
+            let restoreItem = NSMenuItem(title: "有線復原（尚未開放）", action: nil, keyEquivalent: "")
             restoreItem.target = self
             menu.addItem(restoreItem)
         } else if isDormNetwork {
-            let switchWifiItem = NSMenuItem(title: "🔀 立即切換為校園 Wi-Fi (免拔線避難)", action: #selector(handleManualSwitchToWifi), keyEquivalent: "")
+            let switchWifiItem = NSMenuItem(title: "手動換網（尚未開放）", action: nil, keyEquivalent: "")
             switchWifiItem.target = self
             menu.addItem(switchWifiItem)
         }
         
-        let panicTitle = pausedPIDs.isEmpty ? "⚡ 一鍵急救省流 (立即暫停串流與同步)" : "▶️ 解除省流 (恢復背景串流與同步)"
+        let panicTitle = pausedPIDs.isEmpty ? "背景流量檢查提醒" : "背景流量檢查提醒"
         let panicItem = NSMenuItem(title: panicTitle, action: #selector(handlePanicFreeze), keyEquivalent: "p")
         panicItem.target = self
         menu.addItem(panicItem)
@@ -3038,7 +3038,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         m2.target = self; m2.state = (displayMode == 2) ? .on : .off
         modeMenu.addItem(m2)
         
-        let m3 = NSMenuItem(title: "狀態安全燈 + 容量 (例如: 🟢 10.7G)", action: #selector(setMode3), keyEquivalent: "")
+        let m3 = NSMenuItem(title: "本機估計等級＋容量", action: #selector(setMode3), keyEquivalent: "")
         m3.target = self; m3.state = (displayMode == 3) ? .on : .off
         modeMenu.addItem(m3)
         
@@ -3183,9 +3183,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
     }
 
     @objc func openIPMS() {
-        if let url = URL(string: "http://140.120.4.13/apply.php") {
-            NSWorkspace.shared.open(url)
-        }
+        sendSystemNotification(title: "官方申請網址未確認", body: "舊版 HTTP 位址未驗證；請由學校計中官方網站尋找申請入口。", isCritical: false)
     }
 
     @objc func quitApp() {

@@ -32,3 +32,19 @@ class CoverageTests(unittest.TestCase):
                 coverage.summarize(root, report(row(a, 90, 90), row(a, 90, 90)))
             with self.assertRaises(ValueError):
                 coverage.summarize(root, report(row(a, 10, 11)))
+
+    def test_only_verified_alias_file_may_be_omitted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "Sources" / "NetGuardCore"
+            source.mkdir(parents=True)
+            app = source / "App.swift"
+            app.touch()
+            alias = source / "ModuleCompatibility.swift"
+            alias.write_text("#if SWIFT_PACKAGE\nimport NetGuardTraffic\npublic typealias X = NetGuardTraffic.X\n#endif\n")
+            report = {"data": [{"files": [{"filename": str(app), "summary": {"lines": {"count": 10, "covered": 9}}}]}]}
+            result = coverage.summarize(root, report)
+            self.assertTrue(result["meets_target"])
+            self.assertEqual(result["verified_non_executable_sources"], ["Sources/NetGuardCore/ModuleCompatibility.swift"])
+            alias.write_text(alias.read_text() + "\nfunc bypass() {}\n")
+            self.assertFalse(coverage.summarize(root, report)["meets_target"])

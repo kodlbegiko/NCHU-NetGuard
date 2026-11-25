@@ -2,6 +2,7 @@
 """Report line coverage for production Swift Sources only; no release claim."""
 import argparse
 import json
+import re
 from pathlib import Path
 
 
@@ -26,7 +27,19 @@ def summarize(root, report):
             if path in rows:
                 raise ValueError("ambiguous duplicate coverage file")
             rows[path] = count, covered
-    missing = sorted(expected - rows.keys())
+    # LLVM legitimately omits a source containing only module compatibility
+    # typealiases/imports. Limit the exception to that exact path and verify
+    # every non-comment line is a non-executable declaration.
+    excluded = []
+    alias = "Sources/NetGuardCore/ModuleCompatibility.swift"
+    if alias in expected and alias not in rows:
+        contents = (root / alias).read_text(encoding="utf-8")
+        lines = [line.strip() for line in contents.splitlines()
+                 if line.strip() and not line.strip().startswith("//")]
+        pattern = r"(?:#if SWIFT_PACKAGE|#endif|import [A-Za-z_]\w*|(?:public|package) typealias [A-Za-z_]\w* = [A-Za-z_]\w*\.[A-Za-z_]\w*)"
+        if lines and lines[0] == "#if SWIFT_PACKAGE" and lines[-1] == "#endif" and all(re.fullmatch(pattern, line) for line in lines):
+            excluded.append(alias)
+    missing = sorted(expected - rows.keys() - set(excluded))
     count = sum(v[0] for v in rows.values())
     covered = sum(v[1] for v in rows.values())
     percentage = 100 * covered / count if count else None
@@ -34,7 +47,7 @@ def summarize(root, report):
     meets_target = not missing and count > 0 and covered * 100 >= count * 90
     return {
         "source_files": len(expected), "reported_files": len(rows),
-        "missing_sources": missing, "executable_lines": count,
+        "missing_sources": missing, "verified_non_executable_sources": excluded, "executable_lines": count,
         "covered_lines": covered, "reported_line_coverage_percent": percentage,
         "complete_inventory": not missing, "target_percent": 90,
         "meets_target": meets_target,
