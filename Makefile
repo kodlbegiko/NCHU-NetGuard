@@ -1,4 +1,4 @@
-.PHONY: all build install test smoke host-check flow-check clean
+.PHONY: all build install test smoke host-check flow-check udp-check clean
 APP := build/NCHUTraffic.app
 INSTALL_DIR ?= $(HOME)/Applications
 
@@ -25,6 +25,9 @@ host-check: build
 
 flow-check: build
 	"$(APP)/Contents/MacOS/NCHUTraffic" --netguard-flow-check
+
+udp-check: build
+	"$(APP)/Contents/MacOS/NCHUTraffic" --netguard-udp-check
 
 clean:
 	rm -rf build
