@@ -312,6 +312,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         return observation.displayStatus(for: getTodayString(), now: Date())
     }
     var displayMode: Int = 0
+    var rateDisplayUnit = RateDisplayUnit.binaryBytes
+    var personalBudget: PersonalDailyBudget?
     
     // 盒蓋與離座防偷跑流量守護 (Lid & Idle Traffic Guard)
     var isLidGuardEnabled: Bool = true
@@ -753,6 +755,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         }
         
         currentDateString = getTodayString()
+        loadDisplayPreferences()
         detectActiveNetworkSync()
         loadPersistedState()
         initHardwareCounters()
@@ -1241,7 +1244,61 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func loadDisplayPreferences() {
+        let defaults = UserDefaults.standard
+        rateDisplayUnit = RateDisplayUnit(rawValue: defaults.string(forKey: "NetGuard.rateUnit") ?? "") ?? .binaryBytes
+        if let data = defaults.data(forKey: "NetGuard.personalBudget") {
+            do {
+                personalBudget = try PersonalDailyBudget.decode(data)
+                settingsModel.budgetStatus = "已載入個人預算"
+            } catch {
+                settingsModel.budgetStatus = "預算設定無法驗證；未套用"
+            }
+        }
+    }
+
+    private func savePersonalBudget(scope: NetworkScope, text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let gb = UInt64(trimmed), let budget = try? PersonalDailyBudget(scope: scope, decimalGigabytes: gb),
+              let data = try? JSONEncoder().encode(budget) else {
+            settingsModel.budgetStatus = "請輸入 1–10000 的整數 GB"
+            return
+        }
+        UserDefaults.standard.set(data, forKey: "NetGuard.personalBudget")
+        personalBudget = budget
+        settingsModel.budgetStatus = "個人預算已設定（本機觀測）"
+        syncSettingsModel()
+    }
+
+    private func clearPersonalBudget() {
+        UserDefaults.standard.removeObject(forKey: "NetGuard.personalBudget")
+        personalBudget = nil
+        settingsModel.budgetStatus = "已清除個人預算"
+        syncSettingsModel()
+    }
+
+    private func personalBudgetReading() -> PersonalBudgetReading? {
+        guard let budget = personalBudget, !persistenceBlocked, scopedHistoryEligible,
+              measuredSampleCount > 0, currentDateString == getTodayString() else { return nil }
+        let pair: (Double, Double)
+        switch budget.scope {
+        case .dorm: pair = (dormTodayInBytes, dormTodayOutBytes)
+        case .campusWifi: pair = (wifiTodayInBytes, wifiTodayOutBytes)
+        case .external: pair = (extTodayInBytes, extTodayOutBytes)
+        case .unknown: return nil
+        }
+        // Global coverage does not establish that a particular scope was observed.
+        // Until per-scope coverage is recorded, an all-zero category stays unknown.
+        guard let received = UInt64(exactly: pair.0), let sent = UInt64(exactly: pair.1),
+              received > 0 || sent > 0 else { return nil }
+        return budget.evaluate(received: received, sent: sent, observed: true)
+    }
+
     func syncSettingsModel() {
+        if settingsModel.rateUnit != rateDisplayUnit { settingsModel.rateUnit = rateDisplayUnit }
+        if settingsModel.personalBudget != personalBudget { settingsModel.personalBudget = personalBudget }
+        let reading = personalBudgetReading()
+        if settingsModel.personalReading != reading { settingsModel.personalReading = reading }
         if settingsModel.alertsEnabled != isAlertEnabled { settingsModel.alertsEnabled = isAlertEnabled }
         if settingsModel.focusEnabled != workflowPowerGuard.focusEnabled { settingsModel.focusEnabled = workflowPowerGuard.focusEnabled }
         if settingsModel.nativePreview != nativePanelEnabled { settingsModel.nativePreview = nativePanelEnabled }
@@ -1281,6 +1338,15 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 self.updateStatusBar()
                 self.syncSettingsModel()
             },
+            setRateUnit: { [weak self] unit in
+                guard let self else { return }
+                self.rateDisplayUnit = unit
+                UserDefaults.standard.set(unit.rawValue, forKey: "NetGuard.rateUnit")
+                self.updateStatusBar()
+                self.syncSettingsModel()
+            },
+            saveBudget: { [weak self] scope, text in self?.savePersonalBudget(scope: scope, text: text) },
+            clearBudget: { [weak self] in self?.clearPersonalBudget() },
             createBackup: { [weak self] in self?.createHistoryBackup() },
             inspectBackup: { [weak self] in self?.inspectHistoryBackup() }
         ))
@@ -2294,13 +2360,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     func formatSpeed(_ bytesPerSec: Double) -> String {
-        if bytesPerSec >= 1024 * 1024 {
-            return String(format: "%.1fM/s", bytesPerSec / (1024 * 1024))
-        } else if bytesPerSec >= 1024 {
-            return String(format: "%.0fK/s", bytesPerSec / 1024)
-        } else {
-            return String(format: "%.0fB/s", bytesPerSec)
-        }
+        rateDisplayUnit.format(bytesPerSec)
     }
 
     func formatBytes(_ b: Double) -> String {
