@@ -2,7 +2,10 @@ import Foundation
 import CryptoKit
 
 public struct HistoryBundleSummary: Equatable, Sendable {
+    public let version: Int
     public let database: HistoryBackupSummary
+    /// nil means the older V1 format does not include AI history.
+    public let agentDays: Int?
     public let processDays: Int
     public let connectionSessions: Int
     public let events: Int
@@ -46,26 +49,34 @@ public enum HistoryBundle {
         return data
     }
 
-    private static func inventory(_ root: URL, manifestPresent: Bool) throws -> [HistoryBundleManifest.Entry] {
+    private static func folders(version: Int) throws -> [String] {
+        guard [1, 2].contains(version) else { throw fail() }
+        return ["process-history", "connection-history", "event-history"] + (version == 2 ? ["agent-history"] : [])
+    }
+
+    private static func inventory(_ root: URL, version: Int, manifestPresent: Bool) throws -> [HistoryBundleManifest.Entry] {
         try directory(root)
-        let expected = Set(["history.sqlite", "process-history", "connection-history", "event-history"] + (manifestPresent ? ["manifest.json"] : []))
+        let expected = Set(["history.sqlite"] + (try folders(version: version)) + (manifestPresent ? ["manifest.json"] : []))
         guard Set(try fm.contentsOfDirectory(atPath: root.path)) == expected else { throw fail() }
         for (folder, expectedFile) in [("connection-history", "sessions.json"), ("event-history", "events.json")] {
             let url = root.appendingPathComponent(folder)
             try directory(url)
             guard try fm.contentsOfDirectory(atPath: url.path) == [expectedFile] else { throw fail() }
         }
-        let process = root.appendingPathComponent("process-history")
-        try directory(process)
-        let names = try fm.contentsOfDirectory(atPath: process.path)
-        guard names.count <= 366 else { throw fail() }
-        for name in names {
-            guard name.hasSuffix(".json") else { throw fail() }
-            let day = String(name.dropLast(5))
-            _ = try HistoryDay(day: day, total: 0, download: nil, upload: nil)
+        var paths = fixed
+        for folder in ["process-history"] + (version == 2 ? ["agent-history"] : []) {
+            let url = root.appendingPathComponent(folder)
+            try directory(url)
+            let names = try fm.contentsOfDirectory(atPath: url.path)
+            guard names.count <= 366 else { throw fail() }
+            for name in names {
+                guard name.hasSuffix(".json") else { throw fail() }
+                _ = try HistoryDay(day: String(name.dropLast(5)), total: 0, download: nil, upload: nil)
+                paths.append(folder + "/" + name)
+            }
         }
         var total = 0
-        return try (fixed + names.map { "process-history/" + $0 }).sorted().map { path in
+        return try paths.sorted().map { path in
             let data = try read(root.appendingPathComponent(path), max: path == "history.sqlite" ? 64 * 1024 * 1024 : 2 * 1024 * 1024)
             total += data.count
             guard total <= maxTotal else { throw fail() }
@@ -76,12 +87,14 @@ public enum HistoryBundle {
 
     public static func create(database: URL, process: ProcessHistoryStore,
                               connections: ConnectionHistoryStore, events: TrafficEventArchive,
+                              agents: AgentHistoryStore? = nil,
                               destination: URL) throws -> HistoryBundleSummary {
         guard destination.isFileURL, !fm.fileExists(atPath: destination.path) else { throw fail() }
+        let version = agents == nil ? 1 : 2
         let temp = destination.deletingLastPathComponent().appendingPathComponent(".netguard-history-" + UUID().uuidString)
         try fm.createDirectory(at: temp, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? fm.removeItem(at: temp) }
-        for folder in ["process-history", "connection-history", "event-history"] {
+        for folder in try folders(version: version) {
             try fm.createDirectory(at: temp.appendingPathComponent(folder), withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         }
         try HistoryStore.backup(from: database, to: temp.appendingPathComponent("history.sqlite"))
@@ -95,10 +108,20 @@ public enum HistoryBundle {
             guard data.count <= 2 * 1024 * 1024, processBytes <= maxTotal else { throw fail() }
             try write(data, to: temp.appendingPathComponent("process-history/\(day).json"))
         }
+        if let agents {
+            let agentDays = try agents.storedDays()
+            guard agentDays.count <= 366 else { throw fail() }
+            for day in agentDays {
+                let data = try encoder.encode(agents.read(day: day).buckets)
+                processBytes += data.count
+                guard data.count <= 2 * 1024 * 1024, processBytes <= maxTotal else { throw fail() }
+                try write(data, to: temp.appendingPathComponent("agent-history/\(day).json"))
+            }
+        }
         try write(encoder.encode(connections.read()), to: temp.appendingPathComponent("connection-history/sessions.json"))
         try write(encoder.encode(events.read()), to: temp.appendingPathComponent("event-history/events.json"))
-        let entries = try inventory(temp, manifestPresent: false)
-        let manifest = HistoryBundleManifest(version: 1, createdAt: Date(), files: entries)
+        let entries = try inventory(temp, version: version, manifestPresent: false)
+        let manifest = HistoryBundleManifest(version: version, createdAt: Date(), files: entries)
         try write(encoder.encode(manifest), to: temp.appendingPathComponent("manifest.json"))
         let result = try inspect(temp)
         try fm.moveItem(at: temp, to: destination)
@@ -110,17 +133,24 @@ public enum HistoryBundle {
     public static func inspect(_ root: URL) throws -> HistoryBundleSummary {
         try directory(root)
         let manifest = try JSONDecoder().decode(HistoryBundleManifest.self,
-            from: read(root.appendingPathComponent("manifest.json"), max: 128 * 1024))
-        guard manifest.version == 1, manifest.createdAt.timeIntervalSince1970.isFinite,
-              manifest.files.count <= 369,
-              manifest.files == (try inventory(root, manifestPresent: true)) else { throw fail() }
+            from: read(root.appendingPathComponent("manifest.json"), max: 256 * 1024))
+        guard [1, 2].contains(manifest.version), manifest.createdAt.timeIntervalSince1970.isFinite,
+              manifest.files.count <= (manifest.version == 1 ? 369 : 735),
+              manifest.files == (try inventory(root, version: manifest.version, manifestPresent: true)) else { throw fail() }
         let database = try HistoryBackupInspector.inspect(root.appendingPathComponent("history.sqlite"))
         let process = ProcessHistoryStore(directory: root.appendingPathComponent("process-history"))
         let days = try process.storedDays()
         for day in days { _ = try process.read(day: day) }
+        let agentDays: Int?
+        if manifest.version == 2 {
+            let agents = AgentHistoryStore(directory: root.appendingPathComponent("agent-history"))
+            let dates = try agents.storedDays()
+            for day in dates { _ = try agents.read(day: day) }
+            agentDays = dates.count
+        } else { agentDays = nil }
         let connections = try ConnectionHistoryStore(directory: root.appendingPathComponent("connection-history")).read()
         let events = try TrafficEventArchive(directory: root.appendingPathComponent("event-history")).read()
-        return .init(database: database, processDays: days.count, connectionSessions: connections.count, events: events.count)
+        return .init(version: manifest.version, database: database, agentDays: agentDays, processDays: days.count, connectionSessions: connections.count, events: events.count)
     }
 
     /// Recover a verified copy into a NEW directory only. Never replaces the
@@ -133,21 +163,21 @@ public enum HistoryBundle {
         let sourcePath = source.resolvingSymlinksInPath().standardizedFileURL.path
         let parentPath = destination.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL.path
         guard parentPath != sourcePath, !parentPath.hasPrefix(sourcePath + "/") else { throw fail() }
-        let manifestData = try read(source.appendingPathComponent("manifest.json"), max: 128 * 1024)
+        let manifestData = try read(source.appendingPathComponent("manifest.json"), max: 256 * 1024)
         let manifest = try JSONDecoder().decode(HistoryBundleManifest.self, from: manifestData)
         let expectedSummary = try inspect(source)
-        guard try read(source.appendingPathComponent("manifest.json"), max: 128 * 1024) == manifestData,
-              manifest.files == (try inventory(source, manifestPresent: true)) else { throw fail() }
+        guard try read(source.appendingPathComponent("manifest.json"), max: 256 * 1024) == manifestData,
+              manifest.files == (try inventory(source, version: manifest.version, manifestPresent: true)) else { throw fail() }
 
         let temp = destination.deletingLastPathComponent().appendingPathComponent(".netguard-recovery-" + UUID().uuidString)
         try fm.createDirectory(at: temp, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? fm.removeItem(at: temp) }
-        for folder in ["process-history", "connection-history", "event-history"] {
+        for folder in try folders(version: manifest.version) {
             try fm.createDirectory(at: temp.appendingPathComponent(folder), withIntermediateDirectories: false,
                 attributes: [.posixPermissions: 0o700])
         }
         // Derive paths from the validated inventory, never unchecked input.
-        let entries = try inventory(source, manifestPresent: true)
+        let entries = try inventory(source, version: manifest.version, manifestPresent: true)
         guard entries == manifest.files else { throw fail() }
         for entry in entries {
             let data = try read(source.appendingPathComponent(entry.path),

@@ -18,15 +18,21 @@ public struct AgentHistoryStore: Sendable {
         try store.save(day: day, bucket: bucket)
     }
 
+    public func storedDays() throws -> [String] { try store.storedDays() }
+
+    public func read(day: String) throws -> ProcessHistoryDay {
+        let result = try store.read(day: day)
+        try validate(result.buckets)
+        return result
+    }
+
     public func readRecent(now: Date = Date()) throws -> [ProcessHistoryDay] {
         guard now.timeIntervalSince1970.isFinite else { throw HistoryStoreError.invalidRecord }
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "Asia/Taipei")!
         return try (0..<7).map { offset in
             guard let date = calendar.date(byAdding: .day, value: -offset, to: now) else { throw HistoryStoreError.invalidRecord }
-            let day = try store.read(day: ProcessHistoryStore.hour(at: date).day)
-            try validate(day.buckets)
-            return day
+            return try read(day: ProcessHistoryStore.hour(at: date).day)
         }
     }
 

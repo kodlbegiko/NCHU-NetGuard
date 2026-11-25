@@ -774,7 +774,7 @@ struct ManagementView: View {
                 Toggle("本次執行允許儲存 AI 工具分類", isOn: Binding(
                     get: { model.agentHistoryEnabled }, set: setAgentHistoryEnabled))
                     .disabled(model.agentHistoryBusy)
-                Text("只保存固定 AI 工具分類與已觀測增量，保留 30 天（成功儲存時清理）。與程序統計重疊，不應相加；未包含在目前歷史備份。")
+                Text("只保存固定 AI 工具分類與已觀測增量，保留 30 天（成功儲存時清理）。與程序統計重疊，不應相加；完整歷史備份 V2 包含已保存的 AI 紀錄。")
                     .font(.caption2).foregroundStyle(.secondary)
                 HStack {
                     Button("讀取歷史", action: reloadAgentHistory)

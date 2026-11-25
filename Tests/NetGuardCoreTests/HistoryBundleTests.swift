@@ -104,4 +104,44 @@ final class HistoryBundleTests: XCTestCase {
         }
     }
 
+    func testV2AgentBackupAndRecoveryPreserveData() throws {
+        try fixture { root, db, process, connections, events in
+            let agent = AgentHistoryStore(directory: root.appendingPathComponent("agents"))
+            let bucket = try ProcessHistoryBucket(session: UUID(), hour: 10, intervals: 1,
+                rows: [ProcessHistoryRow(name: "Codex", download: 50, upload: 10)], limited: false)
+            try agent.save(day: "2026-11-25", bucket: bucket)
+            let v1 = root.appendingPathComponent("v1")
+            let older = try HistoryBundle.create(database: db, process: process, connections: connections, events: events, destination: v1)
+            XCTAssertEqual(older.version, 1)
+            XCTAssertNil(older.agentDays)
+            let target = root.appendingPathComponent("v2")
+            let summary = try HistoryBundle.create(database: db, process: process, connections: connections, events: events, agents: agent, destination: target)
+            XCTAssertEqual(summary.version, 2)
+            XCTAssertEqual(summary.agentDays, 1)
+            XCTAssertEqual(try HistoryBundle.inspect(target), summary)
+            let copy = root.appendingPathComponent("copy")
+            XCTAssertEqual(try HistoryBundle.recoverCopy(from: target, to: copy), summary)
+            let recovered = AgentHistoryStore(directory: copy.appendingPathComponent("agent-history"))
+            XCTAssertEqual(try recovered.read(day: "2026-11-25").buckets, [bucket])
+            XCTAssertEqual(try agent.read(day: "2026-11-25").buckets, [bucket])
+            try Data("[]".utf8).write(to: target.appendingPathComponent("agent-history/2026-11-25.json"))
+            XCTAssertThrowsError(try HistoryBundle.inspect(target))
+            XCTAssertThrowsError(try HistoryBundle.recoverCopy(from: target, to: root.appendingPathComponent("corrupt-copy")))
+            XCTAssertEqual(try HistoryBundle.inspect(v1), older)
+        }
+    }
+
+    func testV2RejectsUnexpectedAgentLabelsWithoutPublishing() throws {
+        try fixture { root, db, process, connections, events in
+            let directory = root.appendingPathComponent("agents")
+            let invalid = try ProcessHistoryBucket(session: UUID(), hour: 1, intervals: 1,
+                rows: [ProcessHistoryRow(name: "unexpected", download: 1, upload: 0)], limited: false)
+            try ProcessHistoryStore(directory: directory).save(day: "2026-11-25", bucket: invalid)
+            let target = root.appendingPathComponent("backup")
+            XCTAssertThrowsError(try HistoryBundle.create(database: db, process: process, connections: connections,
+                events: events, agents: AgentHistoryStore(directory: directory), destination: target))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: target.path))
+        }
+    }
+
 }

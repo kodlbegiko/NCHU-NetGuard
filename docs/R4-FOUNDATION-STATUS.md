@@ -292,3 +292,7 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 ## Fifty-third iteration
 
 - Added native seven-day AI observed directional bars, explicit missing/observed-zero/partial labels, observed-day count and deterministic tool ranking with checked arithmetic. Includes current partial day; not compute cost or complete usage. One regression test. AI history still separate from v1 bundle; versioned migration not attempted without CI. Commit workflow lookup for 335c5be8 still returns no PR-triggered runs; candidate not yet independently verified. No paid services or release.
+
+## Fifty-fourth iteration
+
+- Versioned portable history bundle V2 includes separately opted-in AI tool history with a fixed agent-history directory, allowlist revalidation, bounded per-file and total bytes, SHA-256 inventory and isolated copy recovery. V1 create API remains compatible when agents omitted; inspection/recovery explicitly distinguish absent V1 AI data from zero saved V2 days. Production UI creates V2 and guards agent history mutation during backup. Two regression cases for V1/V2 roundtrip and corrupt/unexpected labels. Backup remains independent component snapshots, not an active-store transaction, not encrypted/signed. No release or paid services. Exact candidate CI remains required.

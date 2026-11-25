@@ -97,7 +97,7 @@ struct NetGuardSettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
                 if model.backupBusy { ProgressView().controlSize(.small) }
                 Text(model.backupStatus).font(.caption).foregroundStyle(.secondary)
-                Text("一般備份僅含歷史 SQLite；完整歷史備份另含已保存的程序、連線與事件紀錄，具有 SHA-256 清單。各資料來源非同時點快照；不含今日未結算流量、設定或未保存觀測。預檢不會匯入或覆寫現有資料。")
+                Text("一般備份僅含歷史 SQLite；完整歷史備份 V2 另含已保存的程序、AI 工具、連線與事件紀錄；舊版 V1 不含 AI 歷史，具有 SHA-256 清單。各資料來源非同時點快照；不含今日未結算流量、設定或未保存觀測。預檢不會匯入或覆寫現有資料。")
                     .font(.caption).foregroundStyle(.secondary)
                 Text("校方配額尚待驗證；自動切換、分流、網路設定回滾與程序控制尚未開放。")
                     .font(.caption).foregroundStyle(.secondary)

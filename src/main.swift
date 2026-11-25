@@ -981,7 +981,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     private func agentHistoryOperation(delete: Bool = false) {
-        guard !managementModel.agentHistoryBusy else { return }
+        guard !managementModel.agentHistoryBusy, !historyBundleBusy else { return }
         if delete { setAgentHistoryEnabled(false) }
         managementModel.agentHistoryBusy = true
         let store = agentHistoryStore
@@ -1612,7 +1612,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         panel.nameFieldStringValue = "NetGuard-history-" + getTodayString() + "-" + String(UUID().uuidString.prefix(8))
         panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let destination = panel.url else { return }
-        guard !processHistoryBusy, !connectionArchiveBusy, !eventArchiveBusy else {
+        guard !processHistoryBusy, !connectionArchiveBusy, !eventArchiveBusy, !managementModel.agentHistoryBusy else {
             settingsModel.backupStatus = "歷史寫入作業尚未完成；本次未建立備份"
             return
         }
@@ -1620,16 +1620,17 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         let source = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/NCHU-NetGuard/history.sqlite")
         let process = processHistoryStore
+        let agents = agentHistoryStore
         let connections = connectionArchive
         let events = eventArchive
         settingsModel.backupBusy = true
         historyBundleBusy = true
-        settingsModel.backupStatus = "正在建立並驗證四類歷史資料；暫停額外歷史寫入"
+        settingsModel.backupStatus = "正在建立並驗證五類歷史資料；暫停額外歷史寫入"
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let status: String
             do {
                 let summary = try HistoryBundle.create(database: source, process: process,
-                    connections: connections, events: events, destination: destination)
+                    connections: connections, events: events, agents: agents, destination: destination)
                 status = "備份已建立：" + Self.bundleSummary(summary)
             } catch {
                 status = "完整歷史備份失敗；未覆寫既有目的地"
@@ -1644,8 +1645,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     private static func bundleSummary(_ summary: HistoryBundleSummary) -> String {
-        "流量歷史 " + String(summary.database.recordedDays) + " 日、程序歷史 " + String(summary.processDays) +
-            " 日、連線 " + String(summary.connectionSessions) + " 筆、事件 " + String(summary.events) + " 筆"
+        "V" + String(summary.version) + "：流量歷史 " + String(summary.database.recordedDays) + " 日、程序歷史 " + String(summary.processDays) +
+            " 日、AI 歷史 " + (summary.agentDays.map { String($0) + " 日" } ?? "未包含") +
+            "、連線 " + String(summary.connectionSessions) + " 筆、事件 " + String(summary.events) + " 筆"
     }
 
     func inspectHistoryBundle() {
