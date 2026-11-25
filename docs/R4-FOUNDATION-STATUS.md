@@ -205,3 +205,9 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 
 - Added independent ConnectionHistoryStore.swift, explicit manual saving of stopped nonempty observations, per-session UUID deduplication and confirmed per-record deletion. Bounded archive, background serialized I/O, validation and four tests. Same-name records remain separate; saved labels are user-provided and not verified network identities. No IP/SSID/hardware IDs stored, no quota integration, no automatic reconnect attribution, no automatic retention or multi-instance locking. Local UI and file behavior require device acceptance.
 - Prior integrated CI 45640350189 completed successfully (static/Python, Swift, app build and bundle). Iterations 34–35 eligible for non-forced fast-forward and fresh exact-HEAD CI. No paid services, host mutation or release.
+
+## Thirty-sixth iteration
+
+- Added ConnectionBudgetPeriod.swift and ConnectionCycleReading: monthly calendar anchor (1–31, last-day clamp), inclusive custom periods, explicit selected archive IDs, checked directional totals and remaining estimates. Native management worksheet supports both period modes and validates missing or outside-period selections. Four regression tests; module ownership and compatibility aliases registered.
+- Uses archive save dates, not actual connection start/end or verified billing dates; no persistent cycle profile, automatic network matching, quota policy changes or claims of full-cycle usage. Selection is manual and worksheet settings are not persisted. No paid services or release.
+- Preceding integrated SHA f45326631bab36f0c6741e46b3cd3067b3a28d4c had no workflow runs returned at last check. Candidate remains staged on feat/r4-cycle-budget pending preceding and exact-HEAD CI; real-device behavior unverified.
