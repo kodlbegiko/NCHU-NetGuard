@@ -27,4 +27,17 @@ final class QuickPanelStateTests: XCTestCase {
         XCTAssertNil(QuickPanelBudget(used: 0, limit: 0))
         XCTAssertNil(QuickPanelBudget(used: 0.5, limit: 100))
     }
+
+    func testUnknownConnectionSuppressesLiveTrend() {
+        var window = ThroughputWindow()
+        window.ingest(identity: "fixture", uptime: 1, download: 2, upload: 3)
+        let points = window.recent(at: 1)
+        XCTAssertEqual(points.count, 1)
+        let result = QuickPanelState(networkName: "fixture", connectionKnown: false, scope: .unknown,
+            received: 0, sent: 0, receiveLimit: 1, sendLimit: 1, speedText: "fixture",
+            diagnostic: "fixture", forecast: "fixture", provider: "fixture",
+            focusEnabled: false, alertsEnabled: true, throughput: points)
+        XCTAssertTrue(result.throughput.isEmpty)
+    }
+
 }
