@@ -279,6 +279,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var trafficEventDetector = TrafficEventDetector()
     private let eventArchiveQueue = DispatchQueue(label: "NetGuard.event-archive", qos: .utility)
     private var eventArchiveBusy = false
+    private var historyBundleBusy = false
     private var eventArchive: TrafficEventArchive {
         TrafficEventArchive(directory: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/NCHU-NetGuard/event-history", isDirectory: true))
     }
@@ -897,7 +898,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     private func beginProcessHistoryOperation() -> Bool {
-        guard !processHistoryBusy else { return false }
+        guard !processHistoryBusy, !historyBundleBusy else { return false }
         processHistoryBusy = true
         managementModel.historyBusy = true
         return true
@@ -956,7 +957,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     private func recordProcessHistory(_ counters: [ProcessCounter]?, date: Date, uptime: TimeInterval) {
         guard processHistoryEnabled else { return }
         // Bound the queue to one operation; do not bridge an interval skipped by I/O.
-        guard !processHistoryBusy else {
+        guard !processHistoryBusy, !historyBundleBusy else {
             processHistoryUsage.breakContinuity()
             processHistoryLastDate = nil
             processHistoryLastUptime = nil
@@ -1226,7 +1227,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     private func performConnectionArchiveOperation(message: String,
         operation: @escaping @Sendable (ConnectionHistoryStore) throws -> Void) {
-        guard !connectionArchiveBusy else {
+        guard !connectionArchiveBusy, !historyBundleBusy else {
             managementModel.connectionArchiveStatus = "另一項紀錄操作尚未完成；本次未執行"
             return
         }
@@ -1256,7 +1257,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     private func performEventArchiveOperation(message: String,
         operation: @escaping @Sendable (TrafficEventArchive) throws -> Void) {
-        guard !eventArchiveBusy else { return }
+        guard !eventArchiveBusy, !historyBundleBusy else {
+            managementModel.eventArchiveStatus = "歷史備份或事件作業進行中；本次未執行"
+            return
+        }
         eventArchiveBusy = true
         managementModel.eventArchiveBusy = true
         let store = eventArchive
@@ -1418,6 +1422,71 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         inspectTopAppConsumers()
     }
 
+    func createHistoryBundle() {
+        guard !settingsModel.backupBusy else { return }
+        let panel = NSSavePanel()
+        panel.title = "建立完整歷史資料目錄"
+        panel.nameFieldStringValue = "NetGuard-history-" + getTodayString() + "-" + String(UUID().uuidString.prefix(8))
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        guard !processHistoryBusy, !connectionArchiveBusy, !eventArchiveBusy else {
+            settingsModel.backupStatus = "歷史寫入作業尚未完成；本次未建立備份"
+            return
+        }
+        _ = TrafficHistoryManager.shared.loadHistory()
+        let source = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/NCHU-NetGuard/history.sqlite")
+        let process = processHistoryStore
+        let connections = connectionArchive
+        let events = eventArchive
+        settingsModel.backupBusy = true
+        historyBundleBusy = true
+        settingsModel.backupStatus = "正在建立並驗證四類歷史資料；暫停額外歷史寫入"
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let status: String
+            do {
+                let summary = try HistoryBundle.create(database: source, process: process,
+                    connections: connections, events: events, destination: destination)
+                status = "備份已建立：" + Self.bundleSummary(summary)
+            } catch {
+                status = "完整歷史備份失敗；未覆寫既有目的地"
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.historyBundleBusy = false
+                self.settingsModel.backupBusy = false
+                self.settingsModel.backupStatus = status
+            }
+        }
+    }
+
+    private static func bundleSummary(_ summary: HistoryBundleSummary) -> String {
+        "流量歷史 " + String(summary.database.recordedDays) + " 日、程序歷史 " + String(summary.processDays) +
+            " 日、連線 " + String(summary.connectionSessions) + " 筆、事件 " + String(summary.events) + " 筆"
+    }
+
+    func inspectHistoryBundle() {
+        guard !settingsModel.backupBusy else { return }
+        let panel = NSOpenPanel()
+        panel.title = "唯讀預檢完整歷史備份目錄"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        settingsModel.backupBusy = true
+        settingsModel.backupStatus = "正在驗證目錄及雜湊"
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let status: String
+            do {
+                status = "預檢通過：" + Self.bundleSummary(try HistoryBundle.inspect(url)) + "；未匯入"
+            } catch { status = "完整歷史備份預檢失敗；未變更現有資料" }
+            DispatchQueue.main.async {
+                self?.settingsModel.backupBusy = false
+                self?.settingsModel.backupStatus = status
+            }
+        }
+    }
+
     func createHistoryBackup() {
         guard !settingsModel.backupBusy else { return }
         _ = TrafficHistoryManager.shared.loadHistory()
@@ -1573,7 +1642,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             saveBudget: { [weak self] scope, text in self?.savePersonalBudget(scope: scope, text: text) },
             clearBudget: { [weak self] in self?.clearPersonalBudget() },
             createBackup: { [weak self] in self?.createHistoryBackup() },
-            inspectBackup: { [weak self] in self?.inspectHistoryBackup() }
+            inspectBackup: { [weak self] in self?.inspectHistoryBackup() },
+            createBundle: { [weak self] in self?.createHistoryBundle() },
+            inspectBundle: { [weak self] in self?.inspectHistoryBundle() }
         ))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 540),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
