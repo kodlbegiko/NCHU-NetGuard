@@ -69,3 +69,63 @@ public struct QuotaAlertLedger: Codable, Equatable, Sendable {
         return true
     }
 }
+
+
+/// A user-defined daily total budget for a local accounting category, not
+/// a verified ISP balance or an individual SSID/mobile subscription.
+public struct PersonalDailyBudget: Codable, Equatable, Sendable {
+    public let scope: NetworkScope
+    public let limitBytes: UInt64
+    public init(scope: NetworkScope, decimalGigabytes: UInt64) throws {
+        guard scope != .unknown, (1...10_000).contains(decimalGigabytes) else {
+            throw ContractError.invalidField("personalBudget")
+        }
+        self.scope = scope
+        self.limitBytes = decimalGigabytes * 1_000_000_000
+    }
+    public var decimalGigabytes: UInt64 { limitBytes / 1_000_000_000 }
+    public func validate() throws {
+        guard scope != .unknown, limitBytes % 1_000_000_000 == 0,
+              (1...10_000).contains(decimalGigabytes) else {
+            throw ContractError.invalidField("personalBudget")
+        }
+    }
+    public static func decode(_ data: Data) throws -> Self {
+        guard data.count <= 4096 else { throw ContractError.invalidField("personalBudget") }
+        let value = try JSONDecoder().decode(Self.self, from: data)
+        try value.validate()
+        return value
+    }
+    public func evaluate(received: UInt64, sent: UInt64, observed: Bool) -> PersonalBudgetReading? {
+        guard observed, (try? validate()) != nil else { return nil }
+        let (used, overflow) = received.addingReportingOverflow(sent)
+        guard !overflow else { return nil }
+        return .init(used: used, limit: limitBytes)
+    }
+}
+
+public struct PersonalBudgetReading: Equatable, Sendable {
+    public let used: UInt64
+    public let limit: UInt64
+    public var remaining: UInt64 { used >= limit ? 0 : limit - used }
+    public var fraction: Double { min(1, Double(used) / Double(limit)) }
+}
+
+public enum RateDisplayUnit: String, CaseIterable, Sendable {
+    case binaryBytes, decimalBits
+    public func format(_ bytesPerSecond: Double) -> String {
+        guard bytesPerSecond.isFinite, bytesPerSecond >= 0 else { return "未量測" }
+        switch self {
+        case .binaryBytes:
+            if bytesPerSecond >= 1_048_576 { return String(format: "%.1f MiB/s", bytesPerSecond / 1_048_576) }
+            if bytesPerSecond >= 1024 { return String(format: "%.0f KiB/s", bytesPerSecond / 1024) }
+            return String(format: "%.0f B/s", bytesPerSecond)
+        case .decimalBits:
+            let bits = bytesPerSecond * 8
+            guard bits.isFinite else { return "未量測" }
+            if bits >= 1_000_000 { return String(format: "%.1f Mbps", bits / 1_000_000) }
+            if bits >= 1000 { return String(format: "%.0f kbps", bits / 1000) }
+            return String(format: "%.0f bps", bits)
+        }
+    }
+}
