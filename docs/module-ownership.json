@@ -34,7 +34,8 @@
     "ConnectionSessionMeter.swift": 1,
     "ConnectionHistoryStore.swift": 7,
     "ConnectionBudgetPeriod.swift": 7,
-    "TrafficEventDetector.swift": 2
+    "TrafficEventDetector.swift": 2,
+    "TrafficEventArchive.swift": 7
   },
   "shared_paths": {
     "src/main.swift": 0,
@@ -104,6 +105,7 @@
     "ConnectionSessionMeter.swift": "NetGuardTraffic",
     "ConnectionHistoryStore.swift": "NetGuardData",
     "ConnectionBudgetPeriod.swift": "NetGuardData",
-    "TrafficEventDetector.swift": "NetGuardObservation"
+    "TrafficEventDetector.swift": "NetGuardObservation",
+    "TrafficEventArchive.swift": "NetGuardCore"
   }
 }
