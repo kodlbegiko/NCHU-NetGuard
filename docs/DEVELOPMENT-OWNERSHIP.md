@@ -37,3 +37,7 @@ SwiftPM now declares NetGuardObservation (NetworkQuality and AppTrafficSample) a
 ## Second compiled module split
 
 NetGuardRecovery contains only the pure transaction state machine, local journal and deterministic simulated adapter. NetGuardProvider contains the campus ranking observation model and freshness/display validation, not the live HTTP or Python provider implementation. Both are independent targets with standalone tests and no dependencies on other internal targets. ProbeRunner remains internal to NetGuardCore rather than exporting a general subprocess launcher. HistoryStore and the shared scope/traffic contracts remain coupled in NetGuardCore; database module extraction is deferred to a separate dependency review. Type aliases preserve source-level API names; binary ABI compatibility has not been established.
+
+## Third module split
+
+NetGuardTraffic owns the raw counters, sampling quality, network scope and deterministic scoped accounting. It has no internal package dependencies. NetGuardCore re-exports the existing type names via source-level aliases, including TrafficSnapshot; the ValidatedContract protocol and its TrafficSnapshot conformance remain in NetGuardCore, so direct NetGuardTraffic consumers must not assume the validated decode API is available there. No wire schema or classification behavior changes are intended. The data and policy targets can subsequently depend on NetGuardTraffic without importing the integration layer. The app still uses flattened compilation.
