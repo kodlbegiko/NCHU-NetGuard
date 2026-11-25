@@ -149,6 +149,26 @@ final class HistoryStoreTests: XCTestCase {
             XCTAssertTrue(try HistoryStore(url: url).recent().isEmpty)
         }
     }
+    func testV2MigratesWithoutInventingZerosAndV3PersistsMeasuredZero() throws {
+        try withURL { url in
+            var database: OpaquePointer?
+            guard sqlite3_open(url.path, &database) == SQLITE_OK, let database else {
+                throw HistoryStoreError.database("fixture")
+            }
+            let sql = "CREATE TABLE history_days(day TEXT PRIMARY KEY, total INTEGER NOT NULL, download INTEGER, upload INTEGER); CREATE TABLE history_scopes(day TEXT NOT NULL REFERENCES history_days(day), scope TEXT NOT NULL, download INTEGER NOT NULL, upload INTEGER NOT NULL, CHECK(download + upload > 0), PRIMARY KEY(day,scope)); INSERT INTO history_days VALUES('2026-11-24',100,80,20); INSERT INTO history_scopes VALUES('2026-11-24','dorm',80,20); PRAGMA user_version=2;"
+            let status = sqlite3_exec(database, sql, nil, nil, nil)
+            sqlite3_close(database)
+            XCTAssertEqual(status, SQLITE_OK)
+            let store = try HistoryStore(url: url)
+            XCTAssertEqual(try store.recent(scope: .dorm).first?.total, 100)
+            XCTAssertTrue(try store.recent(scope: .campusWifi).isEmpty)
+            let zero = try HistoryDay(day: "2026-11-25", total: 0, download: 0, upload: 0)
+            try store.recordScoped(ScopedHistoryDay(aggregate: zero, scopes: [.campusWifi: zero]))
+            XCTAssertEqual(try HistoryStore(url: url).recent(scope: .campusWifi), [zero])
+            XCTAssertTrue(try store.recent(scope: .external).isEmpty)
+            XCTAssertThrowsError(try ScopedHistoryDay(aggregate: zero, scopes: [.unknown: zero]))
+        }
+    }
     func testActualV1DatabaseMigratesWithoutReclassification() throws {
         try withURL { url in
             var database: OpaquePointer?

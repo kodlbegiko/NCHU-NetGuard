@@ -56,7 +56,7 @@ public enum HistoryBackupInspector {
             return value
         }
         let version = try scalar("PRAGMA user_version")
-        guard version == 1 || version == 2 else { throw HistoryStoreError.unsupportedSchema }
+        guard (1...3).contains(version) else { throw HistoryStoreError.unsupportedSchema }
         try query("PRAGMA quick_check") { stmt in
             guard sqlite3_step(stmt) == SQLITE_ROW,
                   let text = sqlite3_column_text(stmt, 0), String(cString: text) == "ok",
@@ -94,7 +94,7 @@ public enum HistoryBackupInspector {
         }
         guard days.count == count else { throw HistoryStoreError.invalidRecord }
         var classified = 0
-        if version == 2 {
+        if version >= 2 {
             var byDay: [String: [NetworkScope: HistoryDay]] = [:]
             try query("SELECT day,scope,download,upload FROM history_scopes") { stmt in
                 while true {
@@ -110,7 +110,7 @@ public enum HistoryBackupInspector {
                     else { throw HistoryStoreError.invalidRecord }
                     let day = String(cString: dayText)
                     let (total, overflow) = dl.addingReportingOverflow(ul)
-                    guard !overflow, days[day] != nil else { throw HistoryStoreError.invalidRecord }
+                    guard !overflow, days[day] != nil, version >= 3 || total > 0 else { throw HistoryStoreError.invalidRecord }
                     let row = try HistoryDay(day: day, total: total, download: dl, upload: ul)
                     guard byDay[day, default: [:]].updateValue(row, forKey: scope) == nil else { throw HistoryStoreError.invalidRecord }
                     classified += 1

@@ -2429,7 +2429,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             guard let dl = UInt64(exactly: rx), let ul = UInt64(exactly: tx) else { return nil }
             let (total, overflow) = dl.addingReportingOverflow(ul)
             guard !overflow else { return nil }
-            if total == 0 { continue }
+            if total == 0 && !dailyScopeCoverage.observed(scope) { continue }
             guard let row = try? HistoryDay(day: currentDateString, total: total, download: dl, upload: ul) else { return nil }
             rows[scope] = row
         }

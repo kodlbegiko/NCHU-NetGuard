@@ -71,7 +71,7 @@ def load_history():
         connection.execute("PRAGMA query_only=ON")
         connection.execute("PRAGMA trusted_schema=OFF")
         version = connection.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (1, 2):
+        if version not in (1, 2, 3):
             return {}
         kind = connection.execute("SELECT type FROM sqlite_master WHERE name='history_days'").fetchone()
         if kind != ("table",):

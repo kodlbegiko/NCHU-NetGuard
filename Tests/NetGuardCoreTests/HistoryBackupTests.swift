@@ -13,15 +13,18 @@ final class HistoryBackupTests: XCTestCase {
         try withDirectory { dir in
             let source = try HistoryStore(url: dir.appendingPathComponent("live.sqlite"))
             let day = try HistoryDay(day: "2026-11-24", total: 10, download: 8, upload: 2)
-            try source.recordScoped(ScopedHistoryDay(aggregate: day, scopes: [.dorm: day]))
+            let zero = try HistoryDay(day: day.day, total: 0, download: 0, upload: 0)
+            try source.recordScoped(ScopedHistoryDay(aggregate: day, scopes: [.dorm: day, .campusWifi: zero]))
             let backup = dir.appendingPathComponent("backup.sqlite")
             try source.backup(to: backup)
             let summary = try HistoryBackupInspector.inspect(backup)
-            XCTAssertEqual(summary.schemaVersion, 2)
+            XCTAssertEqual(summary.schemaVersion, 3)
             XCTAssertEqual(summary.recordedDays, 1)
-            XCTAssertEqual(summary.classifiedRows, 1)
+            XCTAssertEqual(summary.classifiedRows, 2)
             let restored = try HistoryStore(url: backup)
             XCTAssertEqual(try restored.recent(scope: .dorm), [day])
+            XCTAssertEqual(try restored.recent(scope: .campusWifi), [zero])
+            XCTAssertTrue(try restored.recent(scope: .external).isEmpty)
         }
     }
     func testExistingDestinationIsNeverOverwritten() throws {

@@ -102,10 +102,10 @@ public struct ScopedHistoryDay: Equatable, Sendable {
         else { throw HistoryStoreError.invalidRecord }
         var download: UInt64 = 0
         var upload: UInt64 = 0
-        for record in scopes.values {
+        for (scope, record) in scopes {
             _ = try HistoryDay(day: record.day, total: record.total,
                                download: record.download, upload: record.upload)
-            guard record.day == aggregate.day, record.total > 0,
+            guard record.day == aggregate.day, scope != .unknown || record.total > 0,
                   let dl = record.download, let ul = record.upload else { throw HistoryStoreError.invalidRecord }
             let (d, od) = download.addingReportingOverflow(dl)
             let (u, ou) = upload.addingReportingOverflow(ul)
@@ -139,16 +139,25 @@ public final class HistoryStore {
             // A second initializer must observe the first one's committed migration.
             try transaction {
                 let version = try scalar("PRAGMA user_version")
-                guard (0...2).contains(version) else { throw HistoryStoreError.unsupportedSchema }
+                guard (0...3).contains(version) else { throw HistoryStoreError.unsupportedSchema }
                 try validateTableInventory(version: version)
                 if version == 0 {
                     try execute("CREATE TABLE history_days(day TEXT PRIMARY KEY, total INTEGER NOT NULL CHECK(total >= 0), download INTEGER, upload INTEGER, CHECK((download IS NULL AND upload IS NULL) OR (download IS NOT NULL AND upload IS NOT NULL AND download >= 0 AND upload >= 0 AND download + upload = total)))")
                 }
-                if version < 2 {
-                    try execute("CREATE TABLE history_scopes(day TEXT NOT NULL REFERENCES history_days(day), scope TEXT NOT NULL CHECK(scope IN ('dorm','campusWifi','external','unknown')), download INTEGER NOT NULL CHECK(download >= 0), upload INTEGER NOT NULL CHECK(upload >= 0), CHECK(download + upload > 0), PRIMARY KEY(day,scope))")
-                    try execute("PRAGMA user_version=2")
+                if version < 3 {
+                    // v3 permits an affirmative measured-zero row for known scopes.
+                    // Rebuild v2 atomically; absence stays absent and no zero is inferred.
+                    if version == 2 {
+                        try execute("ALTER TABLE history_scopes RENAME TO history_scopes_v2")
+                    }
+                    try execute("CREATE TABLE history_scopes(day TEXT NOT NULL REFERENCES history_days(day), scope TEXT NOT NULL CHECK(scope IN ('dorm','campusWifi','external','unknown')), download INTEGER NOT NULL CHECK(typeof(download)='integer' AND download >= 0), upload INTEGER NOT NULL CHECK(typeof(upload)='integer' AND upload >= 0), CHECK(scope <> 'unknown' OR download > 0 OR upload > 0), PRIMARY KEY(day,scope))")
+                    if version == 2 {
+                        try execute("INSERT INTO history_scopes SELECT day,scope,download,upload FROM history_scopes_v2")
+                        try execute("DROP TABLE history_scopes_v2")
+                    }
+                    try execute("PRAGMA user_version=3")
                 }
-                try validateTableInventory(version: 2)
+                try validateTableInventory(version: 3)
             }
             // No schema mutation or journal mode change before validating the inventory.
             try execute("PRAGMA journal_mode=DELETE")
@@ -229,7 +238,7 @@ public final class HistoryStore {
                   try scalar("SELECT count(*) FROM pragma_table_xinfo('history_days')") == 4
             else { throw HistoryStoreError.database("unexpected history days columns") }
         }
-        if version == 2 {
+        if version >= 2 {
             guard try scalar("SELECT count(*) FROM pragma_table_info('history_scopes')") == 4,
                   try scalar("SELECT count(*) FROM pragma_table_info('history_scopes') WHERE (cid=0 AND name='day' AND type='TEXT' AND pk=1) OR (cid=1 AND name='scope' AND type='TEXT' AND pk=2) OR (cid=2 AND name='download' AND type='INTEGER' AND pk=0) OR (cid=3 AND name='upload' AND type='INTEGER' AND pk=0)") == 4,
                   try scalar("SELECT count(*) FROM pragma_table_xinfo('history_scopes')") == 4
@@ -287,7 +296,7 @@ public final class HistoryStore {
         }
     }
 
-    /// Atomically store aggregate and nonzero observed scope rows. Existing
+    /// Atomically store aggregate and explicitly observed scope rows. Existing
     /// finalized history wins during stale-state recovery; no retroactive split.
     public func recordScoped(_ record: ScopedHistoryDay, preserveExisting: Bool = false) throws {
         _ = try ScopedHistoryDay(aggregate: record.aggregate, scopes: record.scopes)
