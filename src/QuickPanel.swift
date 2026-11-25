@@ -58,6 +58,11 @@ struct QuickPanel: View {
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
                 Text(state.speedText).font(.system(.subheadline, design: .monospaced))
                     .accessibilityLabel("即時流量速率 " + state.speedText)
+                if state.throughput.count >= 2 {
+                    LiveThroughputChart(points: state.throughput)
+                } else {
+                    Text("即時趨勢：等待連續採樣").font(.caption2).foregroundStyle(.secondary)
+                }
                 Text(state.diagnostic).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Toggle(isOn: Binding(get: { state.focusEnabled }, set: { _ in toggleFocus() })) {
@@ -103,5 +108,56 @@ struct QuickPanel: View {
             Text("已用 " + gib(item.used)).font(.caption2).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+
+/// Both directions share one vertical scale. No extrapolation or synthetic zeroes.
+struct LiveThroughputChart: View {
+    let points: [ThroughputPoint]
+    private var peak: Double {
+        max(1, points.map { max($0.downloadBytesPerSecond, $0.uploadBytesPerSecond) }.max() ?? 1)
+    }
+    private func line(_ size: CGSize, upload: Bool) -> Path {
+        var path = Path()
+        guard let first = points.first, let last = points.last,
+              last.uptime > first.uptime else { return path }
+        let span = last.uptime - first.uptime
+        for (index, point) in points.enumerated() {
+            let rate = upload ? point.uploadBytesPerSecond : point.downloadBytesPerSecond
+            let p = CGPoint(x: size.width * CGFloat((point.uptime - first.uptime) / span),
+                            y: size.height * CGFloat(1 - rate / peak))
+            if index == 0 { path.move(to: p) } else { path.addLine(to: p) }
+        }
+        return path
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text("目前網卡 · 即時趨勢").font(.caption.weight(.medium))
+                Spacer()
+                Text(String(format: "峰值 %.2f MiB/s", peak / 1_048_576))
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            GeometryReader { geometry in
+                ZStack {
+                    Rectangle().fill(Color.secondary.opacity(0.10))
+                    line(geometry.size, upload: false).stroke(Color.accentColor, lineWidth: 1.5)
+                    line(geometry.size, upload: true).stroke(Color.teal, style: StrokeStyle(lineWidth: 1.5, dash: [3, 2]))
+                }
+            }
+            .frame(height: 44)
+            .accessibilityHidden(true)
+            HStack {
+                Label("下載", systemImage: "line.diagonal").foregroundStyle(Color.accentColor)
+                Label("上傳（虛線）", systemImage: "line.diagonal").foregroundStyle(Color.teal)
+                Spacer()
+                if let first = points.first, let last = points.last {
+                    Text(String(format: "近 %.0f 秒", last.uptime - first.uptime))
+                }
+            }
+            .font(.caption2).foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
