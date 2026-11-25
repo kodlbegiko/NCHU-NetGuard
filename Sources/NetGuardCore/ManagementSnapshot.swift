@@ -45,6 +45,7 @@ public struct ManagementSnapshot: Equatable, Sendable {
     public let routeStatus: String
     public let echoStatus: String
     public let dnsStatus: String
+    public let trafficEvents: [TrafficObservationEvent]
     public let findings: [DiagnosticFinding]
     public let providerStatus: String
     public let focusEnabled: Bool
@@ -59,7 +60,8 @@ public struct ManagementSnapshot: Equatable, Sendable {
                 agentUsage: ProcessUsageReport? = nil,
                 processBackgroundEnabled: Bool = false, processObservationStatus: String = "僅開啟面板時觀測",
                 routeEvidence: DualStackEvidence? = nil, evidenceUptime: TimeInterval = 0,
-                addressEvidence: [String: InterfaceAddressEvidence] = [:]) {
+                addressEvidence: [String: InterfaceAddressEvidence] = [:],
+                trafficEvents: [TrafficObservationEvent] = []) {
         self.interfaces = scopes.keys.sorted().map {
             ObservedInterfaceRow(name: $0, scope: scopes[$0] ?? .unknown,
                                  isDefault: connectionKnown && $0 == defaultInterface, rate: rates[$0], addressEvidence: addressEvidence[$0])
@@ -68,6 +70,7 @@ public struct ManagementSnapshot: Equatable, Sendable {
         self.latencyStatus = latencyStatus
         self.echoStatus = echoStatus
         self.dnsStatus = dnsStatus
+        self.trafficEvents = Array(trafficEvents.prefix(100))
         self.routeStatus = routeEvidence?.description(at: evidenceUptime) ?? "IPv4／IPv6 預設路由尚未量測或已過期"
         self.tunnelStatus = routeEvidence?.tunnelDescription(at: evidenceUptime, candidates: tunnelCandidates) ?? TunnelEvidence.description(defaultInterface: connectionKnown ? defaultInterface : "", candidates: tunnelCandidates)
         self.focusEnabled = focusEnabled
