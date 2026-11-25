@@ -99,6 +99,8 @@ struct ManagementView: View {
                         if tab == 0 {
                             Text(snapshot.connectionStatus).font(.subheadline)
                             Text(snapshot.routeStatus).font(.caption)
+                            Text("LAN／Internet 個別流量：未量測").font(.caption)
+                            Text("目前實體網卡總量包含區域網路流量。私有或公有目的位址不等於實際傳輸路徑；尚無經驗證的連線層流量來源，不推算網際網路用量。").font(.caption2).foregroundStyle(.secondary)
                             connectionSessionPanel
                             Text("預設路由與位址存在不代表網際網路可達；雙協定使用同一份實體網卡帳本。").font(.caption2).foregroundStyle(.secondary)
                             Text(snapshot.latencyStatus).font(.caption).foregroundStyle(.secondary)
