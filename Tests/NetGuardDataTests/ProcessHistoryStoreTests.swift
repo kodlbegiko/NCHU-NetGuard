@@ -91,6 +91,13 @@ final class ProcessHistoryStoreTests: XCTestCase {
             XCTAssertThrowsError(try JSONDecoder().decode(ProcessHistoryRow.self, from: Data(json.utf8)))
         }
     }
+    func testDirectBucketDecodeValidatesHourAndDuplicateRows() throws {
+        let session = UUID().uuidString
+        let invalid = "{\"session\":\"\(session)\",\"hour\":24,\"intervals\":1,\"rows\":[],\"limited\":false}"
+        XCTAssertThrowsError(try JSONDecoder().decode(ProcessHistoryBucket.self, from: Data(invalid.utf8)))
+        let duplicate = "{\"session\":\"\(session)\",\"hour\":1,\"intervals\":1,\"rows\":[{\"name\":\"x\",\"download\":1,\"upload\":0},{\"name\":\"x\",\"download\":1,\"upload\":0}],\"limited\":false}"
+        XCTAssertThrowsError(try JSONDecoder().decode(ProcessHistoryBucket.self, from: Data(duplicate.utf8)))
+    }
     func testOversizedHistoryPreserved() throws {
         try withStore { store in
             try FileManager.default.createDirectory(at: store.directory, withIntermediateDirectories: true)

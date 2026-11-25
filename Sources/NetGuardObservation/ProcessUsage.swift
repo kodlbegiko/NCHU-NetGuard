@@ -13,18 +13,43 @@ public struct ProcessCounter: Equatable, Sendable {
     }
 }
 
+/// ps lstart is a local wall-clock string, not authenticated process identity.
+enum ProcessStartEvidence {
+    static func validate(_ fields: [Substring]) -> String? {
+        guard fields.count == 5, ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].contains(String(fields[0])),
+              let month = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].firstIndex(of: String(fields[1])),
+              let day = Int(fields[2]), let year = Int(fields[4]), (1970...9999).contains(year),
+              fields[3].utf8.count == 8 else { return nil }
+        let time = fields[3].split(separator: ":", omittingEmptySubsequences: false)
+        guard time.count == 3, time.allSatisfy({ $0.utf8.count == 2 && $0.utf8.allSatisfy { (48...57).contains($0) } }),
+              let hour = Int(time[0]), let minute = Int(time[1]), let second = Int(time[2]),
+              (0...23).contains(hour), (0...59).contains(minute), (0...59).contains(second) else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let parts = DateComponents(year: year, month: month + 1, day: day, hour: hour, minute: minute, second: second)
+        guard let date = calendar.date(from: parts),
+              calendar.component(.year, from: date) == year,
+              calendar.component(.month, from: date) == month + 1,
+              calendar.component(.day, from: date) == day,
+              ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][calendar.component(.weekday, from: date) - 1] == String(fields[0])
+        else { return nil }
+        return fields.joined(separator: " ")
+    }
+}
+
 public enum ProcessCounterParser {
     public static func starts(_ output: String) -> [Int: String] {
+        guard output.utf8.count <= 1_048_576 else { return [:] }
         var result: [Int: String] = [:]
+        var seen = Set<Int>()
         var ambiguous = Set<Int>()
         for line in output.split(whereSeparator: \.isNewline) {
             let fields = line.split(whereSeparator: \.isWhitespace)
-            guard fields.count == 6, let pid = Int(fields[0]), pid > 0,
-                  fields[4].range(of: #"^\d{2}:\d{2}:\d{2}$"#, options: .regularExpression) != nil,
-                  Int(fields[5]) != nil else { continue }
-            if result.updateValue(fields.dropFirst().joined(separator: " "), forKey: pid) != nil {
-                ambiguous.insert(pid)
-            }
+            guard let first = fields.first, let pid = Int(first), pid > 0 else { continue }
+            if !seen.insert(pid).inserted { ambiguous.insert(pid) }
+            guard seen.count <= 8192 else { return [:] }
+            guard fields.count == 6, let start = ProcessStartEvidence.validate(Array(fields.dropFirst())) else { continue }
+            result[pid] = start
         }
         for pid in ambiguous { result.removeValue(forKey: pid) }
         return result
@@ -33,7 +58,9 @@ public enum ProcessCounterParser {
     /// Strict labeled columns. Unsupported layouts are unavailable, never zero.
     /// Names with CSV delimiters or missing PID are excluded.
     public static func parse(_ output: String, before: [Int: String], after: [Int: String]) -> [ProcessCounter]? {
+        guard output.utf8.count <= 1_048_576, before.count <= 8192, after.count <= 8192 else { return nil }
         var header = false
+        var seen = Set<Int>()
         var rows: [Int: ProcessCounter] = [:]
         var ambiguous = Set<Int>()
         for line in output.split(whereSeparator: \.isNewline) {
@@ -42,11 +69,14 @@ public enum ProcessCounterParser {
             if fields.last == "" { fields.removeLast() }
             guard fields.count == 3 else { continue }
             if fields[1] == "bytes_in", fields[2] == "bytes_out" {
+                guard !header else { return nil }
                 header = true; continue
             }
             guard header, let dot = fields[0].lastIndex(of: "."),
-                  let pid = Int(fields[0][fields[0].index(after: dot)...]), pid > 0,
-                  let start = before[pid], after[pid] == start,
+                  let pid = Int(fields[0][fields[0].index(after: dot)...]), pid > 0 else { continue }
+            if !seen.insert(pid).inserted { ambiguous.insert(pid) }
+            guard seen.count <= 4096 else { return nil }
+            guard let start = before[pid], after[pid] == start,
                   let received = UInt64(fields[1]), let sent = UInt64(fields[2]) else { continue }
             let name = String(fields[0][..<dot])
             guard !name.isEmpty, name.utf8.count <= 128,

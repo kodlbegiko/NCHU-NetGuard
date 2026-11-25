@@ -83,6 +83,13 @@ public struct ProcessHistoryBucket: Codable, Equatable, Sendable, Identifiable {
     public let rows: [ProcessHistoryRow]
     public let limited: Bool
     public var id: String { session.uuidString + "-" + String(hour) }
+    private enum CodingKeys: String, CodingKey { case session, hour, intervals, rows, limited }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(session: c.decode(UUID.self, forKey: .session), hour: c.decode(Int.self, forKey: .hour),
+                      intervals: c.decode(Int.self, forKey: .intervals), rows: c.decode([ProcessHistoryRow].self, forKey: .rows),
+                      limited: c.decode(Bool.self, forKey: .limited))
+    }
     public init(session: UUID, hour: Int, intervals: Int, rows: [ProcessHistoryRow], limited: Bool) throws {
         guard (0..<24).contains(hour), intervals > 0, intervals <= 100_000, rows.count <= 1024,
               Set(rows.map(\.name)).count == rows.count else { throw HistoryStoreError.invalidRecord }
@@ -160,9 +167,12 @@ public struct ProcessHistoryStore: Sendable {
         guard let cutoff = calendar.date(byAdding: .day, value: 1 - keepingDays, to: now)
         else { throw HistoryStoreError.invalidRecord }
         let earliest = Self.hour(at: cutoff).day
-        let expired = try storedDays().filter { $0 < earliest }
-        for day in expired { try remove(day: day) }
-        return expired.count
+        guard FileManager.default.fileExists(atPath: directory.path) else { return 0 }
+        return try HistoryFileAccess.withWriteLock(directory: directory) {
+            let expired = try storedDays().filter { $0 < earliest }
+            for day in expired { try removeLocked(day: day) }
+            return expired.count
+        }
     }
 
     public func remove(day: String) throws {

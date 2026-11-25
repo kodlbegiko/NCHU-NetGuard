@@ -33,6 +33,16 @@ final class AgentAttributionTests: XCTestCase {
         XCTAssertEqual(AgentAttribution.attributed([counter(20, 5), counter(30, 9)], before: t, after: t), [])
     }
 
+    func testMalformedDuplicateAndRecognizedCycleRejected() {
+        let a = AgentAttribution.parseTree("10 1 Wed Nov 25 12:00:00 2026 codex\n10 1 malformed")
+        XCTAssertNil(a[10])
+        let cycle = tree([(10, 20, "codex"), (20, 10, "worker")])
+        XCTAssertEqual(AgentAttribution.attributed([counter(20, 5)], before: cycle, after: cycle), [])
+    }
+    func testChatGPTLabelIsOnlyObservedHint() throws {
+        let t = tree([(10, 1, "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"), (20, 10, "worker")])
+        XCTAssertEqual(AgentAttribution.attributed([counter(20, 5)], before: t, after: t)?.first?.name, "ChatGPT")
+    }
     func testReparentingBreaksDeltaAndStableChildrenAggregateOnce() throws {
         let a = tree([(10, 1, "codex"), (20, 10, "node"), (21, 10, "worker")])
         let b = tree([(11, 1, "codex"), (20, 11, "node"), (21, 11, "worker")])

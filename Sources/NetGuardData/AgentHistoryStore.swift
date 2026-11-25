@@ -5,7 +5,7 @@ import Foundation
 public struct AgentHistoryStore: Sendable {
     private let store: ProcessHistoryStore
     public init(directory: URL) { store = ProcessHistoryStore(directory: directory) }
-    public static let allowedLabels: Set<String> = ["Codex", "Claude / Claude Code", "Cursor", "Ollama", "LM Studio"]
+    public static let allowedLabels: Set<String> = ["Codex", "ChatGPT", "Claude / Claude Code", "Cursor", "Ollama", "LM Studio"]
 
     private func validate(_ buckets: [ProcessHistoryBucket]) throws {
         guard buckets.allSatisfy({ $0.rows.allSatisfy { Self.allowedLabels.contains($0.name) } })

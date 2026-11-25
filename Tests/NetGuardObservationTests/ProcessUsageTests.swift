@@ -13,6 +13,14 @@ final class ProcessUsageTests: XCTestCase {
         XCTAssertEqual(rows.first?.received, 10)
         XCTAssertNil(ProcessCounterParser.parse("Example.42,10,20", before: before, after: after))
     }
+    func testMalformedDuplicateAndRepeatedHeaderRejectAmbiguity() throws {
+        let starts = ProcessCounterParser.starts("42 Wed Nov 25 12:00:00 2026\n42 invalid\n43 Wed Feb 30 25:00:00 2026")
+        XCTAssertTrue(starts.isEmpty)
+        let valid = ProcessCounterParser.starts("42 Wed Nov 25 12:00:00 2026")
+        let raw = ",bytes_in,bytes_out,\nExample.42,10,20,\nExample.42,bad,20,\n"
+        XCTAssertEqual(try XCTUnwrap(ProcessCounterParser.parse(raw, before: valid, after: valid)), [])
+        XCTAssertNil(ProcessCounterParser.parse(raw + ",bytes_in,bytes_out,\n", before: valid, after: valid))
+    }
     func testOnlyDeltasAreAccumulatedAndDirectionsPreserved() {
         var engine = ProcessUsageAccumulator()
         engine.ingest([row(1, 100, 20), row(2, 50, 10)], uptime: 1)
