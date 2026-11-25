@@ -4,6 +4,8 @@ import Foundation
 final class ManagementModel: ObservableObject {
     @Published var snapshot: ManagementSnapshot?
     @Published var automation: AutomationSnapshot?
+    @Published var connectionSession: ConnectionSessionReading?
+    @Published var connectionSessionStatus = "尚未開始"
     @Published var historyEnabled = false
     @Published var historyBusy = false
     @Published var historyRetention = 30
@@ -21,9 +23,13 @@ struct ManagementView: View {
     let setProcessBackground: (Bool) -> Void
     let reloadHistory: () -> Void
     let testDNS: () -> Void
+    let startConnectionSession: (String, String) -> Void
+    let stopConnectionSession: () -> Void
     let setHistoryRetention: (Int) -> Void
     let deleteHistory: () -> Void
     @State private var tab = 0
+    @State private var connectionLabel = ""
+    @State private var connectionLimit = ""
     @State private var selectedInterface: String? = nil
     @State private var processQuery = ""
     @State private var processOrder = 0
@@ -59,6 +65,7 @@ struct ManagementView: View {
                         if tab == 0 {
                             Text(snapshot.connectionStatus).font(.subheadline)
                             Text(snapshot.routeStatus).font(.caption)
+                            connectionSessionPanel
                             Text("預設路由與位址存在不代表網際網路可達；雙協定使用同一份實體網卡帳本。").font(.caption2).foregroundStyle(.secondary)
                             Text(snapshot.latencyStatus).font(.caption).foregroundStyle(.secondary)
                             Text(snapshot.tunnelStatus).font(.caption).foregroundStyle(.secondary)
@@ -307,6 +314,37 @@ struct ManagementView: View {
             }
             Text("不儲存 AI 歸屬、程序階層或執行檔路徑；不含脫離程序階層的服務、遠端工作或未觀測流量。")
                 .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+
+    private var connectionSessionPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("單次連線流量預算").font(.headline)
+            Text("自行命名目前連線；僅計量開始後連續可辨識的實體網卡流量。網路變更或資料中斷即停止，不會跨連線或重啟累加。")
+                .font(.caption).foregroundStyle(.secondary)
+            if let reading = model.connectionSession {
+                Text(reading.label + (reading.stopped ? " · 已停止" : " · 觀測中"))
+                if reading.intervals > 0 {
+                    ProgressView(value: min(1, Double(reading.total) / Double(reading.limitBytes)))
+                    Text(String(format: "下載 %.2f GB · 上傳 %.2f GB", Double(reading.received) / 1e9, Double(reading.sent) / 1e9))
+                        .font(.caption)
+                    Text(String(format: "本機觀測剩餘預算 %.2f GB", Double(reading.remaining) / 1e9)).font(.caption)
+                } else {
+                    Text("尚無可歸屬的完整採樣區間").font(.caption)
+                }
+            }
+            if model.connectionSession?.stopped != false {
+                TextField("連線名稱（例如手機熱點）", text: $connectionLabel)
+                TextField("上限 GB（整數 1–10000）", text: $connectionLimit)
+                Button("開始新的連線計量") { startConnectionSession(connectionLabel, connectionLimit) }
+            } else {
+                Button("停止連線計量", action: stopConnectionSession)
+            }
+            Text(model.connectionSessionStatus).font(.caption)
+            Text("包含 LAN 流量，與原有帳本重疊；不是電信商帳單，不可與原有總量相加。")
+                .font(.caption2).foregroundStyle(.secondary)
+            Divider()
         }
     }
 
