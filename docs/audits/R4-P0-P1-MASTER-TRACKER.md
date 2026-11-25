@@ -62,3 +62,6 @@ Next: review exact branch CI, audit all trust boundaries, verify recovery journa
 
 ## Closure batch 8 (candidate)
 - Add checked UInt64 daily ledger and migrate validation through aggregate ceiling and bounded document size. Three regression cases. Production runtime integration still pending; physical/provider measurement boundaries unchanged.
+
+## Closure batch 9 (candidate)
+- Integrate checked integer ledger into runtime; legacy UI consumes lossless Double projections, persistent counters emitted as integers, restore checked atomically, overflow prevents quota assessment and marks partial. Manual reset now resets sampling baselines and preserves measured daily totals; menu label updated. Exact CI and real-device verification pending.

@@ -170,21 +170,21 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     
     // 跨日追蹤狀態（獨立分開統計：1.有線宿網、2.興大校園Wi-Fi、3.外部網路/熱點，三者互不干擾污染）
     var currentDateString: String = ""
-    var dormTodayInBytes: Double = 0.0
-    var dormTodayOutBytes: Double = 0.0
-    var wifiTodayInBytes: Double = 0.0
-    var wifiTodayOutBytes: Double = 0.0
-    var extTodayInBytes: Double = 0.0
-    var extTodayOutBytes: Double = 0.0
+    private var trafficLedger = DailyTrafficLedger()
+    private var accountingOverflow = false
+    var dormTodayInBytes: Double { Double(trafficLedger.totals(for: .dorm).received) }
+    var dormTodayOutBytes: Double { Double(trafficLedger.totals(for: .dorm).sent) }
+    var wifiTodayInBytes: Double { Double(trafficLedger.totals(for: .campusWifi).received) }
+    var wifiTodayOutBytes: Double { Double(trafficLedger.totals(for: .campusWifi).sent) }
+    var extTodayInBytes: Double { Double(trafficLedger.totals(for: .external).received) }
+    var extTodayOutBytes: Double { Double(trafficLedger.totals(for: .external).sent) }
     
     // 向後相容屬性
     var todayInBytes: Double {
         get { return isCampusWifi ? wifiTodayInBytes : dormTodayInBytes }
-        set { if isCampusWifi { wifiTodayInBytes = newValue } else { dormTodayInBytes = newValue } }
     }
     var todayOutBytes: Double {
         get { return isCampusWifi ? wifiTodayOutBytes : dormTodayOutBytes }
-        set { if isCampusWifi { wifiTodayOutBytes = newValue } else { dormTodayOutBytes = newValue } }
     }
     
     // 網路環境模式 (0: 自動偵測, 1: 強制興大有線宿網, 2: 強制興大校園Wi-Fi, 3: 強制外部網路/自由模式)
@@ -328,8 +328,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var scopedAccumulator = ScopedCounterAccumulator()
     var lastSampleUptime: TimeInterval?
     var sampledScopes: [String: NetworkScope] = [:]
-    var unattributedInBytes: Double = 0
-    var unattributedOutBytes: Double = 0
+    var unattributedInBytes: Double { Double(trafficLedger.totals(for: .unknown).received) }
+    var unattributedOutBytes: Double { Double(trafficLedger.totals(for: .unknown).sent) }
     var sampleGapCount: Int = 0
     var measuredSampleCount: UInt64 = 0
     // Legacy daily files may have different attribution semantics.
@@ -2065,14 +2065,19 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             isLidGuardEnabled = json["lid_guard_enabled"] as? Bool ?? true
             isIdleGuardEnabled = json["idle_guard_enabled"] as? Bool ?? true
             if usage.date == today {
-                dormTodayInBytes = Double(usage.dormIn)
-                dormTodayOutBytes = Double(usage.dormOut)
-                wifiTodayInBytes = Double(usage.wifiIn)
-                wifiTodayOutBytes = Double(usage.wifiOut)
-                extTodayInBytes = Double(usage.externalIn)
-                extTodayOutBytes = Double(usage.externalOut)
-                unattributedInBytes = Double(usage.unattributedIn)
-                unattributedOutBytes = Double(usage.unattributedOut)
+                var restored = DailyTrafficLedger()
+                for (scope, dl, ul) in [
+                    (NetworkScope.dorm, usage.dormIn, usage.dormOut),
+                    (.campusWifi, usage.wifiIn, usage.wifiOut),
+                    (.external, usage.externalIn, usage.externalOut),
+                    (.unknown, usage.unattributedIn, usage.unattributedOut)
+                ] {
+                    guard restored.add(scope: scope, received: dl, sent: ul) else {
+                        throw UsageMigrationError.invalidCounter
+                    }
+                }
+                trafficLedger = restored
+                accountingOverflow = json["accounting_overflow"] as? Bool == true
                 sampleGapCount = Int(usage.sampleGapCount)
                 measuredSampleCount = usage.measuredSampleCount
                 scopedHistoryEligible = json["scoped_history_eligible"] as? Bool == true
@@ -2115,19 +2120,20 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         let dict: [String: Any] = [
             "schema_version": 1,
             "date": currentDateString,
-            "dorm_in": dormTodayInBytes,
-            "dorm_out": dormTodayOutBytes,
-            "wifi_in": wifiTodayInBytes,
-            "wifi_out": wifiTodayOutBytes,
-            "ext_in": extTodayInBytes,
-            "ext_out": extTodayOutBytes,
-            "unattributed_in": unattributedInBytes,
-            "unattributed_out": unattributedOutBytes,
+            "dorm_in": NSNumber(value: trafficLedger.totals(for: .dorm).received),
+            "dorm_out": NSNumber(value: trafficLedger.totals(for: .dorm).sent),
+            "wifi_in": NSNumber(value: trafficLedger.totals(for: .campusWifi).received),
+            "wifi_out": NSNumber(value: trafficLedger.totals(for: .campusWifi).sent),
+            "ext_in": NSNumber(value: trafficLedger.totals(for: .external).received),
+            "ext_out": NSNumber(value: trafficLedger.totals(for: .external).sent),
+            "unattributed_in": NSNumber(value: trafficLedger.totals(for: .unknown).received),
+            "unattributed_out": NSNumber(value: trafficLedger.totals(for: .unknown).sent),
             "sample_gap_count": sampleGapCount,
             "measured_sample_count": NSNumber(value: measuredSampleCount),
             "scoped_history_eligible": scopedHistoryEligible,
-            "today_in": dormTodayInBytes,
-            "today_out": dormTodayOutBytes,
+            "today_in": NSNumber(value: trafficLedger.totals(for: .dorm).received),
+            "today_out": NSNumber(value: trafficLedger.totals(for: .dorm).sent),
+            "accounting_overflow": accountingOverflow,
             "network_mode_override": networkModeOverride,
             "display_mode": displayMode,
             "alert_enabled": isAlertEnabled,
@@ -2514,14 +2520,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             connectionSession.stop()
             lastConnectionSamples = []
             currentDateString = todayStr
-            dormTodayInBytes = 0.0
-            dormTodayOutBytes = 0.0
-            wifiTodayInBytes = 0.0
-            wifiTodayOutBytes = 0.0
-            extTodayInBytes = 0.0
-            extTodayOutBytes = 0.0
-            unattributedInBytes = 0
-            unattributedOutBytes = 0
+            trafficLedger = DailyTrafficLedger()
+            accountingOverflow = false
             sampleGapCount = 0
             measuredSampleCount = 0
             scopedHistoryEligible = !persistenceBlocked
@@ -2613,11 +2613,11 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 currentDownSpeed = rx / elapsed
                 currentUpSpeed = tx / elapsed
             }
-            switch value.scope {
-            case .dorm: dormTodayInBytes += rx; dormTodayOutBytes += tx
-            case .campusWifi: wifiTodayInBytes += rx; wifiTodayOutBytes += tx
-            case .external: extTodayInBytes += rx; extTodayOutBytes += tx
-            case .unknown: unattributedInBytes += rx; unattributedOutBytes += tx
+            if !trafficLedger.add(scope: value.scope, received: value.delta.received, sent: value.delta.sent) {
+                accountingOverflow = true
+                scopedHistoryEligible = false
+                sampleGapCount = min(sampleGapCount + 1, 9_007_199_254_740_991)
+                predictionEngine.reset()
             }
         }
 
@@ -2694,7 +2694,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     private func localQuotaAssessment() -> LocalQuotaAssessment? {
         let scope = sampledScopes[activeInterface] ?? .unknown
-        guard isConnected, isQuotaRestricted,
+        guard isConnected, isQuotaRestricted, !accountingOverflow, !persistenceBlocked,
               (scope == .dorm && isDormNetwork) || (scope == .campusWifi && isCampusWifi) else { return nil }
         let (_, dl, ul) = getEffectiveUsedBytes()
         guard let received = UInt64(exactly: dl), let sent = UInt64(exactly: ul) else { return nil }
@@ -2791,6 +2791,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             return
         }
         
+        if accountingOverflow {
+            button.title = "流量紀錄不完整"
+            return
+        }
         if isQuotaRestricted {
             let (totalUsed, dlUsed, ulUsed) = getEffectiveUsedBytes()
             let remTotalGB = max(0, totalQuotaBytes - totalUsed) / (1024 * 1024 * 1024)
@@ -3067,7 +3071,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         
         menu.addItem(NSMenuItem.separator())
         
-        let resetItem = NSMenuItem(title: "🧹 重置今日統計 (歸零)", action: #selector(manualResetToday), keyEquivalent: "")
+        let resetItem = NSMenuItem(title: "重設採樣基準（保留今日紀錄）", action: #selector(manualResetToday), keyEquivalent: "")
         resetItem.target = self
         menu.addItem(resetItem)
         
@@ -3182,21 +3186,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     @objc func manualResetToday() {
-        if isCampusWifi {
-            wifiTodayInBytes = 0.0
-            wifiTodayOutBytes = 0.0
-            alertTierSent = 0
-        } else if isDormNetwork {
-            dormTodayInBytes = 0.0
-            dormTodayOutBytes = 0.0
-            alertTierSent = 0
-        } else {
-            extTodayInBytes = 0.0
-            extTodayOutBytes = 0.0
-        }
-        if isWiredTemporarilyDisabled {
-            restoreWiredNetwork(reason: "今日流量重置歸零")
-        }
+        // Reset sampling continuity, never erase observed bytes or imply a
+        // provider quota reset.
         initHardwareCounters()
         sampleGapCount += 1
         savePersistedState()
