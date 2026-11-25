@@ -180,3 +180,8 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 
 - Added QualityDiagnostics.swift (strict completed ICMP counts/RTT parser, bounded echo window, DNS response parser), four regression tests, module ownership and source aliases. ProbeRunner permits explicit probe-specific normal exit codes; default remains zero. Native diagnostics displays recent ICMP reply counts and non-response ratio, plus user-triggered DNS status/timing. No broad packet-loss or system DNS success claim.
 - Preceding CI run 45638694157 passed static/Python and Swift tests at last check, app build pending. Candidate staged until preceding full CI is confirmed. Exact candidate tests, app compilation, device output and performance remain unverified. No paid service, release or network mutation.
+
+## Thirty-first iteration
+
+- Added AgentAttribution.swift, bounded process-tree parser, exact executable-basename hints, matched ancestry validation and nearest recognized ancestor attribution. Reparenting breaks delta continuity. Integrates the two existing ps probes with nettop and a separate session-only accumulator; AI tool view shows directions, coverage and limitations. Four regression tests added. No signature/bundle identity verification, remote attribution, persistent AI records, or claim of complete workload traffic.
+- Prior integrated run 45638694157 completed successfully (static/Python, Swift, app compile and bundle). Iterations 30–31 are eligible for non-forced integration and fresh exact-HEAD CI. New tests and runtime behavior remain unverified. No paid services, release or network mutation.
