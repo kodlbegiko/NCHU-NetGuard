@@ -773,10 +773,10 @@
       </div>
 
       <!-- 智能耗盡預估與安全等級膠囊 -->
-      <div id="runout-capsule" class="runout-capsule safe" hidden>
+      <div id="runout-capsule" class="runout-capsule" hidden>
         <div class="runout-left">
           <span style="font-size: 12px; flex-shrink: 0;">⏱️</span>
-          <span id="runout-text" class="runout-text">網速平穩，流量充足安全</span>
+          <span id="runout-text" class="runout-text">等待足夠的連續採樣</span>
         </div>
         <span id="risk-badge" class="risk-badge">🟢 安全</span>
       </div>
@@ -1185,16 +1185,17 @@
         var capsule = document.getElementById('runout-capsule');
         var riskBadge = document.getElementById('risk-badge');
         if (runoutEl && capsule && riskBadge) {
+          capsule.hidden = !isQuotaRestricted;
           runoutEl.innerText = data.runoutText;
           if (data.riskLevel === 'danger') {
             capsule.className = 'runout-capsule danger';
-            riskBadge.innerText = '🔴 危險';
+            riskBadge.innerText = '高用量';
           } else if (data.riskLevel === 'warning') {
             capsule.className = 'runout-capsule warning';
-            riskBadge.innerText = '🟡 警戒';
+            riskBadge.innerText = '用量提醒';
           } else {
-            capsule.className = 'runout-capsule safe';
-            riskBadge.innerText = '🟢 安全';
+            capsule.className = 'runout-capsule';
+            riskBadge.innerText = '本機估計';
           }
         }
       }
