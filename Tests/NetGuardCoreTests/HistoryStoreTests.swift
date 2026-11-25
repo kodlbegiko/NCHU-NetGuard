@@ -106,6 +106,20 @@ final class HistoryStoreTests: XCTestCase {
             XCTAssertEqual(String(cString: sqlite3_column_text(statement, 0)), "preserve")
         }
     }
+    func testCanonicalParentDoesNotResolveFinalDatabaseSymlink() throws {
+        try withURL { url in
+            let target = url.deletingLastPathComponent()
+            let alias = target.appendingPathComponent("parent-alias")
+            try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: target)
+            let viaAlias = alias.appendingPathComponent("history.sqlite")
+            let store = try HistoryStore(url: viaAlias)
+            try store.upsert(HistoryDay(day: "2026-11-25", total: 2, download: nil, upload: nil))
+            XCTAssertEqual(try HistoryStore(url: url).recent().first?.total, 2)
+            let link = alias.appendingPathComponent("linked.sqlite")
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: url)
+            XCTAssertThrowsError(try HistoryStore(url: link))
+        }
+    }
     func testHistoryRejectsSymlink() throws {
         try withURL { url in
             let target = url.deletingLastPathComponent().appendingPathComponent("target.sqlite")

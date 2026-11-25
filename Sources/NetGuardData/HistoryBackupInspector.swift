@@ -21,7 +21,7 @@ public enum HistoryBackupInspector {
               size.int64Value > 0, size.int64Value <= 64 * 1024 * 1024
         else { throw HistoryStoreError.database("invalid backup file") }
         var database: OpaquePointer?
-        let status = sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_NOFOLLOW, nil)
+        let status = sqlite3_open_v2(try HistorySQLitePath.resolve(url), &database, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_NOFOLLOW, nil)
         guard status == SQLITE_OK, let db = database else {
             if let database { sqlite3_close(database) }
             throw HistoryStoreError.database("backup read")

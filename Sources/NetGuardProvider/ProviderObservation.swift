@@ -62,7 +62,7 @@ public struct ProviderObservation: Codable, Equatable, Sendable {
             case .tlsError: return "校方資料未知：TLS 驗證失敗"
             case .rateLimited: return "校方資料未知：服務限流"
             case .timeout: return "校方資料未知：請求逾時"
-            default: return "校方資料暫時無法取得"
+            default: return "校方資料未知：暫時無法取得"
             }
         }
         guard isFresh(for: day, now: now) else { return "校方資料未知或已過期" }

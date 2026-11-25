@@ -4,6 +4,25 @@ import NetGuardTraffic
 #endif
 import CoreFoundation
 import SQLite3
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
+
+/// Canonicalize the caller-owned parent (macOS /var and /tmp may be
+/// system symlinks). Never resolve the final database filename: SQLite
+/// NOFOLLOW must still reject a symlink at the actual data boundary.
+enum HistorySQLitePath {
+    static func resolve(_ url: URL) throws -> String {
+        guard url.isFileURL, !url.lastPathComponent.isEmpty,
+              url.lastPathComponent != ".", url.lastPathComponent != "..",
+              let parent = realpath(url.deletingLastPathComponent().path, nil)
+        else { throw HistoryStoreError.database("invalid database path") }
+        defer { free(parent) }
+        return String(cString: parent) + "/" + url.lastPathComponent
+    }
+}
 
 public enum HistoryStoreError: Error, Equatable {
     case invalidRecord, invalidLegacy, unsupportedSchema, database(String)
@@ -105,7 +124,7 @@ public final class HistoryStore {
     private var db: OpaquePointer?
     public init(url: URL) throws {
         guard url.isFileURL else { throw HistoryStoreError.database("invalid history URL") }
-        let rc = sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_NOFOLLOW, nil)
+        let rc = sqlite3_open_v2(try HistorySQLitePath.resolve(url), &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_NOFOLLOW, nil)
         guard rc == SQLITE_OK else {
             if let db { sqlite3_close(db) }
             db = nil
@@ -152,7 +171,7 @@ public final class HistoryStore {
     public static func backup(from source: URL, to destination: URL) throws {
         guard source.isFileURL else { throw HistoryStoreError.database("backup source") }
         var connection: OpaquePointer?
-        let status = sqlite3_open_v2(source.path, &connection, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_NOFOLLOW, nil)
+        let status = sqlite3_open_v2(try HistorySQLitePath.resolve(source), &connection, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_NOFOLLOW, nil)
         guard status == SQLITE_OK, let connection else {
             if let connection { sqlite3_close(connection) }
             throw HistoryStoreError.database("backup source open")
@@ -170,7 +189,7 @@ public final class HistoryStore {
         else { throw HistoryStoreError.database("backup destination exists or unavailable") }
         defer { try? fm.removeItem(at: temporary) }
         var target: OpaquePointer?
-        let open = sqlite3_open_v2(temporary.path, &target, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_NOFOLLOW, nil)
+        let open = sqlite3_open_v2(try HistorySQLitePath.resolve(temporary), &target, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_NOFOLLOW, nil)
         guard open == SQLITE_OK, let target else {
             if let target { sqlite3_close(target) }
             throw HistoryStoreError.database("backup open")
