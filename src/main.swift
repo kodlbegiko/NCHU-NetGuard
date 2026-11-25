@@ -251,6 +251,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var isConnected: Bool = false
     var pingLatencyMs: Double = -1
     var networkQuality = NetworkQualityWindow()
+    var throughputWindow = ThroughputWindow()
     var lastPingUptime: TimeInterval?
     var appProbeInFlight = false
     var appProbeTimestamp: TimeInterval?
@@ -656,6 +657,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     @objc func systemWillSleep() {
         guard workflowPowerGuard.systemSleep() else { return }
         networkQuality.reset()
+        throughputWindow.reset()
         lastPingUptime = nil
         appProbeTimestamp = nil
         topAppConsumers = []
@@ -847,7 +849,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             sampleGapCount: sampleGapCount,
             providerFresh: providerObservation?.isFresh(for: getTodayString(), now: Date()) == true && providerObservation?.status == .listed
         )).first?.summary ?? "狀態未知"
-        let fresh = lastSampleUptime.map { ProcessInfo.processInfo.systemUptime - $0 <= 5 } ?? false
+        let now = ProcessInfo.processInfo.systemUptime
+        let fresh = lastSampleUptime.map { now >= $0 && now - $0 <= 5 } ?? false
         let speed = activeSpeedMeasured && fresh && workflowPowerGuard.allowsSampling
             ? "↓ " + formatSpeed(currentDownSpeed) + "   ↑ " + formatSpeed(currentUpSpeed) : "未量測"
         let state = QuickPanelState(networkName: scope == .unknown ? "網路歸屬未確認" : networkTypeName,
@@ -855,7 +858,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             scope: compatible ? scope : .unknown,
             received: dl, sent: ul, receiveLimit: dlQuotaBytes, sendLimit: ulQuotaBytes,
             speedText: speed, diagnostic: diagnostic, forecast: forecastPresentation().message,
-            provider: providerStatusText, focusEnabled: workflowPowerGuard.focusEnabled, alertsEnabled: isAlertEnabled)
+            provider: providerStatusText, focusEnabled: workflowPowerGuard.focusEnabled, alertsEnabled: isAlertEnabled,
+            throughput: activeSpeedMeasured && fresh && workflowPowerGuard.allowsSampling ? throughputWindow.recent(at: now) : [])
         if quickPanelModel.state != state { quickPanelModel.state = state }
     }
 
@@ -926,8 +930,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             persistenceHealthy: !persistenceBlocked && TrafficHistoryManager.shared.healthy && !persistenceStatus.contains("失敗"),
             sampleGapCount: sampleGapCount,
             providerFresh: providerObservation?.isFresh(for: getTodayString(), now: Date()) == true && providerObservation?.status == .listed)
+        let latency = networkQuality.summary(at: now)
+        let latencyStatus = latency.map { String(format: "延遲中位數 %.1f ms · 相鄰探測平均變動 %.1f ms（%d 筆）", $0.medianMilliseconds, $0.meanChangeMilliseconds, $0.sampleCount) } ?? networkQuality.state(at: now).description
         let snapshot = ManagementSnapshot(scopes: sampledScopes, defaultInterface: activeInterface,
-            connectionKnown: connected, latencyStatus: networkQuality.state(at: now).description,
+            connectionKnown: connected, latencyStatus: connected ? latencyStatus : "延遲未量測",
             processRows: rows, processAge: appProbeTimestamp.map { now - $0 },
             focusEnabled: workflowPowerGuard.focusEnabled, diagnosticInput: input, providerStatus: providerStatusText)
         if managementModel.snapshot != snapshot { managementModel.snapshot = snapshot }
@@ -1583,6 +1589,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     private func applyDiscoveredNetwork(interface: String, ip: String) {
         if activeInterface != interface || currentIP != ip {
             networkQuality.reset()
+        throughputWindow.reset()
             lastPingUptime = nil
             pingLatencyMs = -1
             providerObservation = nil
@@ -1699,6 +1706,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         predictionScope = .unknown
         predictionIdentity = []
         scopedAccumulator.reset()
+        throughputWindow.reset()
         activeSpeedMeasured = false
         let samples = readScopedInterfaces()
         sampledScopes = InterfaceScopeProjection.scopes(samples)
@@ -1820,6 +1828,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             predictionScope = .unknown
             predictionIdentity = []
             lastSampleUptime = nil
+            throughputWindow.reset()
             providerObservation = nil
             alertTierSent = 0
             if isWiredTemporarilyDisabled {
@@ -1923,6 +1932,13 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             }
         }
 
+        let activeSamples = samples.filter { $0.counters.interfaceID == activeInterface }
+        if activeSpeedMeasured, isConnected, activeSamples.count == 1, let sample = activeSamples.first {
+            throughputWindow.ingest(identity: activeInterface + "|" + sample.identity + "|" + sample.scope.rawValue,
+                                    uptime: uptime, download: currentDownSpeed, upload: currentUpSpeed)
+        } else {
+            throughputWindow.reset()
+        }
         updateForecast(samples: samples, deltas: deltas, elapsed: elapsed)
 
         if Int(now) % 10 == 0 {
