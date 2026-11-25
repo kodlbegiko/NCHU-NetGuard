@@ -270,3 +270,8 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 ## Forty-eighth iteration
 
 - Integrated CI 45648085573 passed 172 Swift tests, 16 Python/static tests, build, bundle and four-view native fixture smoke. Hosted process and IPv4 checks were compatible; IPv6 route was incompatible. TCP flow check matched 17 of 20 accepted current rows (not byte coverage); UDP was inconclusive. Added categorized route parser diagnostics, rejection of REJECT/BLACKHOLE routes, coarse host diagnostic output and one regression case. This does not establish the actual IPv6 failure cause; no raw address logging. GitHub contents/ref writes experienced timeouts; repair candidate kept separate pending exact-head verification. No paid services or release.
+
+## Forty-ninth iteration
+
+- Added bounded redacted TCP/UDP parser diagnostics: missing/repeated header, empty/oversized output, missing process evidence, candidate and accepted row counts, malformed rows, rejected owner/state/counters/interface/endpoints and duplicate identity count. Host checks distinguish probe failure, timeout and output limit, without claiming a generic probe failure establishes a permissions issue. One synthetic regression test. No broader parsing guesses, no raw endpoint output or live ledger changes. The previous IPv6 diagnostic candidate is included.
+- Integrated SHA 3d9a64931703c2c5783a324900a26a05a248d94f remains the last verified base (run 45648085573). GitHub ref update returned a GraphQL API error; staged changes have not yet passed exact candidate CI. No paid services or release.
