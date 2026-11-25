@@ -93,4 +93,6 @@ public typealias TCPFlowParser = NetGuardTraffic.TCPFlowParser
 public typealias TCPFlowAccumulator = NetGuardTraffic.TCPFlowAccumulator
 public typealias TCPFlowCoverage = NetGuardTraffic.TCPFlowCoverage
 public typealias FlowTransport = NetGuardTraffic.FlowTransport
+public typealias DefaultRouteParseStatus = NetGuardObservation.DefaultRouteParseStatus
+public typealias DefaultRouteParseResult = NetGuardObservation.DefaultRouteParseResult
 #endif

@@ -32,4 +32,16 @@ final class DualStackEvidenceTests: XCTestCase {
         XCTAssertTrue(evidence.hasIPv4)
         XCTAssertTrue(evidence.hasNonLinkLocalIPv6)
     }
+
+    func testRouteFailureCategoriesAndRejectFlags() {
+        XCTAssertEqual(DefaultRouteParser.inspect("").status, .emptyOutput)
+        XCTAssertEqual(DefaultRouteParser.inspect("destination: default").status, .missingInterface)
+        XCTAssertEqual(DefaultRouteParser.inspect("interface: en0\ninterface: en0").status, .ambiguousInterface)
+        XCTAssertEqual(DefaultRouteParser.inspect("interface: invalid name").status, .invalidInterface)
+        XCTAssertEqual(DefaultRouteParser.inspect(String(repeating: "a", count: 65537)).status, .outputLimit)
+        XCTAssertEqual(DefaultRouteParser.inspect("interface: en0\nflags: <UP,REJECT>").status, .invalidRouteFlags)
+        XCTAssertNil(DefaultRouteParser.interfaceName("interface: en0\nflags: <UP,BLACKHOLE>"))
+        XCTAssertEqual(DefaultRouteParser.inspect("interface : en0\nflags: <UP,GATEWAY>").interfaceName, "en0")
+    }
+
 }

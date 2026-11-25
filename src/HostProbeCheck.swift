@@ -58,7 +58,10 @@ enum HostProbeCheck {
         guard case .success(let raw) = ProbeRunner.run("/sbin/route",
             ["-n", "get", ipv6 ? "-inet6" : "-inet", "default"], timeout: 2, maxBytes: 65536)
         else { return .unavailable }
-        return DefaultRouteParser.interfaceName(raw) == nil ? .incompatible : .compatible
+        let result = DefaultRouteParser.inspect(raw)
+        let family = ipv6 ? "ipv6" : "ipv4"
+        print("\(family)_route_parse_status=\(result.status.rawValue)")
+        return result.status == .parsed ? .compatible : .incompatible
     }
 
     /// Explicit diagnostic: two snapshots of existing TCP connections, no
