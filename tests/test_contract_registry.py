@@ -32,3 +32,17 @@ class ContractRegistryTests(unittest.TestCase):
                 self.assertIn("func " + spec["golden_test"] + "()", fixture_source)
                 self.assertEqual(spec["approval"], "pending")
                 self.assertTrue(spec["semantics"])
+
+    def test_production_contract_reference_inventory(self):
+        registry = json.loads((ROOT / "docs/contracts/consumer-registry-v1.json").read_text())
+        contracts = json.loads((ROOT / "docs/contracts/registry-v1.json").read_text())["contracts"]
+        self.assertEqual(registry["schema_version"], 1)
+        self.assertEqual(set(registry["contracts"]), set(contracts))
+        actual = {name: [] for name in contracts}
+        paths = sorted(list((ROOT / "Sources").rglob("*.swift")) + list((ROOT / "src").rglob("*.swift")))
+        for path in paths:
+            source = path.read_text()
+            for name in contracts:
+                if re.search(r"\b" + re.escape(name) + r"\b", source):
+                    actual[name].append(path.relative_to(ROOT).as_posix())
+        self.assertEqual(actual, registry["contracts"], "Update inventory and review contract consumers")

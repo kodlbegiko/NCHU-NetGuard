@@ -1,0 +1,3 @@
+# Contract consumer inventory v1
+
+Exact source scan at 07ca43ef09e1fd4fa661c1df5d0cf4a5eeb83140: 47 production Swift files under Sources/ and src/. The JSON lists lexical references, including declarations, validators and aliases; there are no direct named references in src/. This establishes that these draft contracts are not the actual end-to-end application boundary. A lexical scan does not detect inferred types, external callers or semantic misuse. Do not claim freeze or unlock. Runtime boundary integration, external consumer review, and independent owner approval remain open. The CI inventory guard catches reference changes. The wire schema itself is unchanged.

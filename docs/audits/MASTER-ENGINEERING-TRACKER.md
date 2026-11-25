@@ -2,7 +2,7 @@
 
 Scope: full R4–R6 roadmap and the uploaded engineering plan. Status is evidence-based, not a completion percentage. This index supersedes the old tracker as the phase-level entry point; [R4 P0/P1 tracker](R4-P0-P1-MASTER-TRACKER.md) retains detailed historical findings and commits. No row is Done merely because a model or fixture exists.
 
-Baseline verified candidate: efa91e6c7a3e79e7a9d81bfbeb21225c1e9acc86, [CI 45653469349](https://github.com/kodlbegiko/NCHU-NetGuard/actions/runs/45653469349), 197 Swift tests and 31 Python tests passed; both bundles and four-view fixture smoke passed. Host parser and UDP evidence inconclusive. Main unchanged. Actual user Mac not accessible; container is Linux and direct GitHub git transport DNS failed.
+Baseline verified candidate: 07ca43ef09e1fd4fa661c1df5d0cf4a5eeb83140, [CI 45656403277](https://github.com/kodlbegiko/NCHU-NetGuard/actions/runs/45656403277), 206 Swift tests and 31 Python tests passed; both bundles and four-view fixture smoke passed. Host parser and UDP evidence inconclusive. Main unchanged. Actual user Mac not accessible; container is Linux and direct GitHub git transport DNS failed.
 
 | Task | Phase / owner | Priority | Remaining acceptance | Evidence / status |
 |---|---|---|---|---|
@@ -10,7 +10,7 @@ Baseline verified candidate: efa91e6c7a3e79e7a9d81bfbeb21225c1e9acc86, [CI 45653
 | R4-PROVIDER | 1 / 7 | P0 | Billing units/reset/identity, authoritative reconciliation, detailed error classification | In Progress; monotonic refresh gate 17e80468; official/device evidence still required |
 | R4-SECURITY | 1 / 3 | P0 | Complete trust-boundary review, identity/lifecycle/race tests, negative TLS cases | In Progress; baseline CI is not full security audit |
 | R4-RECOVERY | 1 / 3 | P0 | Exhaustive fault injection and authorization, real adapter and device rollback | In Progress; exact rollback evidence e05ea4c4; live mutation disabled |
-| R4-CONTRACT | 2 / 0 | P1 | Complete consumer inventory, semantic review and owner approval | In Progress; registry exists, full reference scan failed connector call limit |
+| R4-CONTRACT | 2 / 0 | P1 | Complete consumer inventory, semantic review and owner approval | In Progress; 47 production Swift files scanned; lexical inventory and drift test added; runtime consumption, external review and approval open |
 | R4-ARCH | 2 / 0 | P1 | Modular default, smaller runtime, boundaries and exact integration review | In Progress; both build variants passed baseline |
 | R4-PARALLEL | 2 / 0,8 | P1 | All unlock gates and owner approval | Not Started for formal unlock |
 | R4-APPS | 3 / 2,6 | P1 | Stable identity, coverage and route-aware attribution | In Progress; existing heuristic observations only |
