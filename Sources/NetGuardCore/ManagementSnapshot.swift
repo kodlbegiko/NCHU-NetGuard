@@ -34,6 +34,7 @@ public struct ManagementSnapshot: Equatable, Sendable {
     public let interfaces: [ObservedInterfaceRow]
     public let processes: [ProcessSampleRow]
     public let processStatus: String
+    public let sessionUsage: ProcessUsageReport?
     public let connectionStatus: String
     public let latencyStatus: String
     public let tunnelStatus: String
@@ -45,7 +46,8 @@ public struct ManagementSnapshot: Equatable, Sendable {
                 connectionKnown: Bool, latencyStatus: String,
                 processRows: [ProcessSampleRow], processAge: TimeInterval?,
                 focusEnabled: Bool, diagnosticInput: DiagnosticInput, providerStatus: String,
-                rates: [String: ObservedInterfaceRate] = [:], tunnelCandidates: [String] = []) {
+                rates: [String: ObservedInterfaceRate] = [:], tunnelCandidates: [String] = [],
+                sessionUsage: ProcessUsageReport? = nil) {
         self.interfaces = scopes.keys.sorted().map {
             ObservedInterfaceRow(name: $0, scope: scopes[$0] ?? .unknown,
                                  isDefault: connectionKnown && $0 == defaultInterface, rate: rates[$0])
@@ -54,6 +56,7 @@ public struct ManagementSnapshot: Equatable, Sendable {
         self.latencyStatus = latencyStatus
         self.tunnelStatus = TunnelEvidence.description(defaultInterface: connectionKnown ? defaultInterface : "", candidates: tunnelCandidates)
         self.focusEnabled = focusEnabled
+        self.sessionUsage = sessionUsage
         let fresh = processAge.map { $0.isFinite && $0 >= 0 && $0 <= 30 } ?? false
         if focusEnabled {
             processes = []
