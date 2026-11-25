@@ -20,7 +20,14 @@ public struct TrafficEventArchive: Sendable {
               let size = attrs[.size] as? NSNumber, size.intValue <= maxBytes else {
             throw ContractError.invalidField("eventArchive")
         }
-        let data = try Data(contentsOf: file)
+        let handle = try FileHandle(forReadingFrom: file)
+        defer { try? handle.close() }
+        var data = Data()
+        while data.count <= maxBytes {
+            let chunk = try handle.read(upToCount: min(65_536, maxBytes + 1 - data.count)) ?? Data()
+            if chunk.isEmpty { break }
+            data.append(chunk)
+        }
         guard data.count <= maxBytes else { throw ContractError.invalidField("eventArchive") }
         let rows = try JSONDecoder().decode([TrafficObservationEvent].self, from: data)
         guard rows.count <= 1000, Set(rows.map(\.id)).count == rows.count,

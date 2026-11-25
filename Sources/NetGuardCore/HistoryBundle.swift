@@ -44,7 +44,14 @@ public enum HistoryBundle {
         guard attrs[.type] as? FileAttributeType == .typeRegular,
               let size = attrs[.size] as? NSNumber,
               size.int64Value >= 0, size.int64Value <= Int64(max) else { throw fail() }
-        let data = try Data(contentsOf: url)
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var data = Data()
+        while data.count <= max {
+            let chunk = try handle.read(upToCount: min(65_536, max + 1 - data.count)) ?? Data()
+            if chunk.isEmpty { break }
+            data.append(chunk)
+        }
         guard data.count <= max else { throw fail() }
         return data
     }

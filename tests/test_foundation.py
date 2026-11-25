@@ -51,6 +51,16 @@ class FoundationTests(unittest.TestCase):
         self.assertNotIn("rem_total", result)
         provider.assert_called_once_with("140.120.1.2")
 
+    @patch.object(monitor, "get_top100_data", return_value={"status": "unavailable"})
+    @patch.object(monitor, "load_state", return_value={"dorm_in": 10, "dorm_out": 5})
+    @patch.object(monitor.subprocess, "check_output", side_effect=["interface: en0", "140.120.1.2"])
+    def test_explicit_scope_reports_local_bucket_not_provider_balance(self, _route, _state, _provider):
+        result = monitor.query_traffic("dorm")
+        self.assertEqual(result["used_total"], 15)
+        self.assertTrue(result["scope_user_selected"])
+        self.assertIsNone(result["rem_total"])
+        self.assertFalse(result["quota_units_verified"])
+
     def test_json_cli(self):
         output = subprocess.check_output([sys.executable, str(ROOT / "scripts/traffic_monitor.py"), "--json"], text=True, timeout=20)
         result = json.loads(output)

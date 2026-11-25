@@ -52,6 +52,17 @@ final class RecoveryJournalStoreTests: XCTestCase {
             XCTAssertEqual(try Data(contentsOf: store.url), payload)
         }
     }
+    func testJournalSymlinkRejectedWithoutChangingTarget() throws {
+        try withStore { store in
+            let target = store.url.deletingLastPathComponent().appendingPathComponent("other.json")
+            let payload = Data("preserve".utf8)
+            try payload.write(to: target)
+            try FileManager.default.createSymbolicLink(at: store.url, withDestinationURL: target)
+            XCTAssertThrowsError(try store.load())
+            XCTAssertThrowsError(try store.save(RecoveryJournalEntry(plan: plan())))
+            XCTAssertEqual(try Data(contentsOf: target), payload)
+        }
+    }
     func testOtherTransactionCannotReplaceJournal() throws {
         try withStore { store in
             let first = RecoveryJournalEntry(plan: plan())

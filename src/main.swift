@@ -194,7 +194,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         return sampledScopes[activeInterface] == .campusWifi
     }
     
-    // 是否為興大二村有線宿網 (每日下載上限 7GB / 上傳 4GB / 總額 11GB，超量斷網鎖卡)
+    // Estimated wired dorm scope, not a verified provider classification or block status.
     var isDormNetwork: Bool {
         if networkModeOverride == 1 { return true }
         if networkModeOverride != 0 { return false }
@@ -2769,25 +2769,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             checkP2PHazard()
         }
         
-        // 00:00 換日大檔排程檢查 (00:05 額度重置後自動啟動千兆通道)
-        let cal = Calendar.current
-        let nowComp = cal.dateComponents([.hour, .minute], from: Date())
-        let hour = nowComp.hour ?? 0
-        let minute = nowComp.minute ?? 0
-        if hour == 0 && minute >= 5 && minute <= 10 {
-            if isMidnightScheduleEnabled && !hasTriggeredMidnightToday {
-                hasTriggeredMidnightToday = true
-                if isWiredTemporarilyDisabled {
-                    restoreWiredNetwork(reason: "午夜 00:05 大檔排程啟動")
-                }
-                sendSystemNotification(
-                    title: "🎉 興大宿網換日配額已就緒！",
-                    body: "7GB 下載額度已充飽！午夜大檔極速通道已啟動。"
-                )
-            }
-        } else if hour > 0 {
-            hasTriggeredMidnightToday = false
-        }
+        // Local day rollover is not a provider-confirmed quota reset.
+        // Legacy midnight scheduling remains inactive in observation-only mode.
         
         let samples = readScopedInterfaces()
         sampledScopes = InterfaceScopeProjection.scopes(samples)
@@ -3169,15 +3152,15 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         nAuto.target = self; nAuto.state = (networkModeOverride == 0) ? .on : .off
         netModeMenu.addItem(nAuto)
         
-        let nDorm = NSMenuItem(title: "強制興大宿網模式 (11GB 配額限制 / 鎖卡)", action: #selector(setNetModeDorm), keyEquivalent: "")
+        let nDorm = NSMenuItem(title: "指定宿網觀測範圍（本機估計）", action: #selector(setNetModeDorm), keyEquivalent: "")
         nDorm.target = self; nDorm.state = (networkModeOverride == 1) ? .on : .off
         netModeMenu.addItem(nDorm)
         
-        let nWifi = NSMenuItem(title: "強制興大校園 Wi-Fi (15GB 配額 / 超量限速不斷網)", action: #selector(setNetModeWifi), keyEquivalent: "")
+        let nWifi = NSMenuItem(title: "指定校園 Wi-Fi 觀測範圍（本機估計）", action: #selector(setNetModeWifi), keyEquivalent: "")
         nWifi.target = self; nWifi.state = (networkModeOverride == 2) ? .on : .off
         netModeMenu.addItem(nWifi)
         
-        let nExt = NSMenuItem(title: "強制非宿網/自由模式 (無上限)", action: #selector(setNetModeExt), keyEquivalent: "")
+        let nExt = NSMenuItem(title: "指定外部網路觀測範圍（配額未確認）", action: #selector(setNetModeExt), keyEquivalent: "")
         nExt.target = self; nExt.state = (networkModeOverride == 3) ? .on : .off
         netModeMenu.addItem(nExt)
         

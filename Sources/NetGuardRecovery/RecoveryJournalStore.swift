@@ -34,7 +34,17 @@ public struct RecoveryJournalStore: Sendable {
     public init(url: URL) { self.url = url }
 
     public func load() throws -> RecoveryJournalEntry? {
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        guard url.isFileURL else { throw JournalValidationError.invalidPlan }
+        let attributes: [FileAttributeKey: Any]
+        do { attributes = try FileManager.default.attributesOfItem(atPath: url.path) }
+        catch let error as NSError {
+            if error.domain == NSCocoaErrorDomain &&
+                (error.code == NSFileNoSuchFileError || error.code == NSFileReadNoSuchFileError) { return nil }
+            throw error
+        }
+        guard attributes[.type] as? FileAttributeType == .typeRegular else {
+            throw JournalValidationError.invalidPlan
+        }
         // Enforce the byte ceiling while reading, before decoding. Checking
         // Data.count after loading the entire file does not bound resource use.
         let limit = 1_048_576

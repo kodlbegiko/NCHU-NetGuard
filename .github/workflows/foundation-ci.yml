@@ -3,7 +3,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [feat/r4-foundation]
+    branches: [feat/r4-foundation, 'fix/r4-closure-*']
   workflow_dispatch:
 permissions:
   contents: read

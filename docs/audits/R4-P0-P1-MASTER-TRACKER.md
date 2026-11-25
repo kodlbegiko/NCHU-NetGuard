@@ -37,3 +37,10 @@ Next: review exact branch CI, audit all trust boundaries, verify recovery journa
 - P1 history: bounded read and validated row decoder prevent oversized reads and direct decoding of overflowing values; two regressions added.
 - P1 contract: golden fixtures now compare emitted field sets and semantic JSON values, not just decode round trips. Registry/freeze and owner approval remain open.
 - Official NCHU evidence recorded separately; live policy and billing reconciliation remain open.
+
+## Closure batch 3 (candidate)
+- Remove false midnight quota-ready notification and misleading mode labels; no new real host mutations.
+- Explicit CLI local bucket selection restores safe access to campus/dorm observed totals; no provider remaining bytes without verified units. Existing Swift caller still receives ranking JSON independently. New regression.
+- Bound reads in connection/event/bundle archive; validate decoded connection session directly; add overflow and oversized regression cases.
+- Reject non-regular recovery journal path, including symlinks, before read. This is not race-free O_NOFOLLOW, nor cross-process locking/durability; those gates remain open.
+- Existing Foundation CI extended to allow pushes on closure candidate branches, all gating steps unchanged. PR creation and non-forced ref update remain blocked by connector errors. No exact-HEAD result yet.

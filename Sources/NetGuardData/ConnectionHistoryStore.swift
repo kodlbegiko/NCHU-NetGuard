@@ -11,6 +11,14 @@ public struct SavedConnectionSession: Codable, Equatable, Sendable, Identifiable
     public let limitBytes: UInt64
     public let intervals: Int
     public var total: UInt64 { received + sent }
+    private enum CodingKeys: String, CodingKey { case id, label, savedAt, received, sent, limitBytes, intervals }
+    public init(from decoder: Decoder) throws {
+        let v = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(id: v.decode(UUID.self, forKey: .id), label: v.decode(String.self, forKey: .label),
+                      savedAt: v.decode(Date.self, forKey: .savedAt), received: v.decode(UInt64.self, forKey: .received),
+                      sent: v.decode(UInt64.self, forKey: .sent), limitBytes: v.decode(UInt64.self, forKey: .limitBytes),
+                      intervals: v.decode(Int.self, forKey: .intervals))
+    }
 
     public init(id: UUID, label: String, savedAt: Date, received: UInt64, sent: UInt64, limitBytes: UInt64, intervals: Int) throws {
         let (_, overflow) = received.addingReportingOverflow(sent)
@@ -44,7 +52,14 @@ public struct ConnectionHistoryStore: Sendable {
         let attrs = try fm.attributesOfItem(atPath: file.path)
         guard attrs[.type] as? FileAttributeType == .typeRegular,
               let size = attrs[.size] as? NSNumber, size.intValue <= maxBytes else { throw HistoryStoreError.invalidRecord }
-        let data = try Data(contentsOf: file)
+        let handle = try FileHandle(forReadingFrom: file)
+        defer { try? handle.close() }
+        var data = Data()
+        while data.count <= maxBytes {
+            let chunk = try handle.read(upToCount: min(65_536, maxBytes + 1 - data.count)) ?? Data()
+            if chunk.isEmpty { break }
+            data.append(chunk)
+        }
         guard data.count <= maxBytes else { throw HistoryStoreError.invalidRecord }
         let rows = try JSONDecoder().decode([SavedConnectionSession].self, from: data)
         guard rows.count <= 1000, Set(rows.map(\.id)).count == rows.count else { throw HistoryStoreError.invalidRecord }

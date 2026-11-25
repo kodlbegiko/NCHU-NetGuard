@@ -184,7 +184,7 @@ def print_progress_bar(used, total, length=30):
     
     return f"{c}[{bar}] {pct:5.1f}%{reset}"
 
-def query_traffic():
+def query_traffic(scope=None):
     iface = ""
     ip = ""
     try:
@@ -212,28 +212,27 @@ def query_traffic():
     top100 = get_top100_data(ip) if campus_candidate else {"in_top1000": None, "status": "not_applicable"}
     unknown = {"schema_version": 1, "status": "local_usage_unknown", "date": get_today_string(),
                "iface": iface, "ip": ip, "top100": top100}
-    if state is None or campus_candidate:
+    if state is None or (scope is None and campus_candidate):
         # Keep ranking observations available to the Swift caller independently
         # of local scope attribution. Do not guess a dorm quota from an IP.
         return unknown
-    local_in = state.get("ext_in")
-    local_out = state.get("ext_out")
+    selected = scope or "external"
+    prefix = {"dorm": "dorm", "campus_wifi": "wifi", "external": "ext"}.get(selected)
+    if prefix is None:
+        return unknown
+    local_in = state.get(prefix + "_in")
+    local_out = state.get(prefix + "_out")
     if any(type(value) is not int or not 0 <= value <= 2**64 - 1 for value in (local_in, local_out)):
         return unknown
     local_total = local_in + local_out
     if local_total > 2**64 - 1:
         return unknown
-    is_dorm = False
-    
+    is_dorm = selected == "dorm"
     in_bytes, out_bytes, total_bytes = local_in, local_out, local_total
-    
-    total_quota_bytes = TOTAL_QUOTA_GB * (1024**3)
-    dl_quota_bytes = DL_QUOTA_GB * (1024**3)
-    ul_quota_bytes = UL_QUOTA_GB * (1024**3)
-    
-    rem_total_bytes = max(0, total_quota_bytes - total_bytes)
-    rem_dl_bytes = max(0, dl_quota_bytes - in_bytes)
-    rem_ul_bytes = max(0, ul_quota_bytes - out_bytes)
+    # Published G limits do not yet establish bytes-per-G. Do not produce a
+    # provider balance; the CLI reports the selected local accounting bucket.
+    total_quota_bytes = dl_quota_bytes = ul_quota_bytes = None
+    rem_total_bytes = rem_dl_bytes = rem_ul_bytes = None
     
     return {
         "schema_version": 1,
@@ -242,6 +241,9 @@ def query_traffic():
         "iface": iface,
         "ip": ip,
         "is_dorm": is_dorm,
+        "scope": selected,
+        "scope_user_selected": scope is not None,
+        "quota_units_verified": False,
         "time": time.strftime('%Y-%m-%d %H:%M:%S'),
         "total_quota": total_quota_bytes,
         "dl_quota": dl_quota_bytes,
@@ -255,8 +257,8 @@ def query_traffic():
         "top100": top100
     }
 
-def display_report():
-    data = query_traffic()
+def display_report(scope=None):
+    data = query_traffic(scope)
     if data.get("status") == "network_unknown":
         print("網路狀態未知；無法可靠估計配額。")
         return
@@ -270,7 +272,7 @@ def display_report():
     history = load_history()
     
     is_dorm = data['is_dorm']
-    net_type = "興大二村宿網" if is_dorm else ("iPhone 個人熱點" if data['ip'].startswith("172.20.10.") else "外部網路 / Wi-Fi")
+    net_type = {"dorm": "宿網觀測分類", "campus_wifi": "校園 Wi-Fi 觀測分類", "external": "外部網路觀測分類"}[data["scope"]]
     
     print("\033[1;36m============================================================\033[0m")
     print(f"\033[1;37m   🌐 網路流量監控工具 v3.2 - 【{net_type}】               \033[0m")
@@ -278,33 +280,10 @@ def display_report():
     print(f" 📍 當前 IP 位址: \033[1;33m{data['ip']}\033[0m (介面: {data['iface']} • {net_type})")
     print(f" 📅 今日日期:     \033[1;32m{data['date']}\033[0m (每日 00:00 自動歸零重設)")
     print(f" 🕒 查詢時間:     {data['time']}")
-    if is_dorm:
-        print(f" 🏫 校方每日限額: 總額 {TOTAL_QUOTA_GB:.0f} GB (下載 {DL_QUOTA_GB:.0f} GB / 上傳 {UL_QUOTA_GB:.0f} GB)")
-        print("\033[1;36m------------------------------------------------------------\033[0m")
-        # 總流量
-        print(f" 📊 \033[1m今日總流量剩餘: \033[1;32m{format_bytes(data['rem_total'])}\033[0m / {TOTAL_QUOTA_GB:.0f} GB")
-        print(f"    今日已使用: {format_bytes(data['used_total'])}")
-        print(f"    {print_progress_bar(data['used_total'], data['total_quota'], 32)}")
-        print("")
-        
-        # 下載
-        print(f" 📥 \033[1m今日下載剩餘:   \033[1;32m{format_bytes(data['rem_dl'])}\033[0m / {DL_QUOTA_GB:.0f} GB")
-        print(f"    今日已下載: {format_bytes(data['used_dl'])}")
-        print(f"    {print_progress_bar(data['used_dl'], data['dl_quota'], 32)}")
-        print("")
-        
-        # 上傳
-        print(f" 📤 \033[1m今日上傳剩餘:   \033[1;32m{format_bytes(data['rem_ul'])}\033[0m / {UL_QUOTA_GB:.0f} GB")
-        print(f"    今日已上傳: {format_bytes(data['used_ul'])}")
-        print(f"    {print_progress_bar(data['used_ul'], data['ul_quota'], 32)}")
-    else:
-        print(f" 📶 網路環境模式: \033[1;32m非宿舍或未確認網路（配額未確認）\033[0m")
-        print("\033[1;36m------------------------------------------------------------\033[0m")
-        print(f" 📊 \033[1m今日非宿網傳輸總量: \033[1;36m{format_bytes(data['used_total'])}\033[0m (\033[1;32m配額未確認\033[0m)")
-        print(f"    📥 今日下載: {format_bytes(data['used_dl'])}")
-        print(f"    📤 今日上傳: {format_bytes(data['used_ul'])}")
-        print(f" 💡 說明: 本機統計不等同網路提供者的計費或管制紀錄。")
-    print("\033[1;36m------------------------------------------------------------\033[0m")
+    print(f" 本機觀測分類：{data['scope']}（非校方計費）")
+    print(f" 今日觀測總量：{format_bytes(data['used_total'])}")
+    print(f" 下載：{format_bytes(data['used_dl'])} / 上傳：{format_bytes(data['used_ul'])}")
+    print(" 實際剩餘配額：未知（政策計量單位、計費邊界尚未確認）")
     
     # Top Apps
     if top_apps:
@@ -330,26 +309,20 @@ def display_report():
     else:
         print(" ✅ \033[1;32m校內榜單：未取得可驗證的匹配資料，狀態未知\033[0m")
         
-    if not is_dorm:
-        return
-    usage_pct = (data['used_total'] / data['total_quota']) * 100
-    if usage_pct < 60:
-        print(" 💡 \033[32m本機估計用量較低；實際校方配額仍需確認。\033[0m")
-    elif usage_pct < 85:
-        print(" 💡 \033[33m今日流量已過半，請注意避免進行大型遊戲/大型檔案下載。\033[0m")
-    else:
-        print(" 🚨 \033[1;31m警告：今日剩餘流量偏低！請暫停高頻寬操作以防被限速。\033[0m")
+    # No billing-risk claim can be derived from local bytes alone.
         
     print("\033[1;36m============================================================\033[0m")
 
 def main():
     parser = argparse.ArgumentParser(description="NetGuard local traffic estimates")
     parser.add_argument("--json", action="store_true", help="Emit versioned JSON without ANSI escapes")
+    parser.add_argument("--scope", choices=["dorm", "campus_wifi", "external"],
+                        help="Select a local accounting bucket, not a verified network identity")
     args = parser.parse_args()
     if args.json:
-        print(json.dumps(query_traffic(), ensure_ascii=False, allow_nan=False))
+        print(json.dumps(query_traffic(args.scope), ensure_ascii=False, allow_nan=False))
     else:
-        display_report()
+        display_report(args.scope)
 
 if __name__ == "__main__":
     main()
