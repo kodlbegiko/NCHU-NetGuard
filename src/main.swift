@@ -252,6 +252,13 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var isConnected: Bool = false
     var pingLatencyMs: Double = -1
     var networkQuality = NetworkQualityWindow()
+    var echoWindow = EchoProbeWindow()
+    var dnsReading: DNSProbeReading?
+    var dnsObservedAt: TimeInterval?
+    var dnsInFlight = false
+    var dnsAttempted = false
+    var dnsToken = UUID()
+    var echoTarget: String?
     var observationSchedule = ObservationSchedule()
     var pathMonitor: NWPathMonitor?
     var routeEventToken = UUID()
@@ -684,6 +691,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         observedInterfaceRates = [:]
         observedTunnelCandidates = []
         networkQuality.reset()
+        resetQualityEvidence()
         throughputWindow.reset()
         lastPingUptime = nil
         appProbeTimestamp = nil
@@ -819,6 +827,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 self.isConnected = false
                 self.activeSpeedMeasured = false
                 self.networkQuality.reset()
+                self.resetQualityEvidence()
                 self.throughputWindow.reset()
                 self.lastPingUptime = nil
                 self.pingLatencyMs = -1
@@ -1126,6 +1135,16 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             providerFresh: providerObservation?.isFresh(for: getTodayString(), now: Date()) == true && providerObservation?.status == .listed)
         let latency = networkQuality.summary(at: now)
         let latencyStatus = latency.map { String(format: "延遲中位數 %.1f ms · 相鄰探測平均變動 %.1f ms（%d 筆）", $0.medianMilliseconds, $0.meanChangeMilliseconds, $0.sampleCount) } ?? networkQuality.state(at: now).description
+        let echo = connected ? echoWindow.summary(at: now) : nil
+        let echoStatus = echo.map { String(format: "ICMP %@ · 回覆 %d/%d · 未回覆 %.0f%%（近期探測）", echoTarget ?? "未知目標", $0.received, $0.sent, $0.lossFraction * 100) } ?? "ICMP 樣本不足、失敗或過期"
+        let dnsFresh = dnsObservedAt.map { now >= $0 && now - $0 <= 120 } ?? false
+        let dnsStatus: String
+        if !connected { dnsStatus = "DNS 未量測：連線未確認" }
+        else if dnsInFlight { dnsStatus = "DNS 探測執行中" }
+        else if dnsFresh, let reading = dnsReading {
+            dnsStatus = "dig 回應：" + reading.status + " · " + String(reading.milliseconds) + " ms"
+        } else if dnsFresh && dnsAttempted { dnsStatus = "DNS 探測失敗或輸出無法驗證" }
+        else { dnsStatus = "DNS 未量測或結果過期" }
         let rateFresh = lastSampleUptime.map { now >= $0 && now - $0 <= 5 } ?? false
         let snapshot = ManagementSnapshot(scopes: sampledScopes, defaultInterface: activeInterface,
             connectionKnown: connected, latencyStatus: connected ? latencyStatus : "延遲未量測",
@@ -1133,7 +1152,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             focusEnabled: workflowPowerGuard.focusEnabled, diagnosticInput: input, providerStatus: providerStatusText,
             rates: rateFresh && workflowPowerGuard.allowsSampling ? observedInterfaceRates : [:],
             tunnelCandidates: workflowPowerGuard.allowsSampling && rateFresh ? observedTunnelCandidates : [],
-            sessionUsage: processUsage.report())
+            sessionUsage: processUsage.report(), echoStatus: echoStatus, dnsStatus: dnsStatus)
         if managementModel.snapshot != snapshot { managementModel.snapshot = snapshot }
         let ledgerStatus: String
         if alertLedgerBlockedDay == currentDateString {
@@ -1173,6 +1192,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 },
                 setHistoryEnabled: { [weak self] in self?.setProcessHistoryEnabled($0) },
                 reloadHistory: { [weak self] in self?.reloadProcessHistory() },
+                testDNS: { [weak self] in self?.testDNS() },
                 setHistoryRetention: { [weak self] in self?.setProcessHistoryRetention($0) },
                 deleteHistory: { [weak self] in self?.deleteProcessHistory() }
             ))
@@ -1854,6 +1874,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     private func applyDiscoveredNetwork(interface: String, ip: String) {
         if activeInterface != interface || currentIP != ip {
             networkQuality.reset()
+        resetQualityEvidence()
             throughputWindow.reset()
             lastPingUptime = nil
             pingLatencyMs = -1
@@ -1994,6 +2015,48 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         currentUpSpeed = 0
     }
 
+    private func resetQualityEvidence() {
+        echoWindow.reset()
+        echoTarget = nil
+        dnsReading = nil
+        dnsObservedAt = nil
+        dnsAttempted = false
+        dnsToken = UUID()
+    }
+
+    private func testDNS() {
+        guard workflowPowerGuard.allowsOptionalProbes, isConnected, !dnsInFlight else {
+            return
+        }
+        dnsInFlight = true
+        dnsAttempted = true
+        dnsReading = nil
+        dnsObservedAt = nil
+        let token = dnsToken
+        let route = routeEventToken
+        let generation = workflowPowerGuard.generation
+        syncManagementModel()
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let outcome = ProbeRunner.run("/usr/bin/dig", ["-r", "+time=2", "+tries=1", "+noall", "+comments", "+stats", "example.com.", "A"], timeout: 4, maxBytes: 65536)
+            let reading: DNSProbeReading?
+            if case .success(let raw) = outcome { reading = DNSProbeParser.parse(raw) }
+            else { reading = nil }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.dnsInFlight = false
+                guard self.dnsToken == token, self.routeEventToken == route,
+                      self.workflowPowerGuard.generation == generation, self.isConnected else {
+                    self.dnsAttempted = false
+                    self.syncManagementModel()
+                    return
+                }
+                self.dnsReading = reading
+                self.dnsObservedAt = ProcessInfo.processInfo.systemUptime
+                self.syncManagementModel()
+            }
+        }
+    }
+
     var pingInFlight = false
     func measurePingLatency() {
         guard workflowPowerGuard.allowsOptionalProbes, !pingInFlight, isConnected else { return }
@@ -2003,16 +2066,19 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         let expectedIP = currentIP
         let expectedInterface = activeInterface
         let target = isQuotaRestricted ? "140.120.1.2" : "1.1.1.1"
+        if echoTarget != target {
+            echoWindow.reset()
+            networkQuality.reset()
+            pingLatencyMs = -1
+            lastPingUptime = nil
+            echoTarget = target
+        }
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let outcome = ProbeRunner.run("/sbin/ping", ["-c", "2", "-t", "2", target], timeout: 4)
-            var latency: Double?
-            if case .success(let out) = outcome,
-               let range = out.range(of: "time="),
-               let first = out[range.upperBound...].split(separator: " ").first,
-               let value = Double(first), value.isFinite, value >= 0 {
-                latency = value
-            }
-            let measured = latency
+            let outcome = ProbeRunner.run("/sbin/ping", ["-c", "2", "-t", "3", target], timeout: 5, maxBytes: 65536, acceptedExitCodes: [0, 2])
+            let reading: EchoProbeReading?
+            if case .success(let raw) = outcome { reading = EchoProbeParser.parse(raw, expectedCount: 2) }
+            else { reading = nil }
+            let measured = reading?.averageMilliseconds
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.pingInFlight = false
@@ -2023,6 +2089,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 self.pingLatencyMs = measured ?? -1
                 self.lastPingUptime = measured == nil ? nil : uptime
                 self.networkQuality.ingest(latency: measured, uptime: uptime)
+                self.echoWindow.ingest(reading, at: uptime)
             }
         }
     }
