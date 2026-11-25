@@ -83,4 +83,5 @@ public typealias ConnectionCycleReading = NetGuardData.ConnectionCycleReading
 public typealias TrafficEventKind = NetGuardObservation.TrafficEventKind
 public typealias TrafficObservationEvent = NetGuardObservation.TrafficObservationEvent
 public typealias TrafficEventDetector = NetGuardObservation.TrafficEventDetector
+public typealias TrafficEventRules = NetGuardObservation.TrafficEventRules
 #endif
