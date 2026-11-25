@@ -31,7 +31,8 @@
     "QualityDiagnostics.swift": 2,
     "AgentAttribution.swift": 2,
     "DualStackEvidence.swift": 2,
-    "ConnectionSessionMeter.swift": 1
+    "ConnectionSessionMeter.swift": 1,
+    "ConnectionHistoryStore.swift": 7
   },
   "shared_paths": {
     "src/main.swift": 0,
@@ -98,6 +99,7 @@
     "QualityDiagnostics.swift": "NetGuardObservation",
     "AgentAttribution.swift": "NetGuardObservation",
     "DualStackEvidence.swift": "NetGuardObservation",
-    "ConnectionSessionMeter.swift": "NetGuardTraffic"
+    "ConnectionSessionMeter.swift": "NetGuardTraffic",
+    "ConnectionHistoryStore.swift": "NetGuardData"
   }
 }
