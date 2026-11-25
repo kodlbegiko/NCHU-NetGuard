@@ -37,4 +37,20 @@ final class ManagementSnapshotTests: XCTestCase {
         XCTAssertEqual(ProcessSamplePresentation.visible(rows, query: "absent", order: .name), [])
     }
 
+
+    func testPhysicalRatesAndTunnelEvidenceAreIndependent() {
+        let rate = ObservedInterfaceRate(download: 0, upload: 20)
+        let result = ManagementSnapshot(scopes: ["en0": .dorm, "en1": .unknown], defaultInterface: "utun4",
+            connectionKnown: true, latencyStatus: "未量測", processRows: [], processAge: nil,
+            focusEnabled: false, diagnosticInput: .init(connected: true, scope: .unknown, persistenceHealthy: true,
+                sampleGapCount: 0, providerFresh: false), providerStatus: "fixture",
+            rates: rate.map { ["en0": $0] } ?? [:], tunnelCandidates: ["utun4"])
+        XCTAssertEqual(result.interfaces.first?.rate, rate)
+        XCTAssertNil(result.interfaces.last?.rate)
+        XCTAssertFalse(result.interfaces.contains(where: \.isDefault))
+        XCTAssertTrue(result.tunnelStatus.contains("疑似隧道"))
+        XCTAssertNil(ObservedInterfaceRate(download: .nan, upload: 0))
+        XCTAssertNil(ObservedInterfaceRate(download: 0, upload: -1))
+    }
+
 }
