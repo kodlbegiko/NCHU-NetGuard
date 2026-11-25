@@ -60,4 +60,35 @@ final class HistoryBackupTests: XCTestCase {
             XCTAssertThrowsError(try HistoryBackupInspector.inspect(url))
         }
     }
+
+    func testReadOnlySourceBackupDoesNotChangeSource() throws {
+        try withDirectory { dir in
+            let url = dir.appendingPathComponent("live.sqlite")
+            do {
+                let source = try HistoryStore(url: url)
+                try source.upsert(HistoryDay(day: "2026-11-24", total: 10, download: nil, upload: nil))
+            }
+            let original = try Data(contentsOf: url)
+            let destination = dir.appendingPathComponent("backup.sqlite")
+            try HistoryStore.backup(from: url, to: destination)
+            XCTAssertEqual(try HistoryBackupInspector.inspect(destination).recordedDays, 1)
+            XCTAssertEqual(try Data(contentsOf: url), original)
+        }
+    }
+
+    func testUnexpectedTableFailsPreflight() throws {
+        try withDirectory { dir in
+            let url = dir.appendingPathComponent("unexpected.sqlite")
+            do { _ = try HistoryStore(url: url) }
+            var db: OpaquePointer?
+            guard sqlite3_open(url.path, &db) == SQLITE_OK, let db else {
+                throw HistoryStoreError.database("fixture open")
+            }
+            let result = sqlite3_exec(db, "CREATE TABLE unexpected(value TEXT)", nil, nil, nil)
+            sqlite3_close(db)
+            XCTAssertEqual(result, SQLITE_OK)
+            XCTAssertThrowsError(try HistoryBackupInspector.inspect(url))
+        }
+    }
+
 }
