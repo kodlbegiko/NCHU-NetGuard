@@ -84,3 +84,6 @@ Next: review exact branch CI, audit all trust boundaries, verify recovery journa
 
 ## Closure batch 15 (candidate)
 - Batch 14 CI 45653268860 passed Python/static tests but caught WebKit's Swift-imported argument label mismatch. Correct `callAsyncJavaScript` label to `in: .page` per the actual compiler, retain safe argument bridge. Batch 11 CI 45652514856 fully green: 196 Swift tests, 27 Python tests, legacy and modular fixture smoke; host/UDP evidence inconclusive, TCP fixture/host check succeeded without a billing claim. Exact batch 15 CI still required.
+
+## Full roadmap integration increment 1
+- Provider request scheduling uses a monotonic single-flight gate, bounded exponential backoff and invalidation without releasing the active slot; runtime integration prevents route churn from resetting the request rate limit. Strict ranking validation shared by diagnostics and display. New deterministic tests; exact integration CI required. Provider billing timestamp/unit and physical reconciliation remain open.

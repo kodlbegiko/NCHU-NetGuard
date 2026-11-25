@@ -31,6 +31,7 @@ public typealias RecoveryJournalStore = NetGuardRecovery.RecoveryJournalStore
 public typealias SimulatedNetworkAdapter = NetGuardRecovery.SimulatedNetworkAdapter
 public typealias ProviderStatus = NetGuardProvider.ProviderStatus
 public typealias ProviderObservation = NetGuardProvider.ProviderObservation
+public typealias ProviderPollGate = NetGuardProvider.ProviderPollGate
 public typealias SampleQuality = NetGuardTraffic.SampleQuality
 public typealias InterfaceCounters = NetGuardTraffic.InterfaceCounters
 public typealias TrafficDelta = NetGuardTraffic.TrafficDelta

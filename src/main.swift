@@ -346,9 +346,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
     
     var topAppConsumers: [(name: String, bytes: Double)] = []
     var providerObservation: ProviderObservation?
-    var providerRequestID = UUID()
-    var providerLastAttempt: Date?
-    var providerRequestInFlight = false
+    var providerPollGate = ProviderPollGate()
     var providerStatusText: String {
         guard isDormNetwork, isConnected else { return "校方榜單不適用或網路未確認" }
         guard let observation = providerObservation else { return "校方資料尚未確認" }
@@ -554,8 +552,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         lastSampleUptime = nil
         pingLatencyMs = -1
         providerObservation = nil
-        providerRequestID = UUID()
-        providerRequestInFlight = false
+        providerPollGate.invalidate()
     }
 
     @objc func screensDidSleep() {
@@ -573,8 +570,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             appProbeTimestamp = nil
             topAppConsumers = []
         }
-        providerRequestID = UUID()
-        providerRequestInFlight = false
+        providerPollGate.invalidate()
         if popover != nil && popover.isShown { pushDataToWebUI() }
     }
 
@@ -691,9 +687,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                 self.lastPingUptime = nil
                 self.pingLatencyMs = -1
                 self.providerObservation = nil
-                self.providerRequestID = UUID()
-                self.providerLastAttempt = nil
-                self.providerRequestInFlight = false
+                self.providerPollGate.invalidate()
             }
         }
         pathMonitor = monitor
@@ -1024,7 +1018,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             connected: isConnected, scope: scope,
             persistenceHealthy: !persistenceBlocked && TrafficHistoryManager.shared.healthy && !persistenceStatus.contains("失敗"),
             sampleGapCount: sampleGapCount,
-            providerFresh: providerObservation?.isFresh(for: getTodayString(), now: Date()) == true && providerObservation?.status == .listed
+            providerFresh: providerObservation?.isUsableRanking(for: getTodayString(), now: Date()) == true
         )).first?.summary ?? "狀態未知"
         let now = ProcessInfo.processInfo.systemUptime
         let fresh = lastSampleUptime.map { now >= $0 && now - $0 <= 5 } ?? false
@@ -1285,7 +1279,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         let input = DiagnosticInput(connected: connected, scope: scope,
             persistenceHealthy: !persistenceBlocked && TrafficHistoryManager.shared.healthy && !persistenceStatus.contains("失敗"),
             sampleGapCount: sampleGapCount,
-            providerFresh: providerObservation?.isFresh(for: getTodayString(), now: Date()) == true && providerObservation?.status == .listed)
+            providerFresh: providerObservation?.isUsableRanking(for: getTodayString(), now: Date()) == true)
         let latency = networkQuality.summary(at: now)
         let latencyStatus = latency.map { String(format: "延遲中位數 %.1f ms · 相鄰探測平均變動 %.1f ms（%d 筆）", $0.medianMilliseconds, $0.meanChangeMilliseconds, $0.sampleCount) } ?? networkQuality.state(at: now).description
         let echo = connected ? echoWindow.summary(at: now) : nil
@@ -1970,7 +1964,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                 connected: isConnected, scope: sampledScopes[activeInterface] ?? .unknown,
                 persistenceHealthy: !persistenceBlocked && TrafficHistoryManager.shared.healthy && !persistenceStatus.contains("失敗"),
                 sampleGapCount: sampleGapCount,
-                providerFresh: providerObservation?.isFresh(for: getTodayString(), now: Date()) == true && providerObservation?.status == .listed
+                providerFresh: providerObservation?.isUsableRanking(for: getTodayString(), now: Date()) == true
             )).first?.summary ?? "狀態未知",
             "observedInterfaces": sampledScopes.keys.sorted().joined(separator: ", "),
             "date": currentDateString,
@@ -2201,9 +2195,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             lastPingUptime = nil
             pingLatencyMs = -1
             providerObservation = nil
-            providerRequestID = UUID()
-            providerRequestInFlight = false
-            providerLastAttempt = nil
+            providerPollGate.invalidate()
         }
         activeInterface = interface
         currentIP = ip
@@ -2542,6 +2534,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             throughputWindow.reset()
             trafficEventDetector.resetContinuity()
             providerObservation = nil
+            providerPollGate.invalidate()
             alertTierSent = 0
             if isWiredTemporarilyDisabled {
                 restoreWiredNetwork(reason: "每日 00:00 額度重設")
@@ -2871,31 +2864,27 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         guard workflowPowerGuard.allowsOptionalProbes else { return }
         guard isDormNetwork, isConnected, !currentIP.isEmpty else {
             providerObservation = nil
-            providerRequestID = UUID()
-            providerRequestInFlight = false
+            providerPollGate.invalidate()
             return
         }
-        guard !providerRequestInFlight,
-              providerLastAttempt.map({ Date().timeIntervalSince($0) >= 60 }) ?? true else { return }
+        guard let requestID = providerPollGate.begin(at: ProcessInfo.processInfo.systemUptime) else { return }
         let expectedIP = currentIP
         let expectedDay = getTodayString()
-        let requestID = UUID()
-        providerRequestID = requestID
-        providerLastAttempt = Date()
-        providerRequestInFlight = true
         DispatchQueue.global(qos: .background).async { [weak self] in
             guard let self = self else { return }
             var result: ProviderObservation?
             defer {
                 let observation = result
                 DispatchQueue.main.async {
-                    guard self.providerRequestID == requestID else { return }
-                    self.providerRequestInFlight = false
-                    guard self.isConnected, self.isDormNetwork,
-                          self.currentIP == expectedIP, self.getTodayString() == expectedDay else {
-                        self.providerObservation = nil
-                        return
-                    }
+                    let applicable = self.isConnected && self.isDormNetwork &&
+                        self.currentIP == expectedIP && self.getTodayString() == expectedDay &&
+                        self.workflowPowerGuard.allowsOptionalProbes
+                    if !applicable { self.providerPollGate.invalidate() }
+                    let usable = observation?.isUsableRanking(for: expectedDay, now: Date()) == true
+                    // A valid absent ranking is an observation, not a safe state.
+                    let observedAbsent = observation?.status == .notFoundOrUnrecognized &&
+                        observation?.isFresh(for: expectedDay, now: Date()) == true
+                    guard self.providerPollGate.finish(requestID, usable: usable || observedAbsent) else { return }
                     self.providerObservation = observation
                     if self.popover != nil && self.popover.isShown { self.pushDataToWebUI() }
                 }
