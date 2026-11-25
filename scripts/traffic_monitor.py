@@ -56,7 +56,7 @@ def load_state():
 
 def get_top_apps():
     try:
-        out = subprocess.check_output(["nettop", "-P", "-L", "1", "-J", "bytes_in,bytes_out"], text=True)
+        out = subprocess.check_output(["nettop", "-P", "-L", "1", "-J", "bytes_in,bytes_out"], text=True, timeout=5)
         app_map = {}
         for line in out.splitlines():
             parts = line.strip().split(',')
@@ -81,8 +81,6 @@ def get_top100_data(ip_addr):
     today = get_today_string()
     url = f"https://top100.nchu.edu.tw/nchubody2.php?date={today}"
     ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
     
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -96,7 +94,7 @@ def get_top100_data(ip_addr):
                 )
                 for match in pattern.finditer(html):
                     rank, unit, row_ip, dl_str, ul_str, total_str = match.groups()
-                    if ip_addr in row_ip:
+                    if ip_addr == re.sub(r'<[^>]+>', '', row_ip).strip():
                         def parse_unit(s):
                             s = re.sub(r'<[^>]+>', '', s).strip()
                             if 'GB' in s:
@@ -112,11 +110,12 @@ def get_top100_data(ip_addr):
                             "in_bytes": parse_unit(dl_str),
                             "out_bytes": parse_unit(ul_str),
                             "total_bytes": parse_unit(total_str),
-                            "in_top1000": True
+                            "in_top1000": True,
+                            "status": "listed"
                         }
     except Exception:
-        pass
-    return {"in_top1000": False}
+        return {"in_top1000": None, "status": "unavailable"}
+    return {"in_top1000": None, "status": "not_found_or_unrecognized"}
 
 def format_bytes(b):
     if b >= 1024 * 1024 * 1024:
@@ -145,21 +144,25 @@ def print_progress_bar(used, total, length=30):
     return f"{c}[{bar}] {pct:5.1f}%{reset}"
 
 def query_traffic():
-    iface = "en6"
-    ip = "140.120.251.121"
+    iface = ""
+    ip = ""
     try:
-        route_out = subprocess.check_output(["route", "get", "default"], text=True)
+        route_out = subprocess.check_output(["route", "get", "default"], text=True, timeout=3)
         for line in route_out.splitlines():
             if "interface:" in line:
                 iface = line.split(":")[1].strip()
                 break
-        ip_out = subprocess.check_output(["ipconfig", "getifaddr", iface], text=True).strip()
+        if not iface:
+            raise ValueError("No default interface")
+        ip_out = subprocess.check_output(["ipconfig", "getifaddr", iface], text=True, timeout=3).strip()
         if ip_out:
             ip = ip_out
     except Exception:
         pass
 
     state = load_state()
+    if not ip:
+        return {"schema_version": 1, "status": "network_unknown", "top100": {"status": "unavailable", "in_top1000": None}}
     is_dorm = ip.startswith("140.120.")
     if is_dorm:
         local_in = state.get("dorm_in", state.get("today_in", 0.0))
@@ -169,7 +172,7 @@ def query_traffic():
         local_out = state.get("ext_out", 0.0)
     local_total = local_in + local_out
     
-    top100 = get_top100_data(ip) if is_dorm else {"in_top1000": False}
+    top100 = get_top100_data(ip) if is_dorm else {"in_top1000": None, "status": "not_applicable"}
     
     in_bytes = max(local_in, top100.get("in_bytes", 0))
     out_bytes = max(local_out, top100.get("out_bytes", 0))
@@ -184,6 +187,8 @@ def query_traffic():
     rem_ul_bytes = max(0, ul_quota_bytes - out_bytes)
     
     return {
+        "schema_version": 1,
+        "status": "local_estimate",
         "date": get_today_string(),
         "iface": iface,
         "ip": ip,
@@ -203,6 +208,9 @@ def query_traffic():
 
 def display_report():
     data = query_traffic()
+    if data.get("status") == "network_unknown":
+        print("網路狀態未知；無法可靠估計配額。")
+        return
     top_apps = get_top_apps()
     history = load_history()
     
@@ -265,7 +273,7 @@ def display_report():
         rank = data['top100'].get("rank")
         print(f" ⚠️  \033[1;33m校內 Top 1000 狀態: 已列入榜單第 {rank} 名\033[0m")
     else:
-        print(" ✅ \033[1;32m校內 Top 1000 狀態: 安全 (未進入前 1000 名高用量榜單，綠燈)\033[0m")
+        print(" ✅ \033[1;32m校內榜單：未取得可驗證的匹配資料，狀態未知\033[0m")
         
     usage_pct = (data['used_total'] / data['total_quota']) * 100
     if usage_pct < 60:
@@ -278,7 +286,13 @@ def display_report():
     print("\033[1;36m============================================================\033[0m")
 
 def main():
-    display_report()
+    parser = argparse.ArgumentParser(description="NetGuard local traffic estimates")
+    parser.add_argument("--json", action="store_true", help="Emit versioned JSON without ANSI escapes")
+    args = parser.parse_args()
+    if args.json:
+        print(json.dumps(query_traffic(), ensure_ascii=False, allow_nan=False))
+    else:
+        display_report()
 
 if __name__ == "__main__":
     main()
