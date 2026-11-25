@@ -30,4 +30,28 @@ final class ScopedAccountingTests: XCTestCase {
         XCTAssertEqual(QuotaEvaluator.assess(profile: p, received: 490, sent: 0, quality: .measured), .warning)
         XCTAssertEqual(QuotaEvaluator.assess(profile: p, received: 0, sent: 0, quality: .unknown), .unknown)
     }
+
+    func testMissingInterfaceReportsUnknownWithoutDiscardingOtherDeltas() {
+        var engine = ScopedCounterAccumulator()
+        _ = engine.ingest([s("en0", 10, .dorm), s("en1", 20, .external)], day: "d", uptime: 1)
+        let next = engine.ingest([s("en0", 15, .dorm)], day: "d", uptime: 2)
+        XCTAssertEqual(next["en0"]?.delta.received, 5)
+        XCTAssertEqual(next["en1"]?.delta.quality, .unknown)
+        let again = engine.ingest([s("en0", 20, .dorm)], day: "d", uptime: 3)
+        XCTAssertNil(again["en1"])
+    }
+
+    func testInvalidClockDoesNotSeedBaseline() {
+        var engine = ScopedCounterAccumulator()
+        _ = engine.ingest([s("en0", 10, .dorm)], day: "d", uptime: 1)
+        XCTAssertEqual(engine.ingest([s("en0", 20, .dorm)], day: "d", uptime: .nan)["en0"]?.delta.quality, .unknown)
+        XCTAssertEqual(engine.ingest([s("en0", 30, .dorm)], day: "d", uptime: 2)["en0"]?.delta.quality, .unknown)
+        XCTAssertEqual(engine.ingest([s("en0", 35, .dorm)], day: "d", uptime: 3)["en0"]?.delta.received, 5)
+    }
+
+    func testDuplicateScopeProjectionNeverTraps() {
+        XCTAssertEqual(InterfaceScopeProjection.scopes([s("en0", 10, .dorm), s("en0", 20, .external), s("en1", 30, .campusWifi)]),
+                       ["en0": .unknown, "en1": .campusWifi])
+    }
+
 }
