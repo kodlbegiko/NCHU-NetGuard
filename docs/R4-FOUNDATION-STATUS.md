@@ -56,3 +56,9 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 - Added rolling latency-quality state (minimum three samples, five-sample window, stale after 120 seconds), app-process snapshot parsing and four unit tests. Removed old fixed-interface speed race, fabricated speed estimates and misleading comparisons. App data is a process snapshot, not authoritative per-interface or daily attribution. App names are inserted using textContent; no claim that the full WebView is injection-proof.
 - Default route/address discovery is off the main thread and generation checked. IPv6-only/VPN-specific discovery and host reachability remain unverified; default IPv4 address is not internet reachability.
 - Latest integrated build required. CI had passed earlier core tests but the earlier app build was superseded. No paid service, real network mutation or release.
+
+## Tenth iteration
+
+- Complete Foundation CI passed on ff166df03baa3d9a3c6c83c49c561e0c25b0534f, run 45627627799: Python, Swift, macOS app compilation, bundle and plist verification. No app launch or actual network mutation.
+- Added eight literal public contract compatibility fixtures and one public-construction test; explicit constructors for six formerly internal-only models; validated quota profile before policy evaluation. Documented candidate wire encoding and evolution in ADR-0001. New changes require their own exact-HEAD CI. Semantic contract review and owner approval still required before full freeze.
+- Staged the changes separately while the preceding CI completed, then advanced the foundation branch without rewriting history. No paid services or release.
