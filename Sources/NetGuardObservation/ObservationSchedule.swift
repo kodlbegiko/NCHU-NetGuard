@@ -28,8 +28,9 @@ public struct ObservationSchedule: Sendable {
         return true
     }
     public mutating func takeApps(now: TimeInterval, visible: Bool, busy: Bool,
-                                  allowed: Bool) -> Bool {
-        guard allowed, visible, due(lastApps, now: now, interval: busy ? 10 : 25) else { return false }
+                                  allowed: Bool, backgroundEnabled: Bool = false) -> Bool {
+        let interval: TimeInterval = visible ? (busy ? 10 : 25) : (busy ? 20 : 35)
+        guard allowed, visible || backgroundEnabled, due(lastApps, now: now, interval: interval) else { return false }
         lastApps = now
         return true
     }
