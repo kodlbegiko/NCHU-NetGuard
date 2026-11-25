@@ -68,3 +68,6 @@ Next: review exact branch CI, audit all trust boundaries, verify recovery journa
 
 ## Closure batch 10 (candidate)
 - Exact batch 6 CI 45651898611: native SwiftPM compilation/link succeeded, packaging failed because GNU Make expanded the shell substitution. Escape the dollar sign; retain the mandatory module smoke gate. Batches 3–5 full CI passed (45651479816, 45651595602, 45651739919). Exact cumulative CI still required.
+
+## Closure batch 11 (candidate)
+- Python CLI trust boundaries: fixed absolute read-only command paths, bounded direct-child stdout/time and no shell, regular no-follow local JSON read with byte ceiling and shape check, reject HTTP redirects before contact, keep standard TLS. Explicit binary unit labels and accurate snapshot wording. Regression coverage for timeout/output ceiling, redirect rejection and local file shape/symlink. Exact CI pending; child descendants and provider policy/device reconciliation remain separate.

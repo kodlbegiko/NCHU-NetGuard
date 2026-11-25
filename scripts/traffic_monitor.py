@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 """
 中興大學 宿舍網路 (興大二村) 每日流量監控工具 (流量包) v3.1
-- 讀取由 NCHUTraffic 原生守護進程精準統計的今日用量
-- 依據 11GB 總限額 (下載 7GB / 上傳 4GB) 計算當日剩餘流量
+- 讀取 NCHUTraffic 本機觀測用量；非校方計費
+- 校方配額單位與計費邊界未驗證時，不推算剩餘流量
 - 同步查詢 top100.nchu.edu.tw 官方榜單
 """
 
@@ -11,6 +11,8 @@ import sys
 import os
 import re
 import subprocess
+import selectors
+import stat
 import urllib.request
 import ssl
 import json
@@ -21,41 +23,72 @@ from html.parser import HTMLParser
 from urllib.parse import urlparse
 import ipaddress
 
-TOTAL_QUOTA_GB = 11.0
-DL_QUOTA_GB = 7.0
-UL_QUOTA_GB = 4.0
-
 STATE_FILE = os.path.expanduser("~/.nchu_traffic_state.json")
 HISTORY_FILE = os.path.expanduser("~/.nchu_traffic_history.json")
 
 def get_today_string():
     return datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
 
+MAX_JSON_BYTES = 4 * 1024 * 1024
+MAX_PROBE_BYTES = 1024 * 1024
+
+def read_json_object(path):
+    """No symlink, special-file or unbounded reads of local state."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as source:
+            info = os.fstat(source.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_JSON_BYTES:
+                return None
+            raw = source.read(MAX_JSON_BYTES + 1)
+            if len(raw) > MAX_JSON_BYTES:
+                return None
+        value = json.loads(raw)
+        return value if isinstance(value, dict) else None
+    except (OSError, ValueError, RecursionError):
+        return None
+
 def load_history():
-    if os.path.exists(HISTORY_FILE):
-        try:
-            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
+    return read_json_object(HISTORY_FILE) or {}
 
 def load_state():
-    today = get_today_string()
-    default_state = None
-    if os.path.exists(STATE_FILE):
+    data = read_json_object(STATE_FILE)
+    if data is not None and data.get("date") == get_today_string() and type(data.get("schema_version", 1)) is int and data.get("schema_version", 1) == 1:
+        return data
+    return None
+
+def run_probe(argv, timeout, max_bytes=MAX_PROBE_BYTES):
+    """Bound stdout, wall-clock wait, and direct-child lifetime; no shell."""
+    deadline = time.monotonic() + timeout
+    with subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as proc:
         try:
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict) and data.get("date") == today and data.get("schema_version", 1) == 1:
-                    return data
-        except Exception:
-            pass
-    return default_state
+            with selectors.DefaultSelector() as selector:
+                selector.register(proc.stdout, selectors.EVENT_READ)
+                result = bytearray()
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0 or not selector.select(remaining):
+                        raise TimeoutError("probe timed out")
+                    chunk = os.read(proc.stdout.fileno(), min(65536, max_bytes + 1 - len(result)))
+                    if not chunk:
+                        break
+                    result.extend(chunk)
+                    if len(result) > max_bytes:
+                        raise ValueError("probe output exceeds limit")
+            if proc.wait(timeout=max(0, deadline - time.monotonic())) != 0:
+                raise OSError("probe failed")
+            return result.decode("utf-8", errors="strict")
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 def get_top_apps():
     try:
-        out = subprocess.check_output(["nettop", "-P", "-L", "1", "-J", "bytes_in,bytes_out"], text=True, timeout=5)
+        out = run_probe(["/usr/bin/nettop", "-P", "-L", "1", "-J", "bytes_in,bytes_out"], timeout=5)
         app_map = {}
         for line in out.splitlines():
             parts = line.strip().split(',')
@@ -140,7 +173,8 @@ def get_top100_data(ip_addr):
     ctx = ssl.create_default_context()
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "NCHU-NetGuard/4.0"})
-        with urllib.request.urlopen(req, context=ctx, timeout=3) as response:
+        opener = urllib.request.build_opener(NoRedirect(), urllib.request.HTTPSHandler(context=ctx))
+        with opener.open(req, timeout=3) as response:
             final = urlparse(response.geturl())
             if final.scheme != "https" or final.hostname != "top100.nchu.edu.tw" or response.status != 200:
                 return {"in_top1000": None, "status": "unavailable"}
@@ -160,11 +194,11 @@ def get_top100_data(ip_addr):
 
 def format_bytes(b):
     if b >= 1024 * 1024 * 1024:
-        return f"{b / (1024**3):.2f} GB"
+        return f"{b / (1024**3):.2f} GiB"
     elif b >= 1024 * 1024:
-        return f"{b / (1024**2):.2f} MB"
+        return f"{b / (1024**2):.2f} MiB"
     elif b >= 1024:
-        return f"{b / 1024:.2f} KB"
+        return f"{b / 1024:.2f} KiB"
     else:
         return f"{b:.0f} B"
 
@@ -188,14 +222,14 @@ def query_traffic(scope=None):
     iface = ""
     ip = ""
     try:
-        route_out = subprocess.check_output(["route", "get", "default"], text=True, timeout=3)
+        route_out = run_probe(["/sbin/route", "get", "default"], timeout=3)
         for line in route_out.splitlines():
             if "interface:" in line:
                 iface = line.split(":")[1].strip()
                 break
-        if not iface:
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,31}", iface):
             raise ValueError("No default interface")
-        ip_out = subprocess.check_output(["ipconfig", "getifaddr", iface], text=True, timeout=3).strip()
+        ip_out = run_probe(["/usr/sbin/ipconfig", "getifaddr", iface], timeout=3).strip()
         if ip_out:
             ip = ip_out
     except Exception:
@@ -212,7 +246,7 @@ def query_traffic(scope=None):
     top100 = get_top100_data(ip) if campus_candidate else {"in_top1000": None, "status": "not_applicable"}
     unknown = {"schema_version": 1, "status": "local_usage_unknown", "date": get_today_string(),
                "iface": iface, "ip": ip, "top100": top100}
-    if state is None or (scope is None and campus_candidate):
+    if state is None or state.get("accounting_overflow") is True or (scope is None and campus_candidate):
         # Keep ranking observations available to the Swift caller independently
         # of local scope attribution. Do not guess a dorm quota from an IP.
         return unknown
@@ -278,7 +312,7 @@ def display_report(scope=None):
     print(f"\033[1;37m   🌐 網路流量監控工具 v3.2 - 【{net_type}】               \033[0m")
     print("\033[1;36m============================================================\033[0m")
     print(f" 📍 當前 IP 位址: \033[1;33m{data['ip']}\033[0m (介面: {data['iface']} • {net_type})")
-    print(f" 📅 今日日期:     \033[1;32m{data['date']}\033[0m (每日 00:00 自動歸零重設)")
+    print(f" 📅 今日日期:     \033[1;32m{data['date']}\033[0m (本機日期，非校方重設證明)")
     print(f" 🕒 查詢時間:     {data['time']}")
     print(f" 本機觀測分類：{data['scope']}（非校方計費）")
     print(f" 今日觀測總量：{format_bytes(data['used_total'])}")
@@ -287,7 +321,7 @@ def display_report(scope=None):
     
     # Top Apps
     if top_apps:
-        print(" 📱 \033[1m今日耗流最高的應用程式 (Top Consumers):\033[0m")
+        print(" 📱 \033[1m程序觀測快照（非今日累計）:\033[0m")
         for idx, (app_name, b_val) in enumerate(top_apps[:4], 1):
             print(f"    {idx}. {app_name:<20}: {format_bytes(b_val)}")
         print("\033[1;36m------------------------------------------------------------\033[0m")
@@ -297,7 +331,9 @@ def display_report(scope=None):
         print(" 📅 \033[1m近期歷史紀錄:\033[0m")
         for d in sorted(history.keys())[-3:]:
             rec = history[d]
-            total_b = rec.get("total", 0) if isinstance(rec, dict) else rec
+            total_b = rec.get("total") if isinstance(rec, dict) else rec
+            if type(total_b) is not int or not 0 <= total_b <= 2**64 - 1:
+                continue
             print(f"    • {d}: {format_bytes(total_b)}")
         print("\033[1;36m------------------------------------------------------------\033[0m")
         
@@ -307,7 +343,7 @@ def display_report(scope=None):
         rank = data['top100'].get("rank")
         print(f" ⚠️  \033[1;33m校內 Top 1000 狀態: 已列入榜單第 {rank} 名\033[0m")
     else:
-        print(" ✅ \033[1;32m校內榜單：未取得可驗證的匹配資料，狀態未知\033[0m")
+        print(" ⚠️ \033[1;33m校內榜單：未取得可驗證的匹配資料，狀態未知\033[0m")
         
     # No billing-risk claim can be derived from local bytes alone.
         
