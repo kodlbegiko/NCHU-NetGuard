@@ -37,6 +37,13 @@ struct ManagementView: View {
     @State private var connectionLabel = ""
     @State private var connectionLimit = ""
     @State private var showConnectionArchive = false
+    @State private var showCycleBudget = false
+    @State private var cycleMonthly = true
+    @State private var cycleAnchor = 1
+    @State private var cycleLimit = ""
+    @State private var cycleStart = Date()
+    @State private var cycleEnd = Date()
+    @State private var selectedCycleRecords = Set<UUID>()
     @State private var confirmConnectionDeletion = false
     @State private var pendingConnectionDeletion: UUID?
     @State private var selectedInterface: String? = nil
@@ -372,6 +379,7 @@ struct ManagementView: View {
                 }
                 if model.connectionArchiveBusy { ProgressView().controlSize(.small) }
                 Text(model.connectionArchiveStatus).font(.caption)
+                connectionCyclePanel
                 ForEach(model.connectionArchiveRows) { row in
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 3) {
@@ -402,6 +410,72 @@ struct ManagementView: View {
             }
         } message: {
             Text("僅刪除選取的本機紀錄，不影響一般流量帳本。")
+        }
+    }
+
+
+    private var cyclePeriod: ConnectionBudgetPeriod? {
+        guard let gb = UInt64(cycleLimit.trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
+        if cycleMonthly {
+            return try? ConnectionBudgetPeriod.monthly(at: Date(), anchorDay: cycleAnchor, decimalGB: gb)
+        }
+        return try? ConnectionBudgetPeriod(startDay: ProcessHistoryStore.hour(at: cycleStart).day,
+            endDay: ProcessHistoryStore.hour(at: cycleEnd).day, decimalGB: gb)
+    }
+
+    private var connectionCyclePanel: some View {
+        DisclosureGroup("週期流量預算試算", isExpanded: $showCycleBudget) {
+            VStack(alignment: .leading, spacing: 8) {
+                Picker("週期", selection: $cycleMonthly) {
+                    Text("每月重置").tag(true)
+                    Text("自訂日期").tag(false)
+                }.pickerStyle(.segmented)
+                if cycleMonthly {
+                    Picker("每月重置日（台北時間）", selection: $cycleAnchor) {
+                        ForEach(1...31, id: \.self) { day in Text("\(day) 日").tag(day) }
+                    }
+                    Text("月份不足指定天數時，使用當月最後一天。").font(.caption2)
+                } else {
+                    DatePicker("開始日", selection: $cycleStart, displayedComponents: .date)
+                    DatePicker("結束日", selection: $cycleEnd, displayedComponents: .date)
+                }
+                TextField("週期上限 GB（整數 1–10000）", text: $cycleLimit)
+                Text("只依保存日期篩選，請確認選取紀錄的實際用量屬於本週期。這不是電信商帳單，不會自動歸屬網路或保留試算設定。")
+                    .font(.caption2).foregroundStyle(.secondary)
+                if let period = cyclePeriod {
+                    Text(period.startDay + " 至 " + period.endDay + "（台北時間）").font(.caption)
+                    let candidates = model.connectionArchiveRows.filter { period.includes($0) }
+                    if candidates.isEmpty { Text("此期間沒有已讀取的保存紀錄").font(.caption) }
+                    ForEach(candidates) { row in
+                        Toggle(isOn: Binding(get: { selectedCycleRecords.contains(row.id) },
+                            set: { enabled in
+                                if enabled { selectedCycleRecords.insert(row.id) }
+                                else { selectedCycleRecords.remove(row.id) }
+                            })) {
+                            VStack(alignment: .leading) {
+                                Text(row.label)
+                                Text(row.savedAt, style: .date).font(.caption2)
+                                Text(String(format: "%.2f GB", Double(row.total) / 1e9)).font(.caption)
+                            }
+                        }
+                    }
+                    Button("清除選取") { selectedCycleRecords.removeAll() }
+                        .disabled(selectedCycleRecords.isEmpty)
+                    if selectedCycleRecords.isEmpty {
+                        Text("請選取紀錄；未選取不代表零用量").font(.caption)
+                    } else if let reading = try? period.summarize(records: model.connectionArchiveRows, selected: selectedCycleRecords) {
+                        ProgressView(value: min(1, Double(reading.total) / Double(reading.limitBytes)))
+                        Text(String(format: "%d 筆 · 已觀測 %.2f GB · 預算餘額試算 %.2f GB", reading.recordCount, Double(reading.total) / 1e9, Double(reading.remaining) / 1e9)).font(.caption)
+                        Text(String(format: "下載 %.2f · 上傳 %.2f GB", Double(reading.received) / 1e9, Double(reading.sent) / 1e9)).font(.caption)
+                    } else {
+                        Text("選取包含已刪除或非本期紀錄，或數值無法驗證；請清除後重新選取。").font(.caption)
+                    }
+                } else {
+                    Text("請輸入有效日期及週期上限。").font(.caption)
+                }
+            }
+            .environment(\.timeZone, TimeZone(identifier: "Asia/Taipei")!)
+            .disabled(model.connectionArchiveBusy)
         }
     }
 
