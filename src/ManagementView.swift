@@ -4,6 +4,9 @@ import Foundation
 final class ManagementModel: ObservableObject {
     @Published var snapshot: ManagementSnapshot?
     @Published var eventRules = TrafficEventRules.standard
+    @Published var eventArchiveRows: [TrafficObservationEvent] = []
+    @Published var eventArchiveBusy = false
+    @Published var eventArchiveStatus = "尚未讀取保存紀錄"
     @Published var automation: AutomationSnapshot?
     @Published var connectionSession: ConnectionSessionReading?
     @Published var connectionSessionStatus = "尚未開始"
@@ -28,6 +31,9 @@ struct ManagementView: View {
     let reloadHistory: () -> Void
     let testDNS: () -> Void
     let configureTrafficEvents: (TrafficEventRules) -> Void
+    let saveEventArchive: () -> Void
+    let loadEventArchive: () -> Void
+    let clearEventArchive: () -> Void
     let clearTrafficEvents: () -> Void
     let startConnectionSession: (String, String) -> Void
     let stopConnectionSession: () -> Void
@@ -58,6 +64,8 @@ struct ManagementView: View {
     @State private var confirmDeleteHistory = false
     @State private var showTrafficEvents = false
     @State private var showEventRules = false
+    @State private var showSavedEvents = false
+    @State private var confirmClearEventArchive = false
     @State private var highRate = "5"
     @State private var highDuration = "10"
     @State private var surgeRate = "1"
@@ -509,6 +517,7 @@ struct ManagementView: View {
                             Text(event.date, style: .time).font(.caption)
                         }
                         Text(event.date, style: .date).font(.caption2).foregroundStyle(.secondary)
+                        Text(eventRuleDescription(event)).font(.caption2).foregroundStyle(.secondary)
                         if let rate = event.bytesPerSecond {
                             Text(String(format: "合計速率 %.2f MiB/s", rate / 1_048_576)).font(.caption)
                         }
@@ -526,7 +535,8 @@ struct ManagementView: View {
                 }
                 Button("清除本次事件", role: .destructive) { confirmClearTrafficEvents = true }
                     .disabled(events.isEmpty)
-                Text("最多保留 100 筆於記憶體；不寫入磁碟、不通知或阻斷連線。").font(.caption2).foregroundStyle(.secondary)
+                Text("本次最多保留 100 筆於記憶體；僅手動保存時寫入磁碟，不通知或阻斷連線。").font(.caption2).foregroundStyle(.secondary)
+                savedEventsPanel(events)
             }
         }
         .alert("清除本次流量事件？", isPresented: $confirmClearTrafficEvents) {
@@ -577,6 +587,60 @@ struct ManagementView: View {
         highDuration = String(rules.highSeconds)
         surgeRate = String(rules.surgeMiB)
         surgeFactor = String(rules.surgeMultiplier)
+    }
+
+
+    private func eventRuleDescription(_ event: TrafficObservationEvent) -> String {
+        switch event.kind {
+        case .sustainedHigh:
+            return "觸發規則：\(event.rules.highMiB) MiB/s、\(event.rules.highSeconds) 秒"
+        case .surge:
+            return "觸發規則：至少 \(event.rules.surgeMiB) MiB/s、基準 \(event.rules.surgeMultiplier) 倍"
+        case .observationGap:
+            return "採樣連續性中斷"
+        }
+    }
+
+    private func savedEventsPanel(_ events: [TrafficObservationEvent]) -> some View {
+        DisclosureGroup("已保存的事件歷史", isExpanded: $showSavedEvents) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Button("保存本次事件", action: saveEventArchive)
+                        .disabled(events.isEmpty || model.eventArchiveBusy)
+                    Button("讀取歷史", action: loadEventArchive).disabled(model.eventArchiveBusy)
+                }
+                Text(model.eventArchiveStatus).font(.caption)
+                if model.eventArchiveBusy { ProgressView().controlSize(.small) }
+                ForEach(model.eventArchiveRows) { event in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(event.kind.title).fontWeight(.medium)
+                        Text(event.date, style: .date).font(.caption)
+                        Text(event.date, style: .time).font(.caption)
+                        Text(eventRuleDescription(event)).font(.caption2)
+                        if let rate = event.bytesPerSecond {
+                            Text(String(format: "觀測速率 %.2f MiB/s", rate / 1_048_576)).font(.caption)
+                        }
+                        if let reference = event.referenceBytesPerSecond {
+                            Text(String(format: "基準 %.2f MiB/s", reference / 1_048_576)).font(.caption)
+                        }
+                        if let duration = event.duration {
+                            Text(String(format: "觀測 %.0f 秒", duration)).font(.caption)
+                        }
+                    }
+                    Divider()
+                }
+                Button("清除保存歷史", role: .destructive) { confirmClearEventArchive = true }
+                    .disabled(model.eventArchiveBusy || model.eventArchiveRows.isEmpty)
+                Text("最多 1000 筆；不保存 IP、程序名稱或目的地。清除歷史不會清除本次事件。")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .alert("清除已保存的事件歷史？", isPresented: $confirmClearEventArchive) {
+            Button("取消", role: .cancel) {}
+            Button("清除", role: .destructive, action: clearEventArchive)
+        } message: {
+            Text("此操作只清除本機事件歷史，不會改變用量帳本。")
+        }
     }
 
 }
