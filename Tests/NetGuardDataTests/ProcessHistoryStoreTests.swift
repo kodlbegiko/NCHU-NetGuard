@@ -64,4 +64,45 @@ final class ProcessHistoryStoreTests: XCTestCase {
             XCTAssertThrowsError(try ProcessHistoryRow(name: "Bad\nName", download: 1, upload: 0))
         }
     }
+
+    func testRetentionUsesTaipeiDaysAndPreservesFutureAndForeignFiles() throws {
+        try withStore { store in
+            for day in ["2026-11-18", "2026-11-19", "2026-11-25", "2026-11-26"] {
+                try store.save(day: day, bucket: bucket(UUID()))
+            }
+            let foreign = store.directory.appendingPathComponent("notes.json")
+            try Data("keep".utf8).write(to: foreign)
+            let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-25T08:00:00Z"))
+            XCTAssertEqual(try store.prune(keepingDays: 7, now: now), 1)
+            XCTAssertEqual(try store.storedDays(), ["2026-11-26", "2026-11-25", "2026-11-19"])
+            XCTAssertTrue(FileManager.default.fileExists(atPath: foreign.path))
+            XCTAssertThrowsError(try store.prune(keepingDays: 0, now: now))
+        }
+    }
+
+    func testExplicitDeletionLeavesUnrelatedFilesAndSymlinks() throws {
+        try withStore { store in
+            try store.save(day: "2026-11-25", bucket: bucket(UUID()))
+            let foreign = store.directory.appendingPathComponent("keep.txt")
+            try Data("keep".utf8).write(to: foreign)
+            let link = store.directory.appendingPathComponent("2026-11-24.json")
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: foreign)
+            XCTAssertEqual(try store.removeAllHistory(), 1)
+            XCTAssertTrue(try store.storedDays().isEmpty)
+            XCTAssertEqual(try Data(contentsOf: foreign), Data("keep".utf8))
+            XCTAssertEqual(try Data(contentsOf: link), Data("keep".utf8))
+        }
+    }
+
+    func testDeletionIsIdempotentAndRejectsInvalidDates() throws {
+        try withStore { store in
+            XCTAssertEqual(try store.removeAllHistory(), 0)
+            XCTAssertThrowsError(try store.remove(day: "../unsafe"))
+            try store.save(day: "2026-11-25", bucket: bucket(UUID()))
+            try store.remove(day: "2026-11-25")
+            try store.remove(day: "2026-11-25")
+            XCTAssertTrue(try store.storedDays().isEmpty)
+        }
+    }
+
 }
