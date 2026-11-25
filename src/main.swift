@@ -267,6 +267,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var predictionScope: NetworkScope = .unknown
     var predictionIdentity = Set<String>()
     var quotaAlertLedger = QuotaAlertLedger()
+    var alertLedgerBlockedDay: String?
     var currentDownSpeed: Double = 0
     var currentUpSpeed: Double = 0
     
@@ -916,6 +917,19 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             processRows: rows, processAge: appProbeTimestamp.map { now - $0 },
             focusEnabled: workflowPowerGuard.focusEnabled, diagnosticInput: input, providerStatus: providerStatusText)
         if managementModel.snapshot != snapshot { managementModel.snapshot = snapshot }
+        let ledgerStatus: String
+        if alertLedgerBlockedDay == currentDateString {
+            ledgerStatus = "提醒紀錄無法驗證，暫停今日自動提醒"
+        } else if persistenceBlocked || persistenceStatus.contains("失敗") {
+            ledgerStatus = "本機寫入異常，無法保證跨重啟去重"
+        } else {
+            ledgerStatus = "提醒等級隨每日紀錄保存；不是通知送達證明"
+        }
+        let automation = AutomationSnapshot(alertsEnabled: isAlertEnabled,
+            focusEnabled: workflowPowerGuard.focusEnabled, sleeping: workflowPowerGuard.systemSleeping,
+            assessment: localQuotaAssessment(), ledger: quotaAlertLedger,
+            day: currentDateString, ledgerStatus: ledgerStatus)
+        if managementModel.automation != automation { managementModel.automation = automation }
     }
 
     @objc func openNativeManagement() {
@@ -928,7 +942,17 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             let content = NSHostingController(rootView: ManagementView(
                 model: managementModel,
                 refresh: { [weak self] in self?.manualRefresh(); self?.syncManagementModel() },
-                openProvider: { [weak self] in self?.openTop100() }
+                openProvider: { [weak self] in self?.openTop100() },
+                setAlerts: { [weak self] enabled in
+                    guard let self, self.isAlertEnabled != enabled else { return }
+                    self.handleToggleAlert()
+                    self.syncManagementModel()
+                },
+                setFocus: { [weak self] enabled in
+                    guard let self, self.workflowPowerGuard.focusEnabled != enabled else { return }
+                    self.toggleFocusMode()
+                    self.syncManagementModel()
+                }
             ))
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 510),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
@@ -1388,6 +1412,16 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 unattributedInBytes = Double(usage.unattributedIn)
                 unattributedOutBytes = Double(usage.unattributedOut)
                 sampleGapCount = Int(usage.sampleGapCount)
+                if json["alert_ledger_valid"] as? Bool == false {
+                    alertLedgerBlockedDay = today
+                } else if let raw = json["alert_ledger"] {
+                    do {
+                        guard JSONSerialization.isValidJSONObject(raw) else { throw ContractError.invalidField("alertLedger") }
+                        let bytes = try JSONSerialization.data(withJSONObject: raw)
+                        let tiers = try JSONDecoder().decode([String: Int].self, from: bytes)
+                        try quotaAlertLedger.restore(day: today, tiers: tiers)
+                    } catch { alertLedgerBlockedDay = today }
+                }
             } else {
                 // Preserve the complete original file before replacing a prior day.
                 let backup = url.deletingLastPathComponent().appendingPathComponent(
@@ -1430,6 +1464,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             "last_raw_out": NSNumber(value: lastRawOBytes),
             "display_mode": displayMode,
             "alert_enabled": isAlertEnabled,
+            "alert_ledger": quotaAlertLedger.persistedTiers(day: currentDateString),
+            "alert_ledger_valid": alertLedgerBlockedDay != currentDateString,
             "lid_guard_enabled": isLidGuardEnabled,
             "idle_guard_enabled": isIdleGuardEnabled,
             "auto_wifi_failover_enabled": isAutoWifiFailoverEnabled,
@@ -1883,10 +1919,14 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     func checkAndSendSmartAlerts() {
-        guard let assessment = localQuotaAssessment() else { return }
+        guard alertLedgerBlockedDay != currentDateString,
+              let assessment = localQuotaAssessment() else { return }
         let scope = sampledScopes[activeInterface] ?? .unknown
         guard quotaAlertLedger.shouldNotify(day: currentDateString, scope: scope,
                  tier: assessment.tier, enabled: isAlertEnabled) else { return }
+        // Reserve the attempt before dispatch. A crash may omit delivery, but
+        // a successful state write prevents duplicate attempts after restart.
+        savePersistedState()
         sendSystemNotification(title: "NetGuard 本機用量提醒",
             body: "本機估計\(budgetLabel(assessment.limitingBudget))已達 \(assessment.tier.rawValue == 3 ? "95" : assessment.tier.rawValue == 2 ? "85" : "70")% 設定額度。請核對實際配額，無自動斷網或停止程式。",
             isCritical: true, quotaAlert: true)
@@ -1901,12 +1941,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             lastCriticalNotificationTime = now
         }
         DispatchQueue.global(qos: .utility).async {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            process.arguments = ["-e", "on run argv", "-e",
+            _ = ProbeRunner.run("/usr/bin/osascript", ["-e", "on run argv", "-e",
                 "display notification (item 2 of argv) with title (item 1 of argv)",
-                "-e", "end run", "--", title, body]
-            try? process.run()
+                "-e", "end run", "--", title, body], timeout: 5)
         }
     }
 
