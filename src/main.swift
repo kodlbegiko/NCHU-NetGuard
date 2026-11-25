@@ -7,54 +7,68 @@ import SystemConfiguration
 // MARK: - 歷史紀錄模型與管理器
 struct DayTrafficRecord {
     var total: Double
-    var dl: Double
-    var ul: Double
+    var dl: Double?
+    var ul: Double?
 }
 
+// Main-thread manager; cached history avoids a database query per UI tick.
 class TrafficHistoryManager {
     static let shared = TrafficHistoryManager()
-    let historyFilePath: String = {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        return home.appendingPathComponent(".nchu_traffic_history.json").path
-    }()
-    
-    func loadHistory() -> [String: DayTrafficRecord] {
-        guard FileManager.default.fileExists(atPath: historyFilePath),
-              let data = try? Data(contentsOf: URL(fileURLWithPath: historyFilePath)),
-              let rawDict = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else {
-            return [:]
-        }
-        
-        var result: [String: DayTrafficRecord] = [:]
-        for (dateStr, val) in rawDict {
-            if let num = val as? Double {
-                result[dateStr] = DayTrafficRecord(total: num, dl: num * 0.9, ul: num * 0.1)
-            } else if let subDict = val as? [String: Any] {
-                let total = subDict["total"] as? Double ?? 0
-                let dl = subDict["dl"] as? Double ?? (total * 0.9)
-                let ul = subDict["ul"] as? Double ?? (total * 0.1)
-                result[dateStr] = DayTrafficRecord(total: total, dl: dl, ul: ul)
+    private var store: HistoryStore?
+    private var cache: [String: DayTrafficRecord] = [:]
+    private var initialized = false
+    private(set) var healthy = true
+
+    private func initialize() {
+        guard !initialized else { return }
+        initialized = true
+        do {
+            let home = FileManager.default.homeDirectoryForCurrentUser
+            let directory = home.appendingPathComponent("Library/Application Support/NCHU-NetGuard", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
+                                                    attributes: [.posixPermissions: 0o700])
+            let database = try HistoryStore(url: directory.appendingPathComponent("history.sqlite"))
+            let legacy = home.appendingPathComponent(".nchu_traffic_history.json")
+            // Keep legacy source intact. Import cannot overwrite newer SQLite rows.
+            if FileManager.default.fileExists(atPath: legacy.path) {
+                do { try database.importLegacy(Data(contentsOf: legacy)) }
+                catch { healthy = false }
             }
+            store = database
+            try refreshCache()
+        } catch {
+            healthy = false
         }
-        return result
     }
-    
-    func recordDay(date: String, dl: Double, ul: Double) {
-        guard !date.isEmpty, (dl + ul) > 0 else { return }
-        var current = loadHistory()
-        current[date] = DayTrafficRecord(total: dl + ul, dl: dl, ul: ul)
-        
-        var saveDict: [String: [String: Double]] = [:]
-        for (d, rec) in current {
-            saveDict[d] = [
-                "total": rec.total,
-                "dl": rec.dl,
-                "ul": rec.ul
-            ]
-        }
-        
-        if let data = try? JSONSerialization.data(withJSONObject: saveDict, options: [.prettyPrinted]) {
-            try? data.write(to: URL(fileURLWithPath: historyFilePath))
+
+    private func refreshCache() throws {
+        guard let store else { throw HistoryStoreError.database("unavailable") }
+        cache = Dictionary(uniqueKeysWithValues: try store.recent(limit: 366).map {
+            ($0.day, DayTrafficRecord(total: Double($0.total), dl: $0.download.map(Double.init),
+                                      ul: $0.upload.map(Double.init)))
+        })
+    }
+
+    func loadHistory() -> [String: DayTrafficRecord] {
+        initialize()
+        return cache
+    }
+
+    @discardableResult
+    func recordDay(date: String, dl: Double, ul: Double) -> Bool {
+        initialize()
+        guard let store else { healthy = false; return false }
+        guard dl.isFinite, ul.isFinite, dl >= 0, ul >= 0,
+              dl.rounded(.towardZero) == dl, ul.rounded(.towardZero) == ul,
+              dl + ul <= 9_007_199_254_740_991 else { healthy = false; return false }
+        do {
+            try store.upsert(HistoryDay(day: date, total: UInt64(dl + ul),
+                                       download: UInt64(dl), upload: UInt64(ul)))
+            try refreshCache()
+            return true
+        } catch {
+            healthy = false
+            return false
         }
     }
 }
@@ -1001,8 +1015,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                     "label": relLabel,
                     "date": shortDate,
                     "total": formatBytes(rec.total),
-                    "dl": formatBytes(rec.dl),
-                    "ul": formatBytes(rec.ul),
+                    "dl": rec.dl.map { formatBytes($0) } ?? "未知",
+                    "ul": rec.ul.map { formatBytes($0) } ?? "未知",
                     "pct": String(format: "%.1f%%", pct)
                 ])
             }
@@ -1040,13 +1054,15 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             }
             
             let dayTotal: Double
-            let dayDl: Double
-            let dayUl: Double
+            let dayDl: Double?
+            let dayUl: Double?
             
             if isToday {
-                dayDl = dormTodayInBytes + wifiTodayInBytes + extTodayInBytes
-                dayUl = dormTodayOutBytes + wifiTodayOutBytes + extTodayOutBytes
-                dayTotal = dayDl + dayUl
+                let rx = dormTodayInBytes + wifiTodayInBytes + extTodayInBytes + unattributedInBytes
+                let tx = dormTodayOutBytes + wifiTodayOutBytes + extTodayOutBytes + unattributedOutBytes
+                dayDl = rx
+                dayUl = tx
+                dayTotal = rx + tx
                 todayCombinedBytes = dayTotal
             } else {
                 if let rec = history[dateStr] {
@@ -1055,8 +1071,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                     dayUl = rec.ul
                 } else {
                     dayTotal = 0
-                    dayDl = 0
-                    dayUl = 0
+                    dayDl = nil
+                    dayUl = nil
                 }
                 if i == 1 {
                     yesterdayTotalBytes = dayTotal
@@ -1086,16 +1102,17 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 "weekday": weekdayStr,
                 "totalBytes": dayTotal,
                 "totalGB": String(format: "%.2f", dayTotal / (1024 * 1024 * 1024)),
-                "dlStr": formatBytes(dayDl),
-                "ulStr": formatBytes(dayUl),
-                "totalStr": formatBytes(dayTotal),
+                "dlStr": dayDl.map { formatBytes($0) } ?? "未知",
+                "ulStr": dayUl.map { formatBytes($0) } ?? "未知",
+                "totalStr": (isToday || history[dateStr] != nil) ? formatBytes(dayTotal) : "無紀錄",
                 "pctOfQuota": String(format: "%.1f", min(pctOfQuota, 140.0)),
                 "statusLevel": statusLevel,
                 "isToday": isToday
             ])
         }
         
-        let avg7DayGB = (total7DayBytes / 7.0) / (1024 * 1024 * 1024)
+        let recordedDays = chartDays.filter { ($0["totalStr"] as? String) != "無紀錄" }.count
+        let avg7DayGB = (total7DayBytes / Double(max(1, recordedDays))) / (1024 * 1024 * 1024)
         var diffVsYesterdayPct = 0.0
         var diffTrend = "flat"
         if yesterdayTotalBytes > 0 {
@@ -1110,8 +1127,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         let diffSign = diffVsYesterdayPct >= 0 ? "+" : ""
         let chartData: [String: Any] = [
             "days": chartDays,
-            "avg7DayStr": String(format: "%.1f GB", avg7DayGB),
-            "diffVsYesterdayStr": String(format: "%@%.0f%%", diffSign, diffVsYesterdayPct),
+            "avg7DayStr": String(format: "%.1f GB（有紀錄日）", avg7DayGB),
+            "diffVsYesterdayStr": yesterdayTotalBytes > 0 ? String(format: "%@%.0f%%", diffSign, diffVsYesterdayPct) : "無法比較",
             "diffTrend": diffTrend,
             "maxWeekStr": String(format: "%.1f GB (%@)", maxBytesVal / (1024 * 1024 * 1024), maxBytesDateLabel),
             "quotaGBStr": String(format: "%.0f GB", totalQuotaBytes / (1024 * 1024 * 1024))
@@ -1183,6 +1200,12 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             "unattributedTotalStr": formatBytes(unattributedInBytes + unattributedOutBytes),
             "sampleGapCount": sampleGapCount,
             "persistenceStatus": persistenceStatus,
+            "diagnosticSummary": DiagnosticsEngine.findings(DiagnosticInput(
+                connected: isConnected, scope: sampledScopes[activeInterface] ?? .unknown,
+                persistenceHealthy: !persistenceBlocked && TrafficHistoryManager.shared.healthy && !persistenceStatus.contains("失敗"),
+                sampleGapCount: sampleGapCount,
+                providerFresh: providerObservation?.isFresh(for: getTodayString(), now: Date()) == true && providerObservation?.status == .listed
+            )).first?.summary ?? "狀態未知",
             "observedInterfaces": sampledScopes.keys.sorted().joined(separator: ", "),
             "date": currentDateString,
             "quotaTotalGB": String(format: "%.0f", totalQuotaBytes / (1024 * 1024 * 1024)),
@@ -1640,7 +1663,15 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 let totalDl = dormTodayInBytes + wifiTodayInBytes + extTodayInBytes + unattributedInBytes
                 let totalUl = dormTodayOutBytes + wifiTodayOutBytes + extTodayOutBytes + unattributedOutBytes
                 if (totalDl + totalUl) > 0 {
-                    TrafficHistoryManager.shared.recordDay(date: currentDateString, dl: totalDl, ul: totalUl)
+                    if !TrafficHistoryManager.shared.recordDay(date: currentDateString, dl: totalDl, ul: totalUl) {
+                        // Preserve the existing daily file when history cannot be saved.
+                        let url = URL(fileURLWithPath: stateFilePath)
+                        do {
+                            if FileManager.default.fileExists(atPath: url.path) {
+                                try FileManager.default.copyItem(at: url, to: url.deletingLastPathComponent().appendingPathComponent(".nchu_traffic_archive-" + currentDateString + "-" + UUID().uuidString + ".json"))
+                            }
+                        } catch { persistenceBlocked = true }
+                    }
                 }
             }
             currentDateString = todayStr
