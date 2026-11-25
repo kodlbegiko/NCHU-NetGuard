@@ -64,7 +64,7 @@ final class NetGuardSmokeDelegate: NSObject, NSApplicationDelegate {
             sleeping: false, assessment: nil, ledger: QuotaAlertLedger(),
             day: "2026-11-25", ledgerStatus: "Fixture")
         host(ManagementView(model: management, refresh: {}, openProvider: {},
-            setAlerts: { _ in }, setFocus: { _ in }, setHistoryEnabled: { _ in }, setAgentHistoryEnabled: { _ in }, reloadAgentHistory: {}, deleteAgentHistory: {},
+            setAlerts: { _ in }, setFocus: { _ in }, saveObservationRules: { _ in }, setHistoryEnabled: { _ in }, setAgentHistoryEnabled: { _ in }, reloadAgentHistory: {}, deleteAgentHistory: {},
             setProcessBackground: { _ in }, reloadHistory: {}, testDNS: {}, measureFlow: { _ in },
             configureTrafficEvents: { _ in }, setEventNotifications: { _ in }, saveEventArchive: {}, loadEventArchive: {},
             clearEventArchive: {}, clearTrafficEvents: {}, startConnectionSession: { _, _ in },

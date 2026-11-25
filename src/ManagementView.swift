@@ -39,6 +39,7 @@ struct ManagementView: View {
     let openProvider: () -> Void
     let setAlerts: (Bool) -> Void
     let setFocus: (Bool) -> Void
+    let saveObservationRules: (ObservationRuleSet) -> Void
     let setHistoryEnabled: (Bool) -> Void
     let setAgentHistoryEnabled: (Bool) -> Void
     let reloadAgentHistory: () -> Void
@@ -248,7 +249,7 @@ struct ManagementView: View {
                             Button("開啟校方榜單頁面", action: openProvider)
                             Text("目前不執行網路設定復原或程序控制。").font(.caption).foregroundStyle(.secondary)
                         } else if let automation = model.automation {
-                            AutomationView(state: automation, setAlerts: setAlerts, setFocus: setFocus)
+                            AutomationView(state: automation, setAlerts: setAlerts, setFocus: setFocus, saveRules: saveObservationRules)
                         } else {
                             Text("正在讀取自動化狀態").foregroundStyle(.secondary)
                         }

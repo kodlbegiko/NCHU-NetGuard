@@ -348,6 +348,42 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
     var predictionScope: NetworkScope = .unknown
     var predictionIdentity = Set<String>()
     var quotaAlertLedger = QuotaAlertLedger()
+    private var observationRules: ObservationRuleSet? = ObservationRuleSet(rules: [])
+    private var observationRuleBytes: Data?
+    private var observationRuleStatus = "尚未讀取規則"
+    private var observationRuleURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/NCHU-NetGuard/automation-rules.json")
+    }
+
+    private func loadObservationRules() {
+        do {
+            let data = try HistoryFileAccess.read(observationRuleURL, limit: 65_536)
+            observationRuleBytes = data
+            observationRules = try data.map { try ObservationRuleSet.decode($0) } ?? ObservationRuleSet(rules: [])
+            observationRuleStatus = data == nil ? "尚未設定規則；僅供預覽" : "已載入本機規則；僅供預覽"
+        } catch {
+            observationRules = nil
+            observationRuleStatus = "規則檔無法驗證；保留原檔，停用編輯"
+        }
+    }
+
+    private func saveObservationRules(_ rules: ObservationRuleSet) {
+        guard observationRules != nil else { return }
+        do {
+            try rules.validate()
+            let data = try JSONEncoder().encode(rules)
+            try HistoryFileAccess.replaceIfUnchanged(observationRuleURL, expected: observationRuleBytes,
+                data: data, limit: 65_536)
+            observationRuleBytes = data
+            observationRules = rules
+            observationRuleStatus = "已儲存本機規則；沒有執行動作"
+        } catch {
+            observationRules = nil
+            observationRuleStatus = "規則寫入失敗或衝突；保留資料，停用編輯"
+        }
+        syncManagementModel()
+    }
     var alertLedgerBlockedDay: String?
     var currentDownSpeed: Double = 0
     var currentUpSpeed: Double = 0
@@ -624,6 +660,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         }
         detectActiveNetworkSync()
         loadPersistedState()
+        loadObservationRules()
         initHardwareCounters()
         
         setupPopoverUI()
@@ -1322,10 +1359,16 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         } else {
             ledgerStatus = "提醒等級隨每日紀錄保存；不是通知送達證明"
         }
+        let ruleInput = ObservationRuleInput(
+            scope: connected && scope != .unknown ? scope : nil,
+            quotaTier: localQuotaAssessment()?.tier,
+            connected: connected ? true : nil, focusEnabled: workflowPowerGuard.focusEnabled)
+        let preview = observationRules.map { ObservationRuleEngine.preview($0, input: ruleInput) }
         let automation = AutomationSnapshot(alertsEnabled: isAlertEnabled,
             focusEnabled: workflowPowerGuard.focusEnabled, sleeping: workflowPowerGuard.systemSleeping,
             assessment: localQuotaAssessment(), ledger: quotaAlertLedger,
-            day: currentDateString, ledgerStatus: ledgerStatus)
+            day: currentDateString, ledgerStatus: ledgerStatus,
+            rules: observationRules, rulePreview: preview, ruleStorageStatus: observationRuleStatus)
         if managementModel.automation != automation { managementModel.automation = automation }
     }
 
@@ -1379,6 +1422,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                     self.toggleFocusMode()
                     self.syncManagementModel()
                 },
+                saveObservationRules: { [weak self] rules in self?.saveObservationRules(rules) },
                 setHistoryEnabled: { [weak self] in self?.setProcessHistoryEnabled($0) },
                 setAgentHistoryEnabled: { [weak self] in self?.setAgentHistoryEnabled($0) },
                 reloadAgentHistory: { [weak self] in self?.agentHistoryOperation() },
@@ -2432,7 +2476,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                 let totalDl = dormTodayInBytes + wifiTodayInBytes + extTodayInBytes + unattributedInBytes
                 let totalUl = dormTodayOutBytes + wifiTodayOutBytes + extTodayOutBytes + unattributedOutBytes
                 if totalDl + totalUl > 0 || measuredSampleCount > 0 {
-                    if accountingOverflow || !TrafficHistoryManager.shared.recordDay(date: currentDateString, dl: totalDl, ul: totalUl, preserveExisting: true, scopes: scopedHistoryRows()) {
+                    if persistenceBlocked || accountingOverflow || !TrafficHistoryManager.shared.recordDay(date: currentDateString, dl: totalDl, ul: totalUl, preserveExisting: true, scopes: scopedHistoryRows()) {
                         if !savePersistedState(allowFinalizingPriorDay: true) { persistenceBlocked = true }
                         // Archive the exact bytes we successfully wrote, not an
                         // independently replaceable pathname.

@@ -31,4 +31,15 @@ final class ObservationRuleTests: XCTestCase {
         XCTAssertThrowsError(try ObservationRuleSet(rules: [.init(priority: 1, action: .notify)]).validate())
         XCTAssertThrowsError(try ObservationRuleSet.decode(Data(repeating: 32, count: 65_537)))
     }
+
+    func testRuleEditingPreservesIdentityAndValidation() throws {
+        let original = ObservationRule(priority: 10, scope: .external, action: .observe)
+        let set = ObservationRuleSet(rules: [original])
+        let updated = ObservationRule(id: original.id, priority: 50, focusEnabled: true, action: .deferAction)
+        let edited = try set.replacing(updated)
+        XCTAssertEqual(edited.rules, [updated])
+        XCTAssertEqual(try ObservationRuleSet.decode(JSONEncoder().encode(edited)), edited)
+        XCTAssertEqual(try edited.removing(updated.id).rules, [])
+        XCTAssertThrowsError(try edited.replacing(.init(priority: 10, action: .notify)))
+    }
 }

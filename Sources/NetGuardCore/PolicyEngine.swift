@@ -161,6 +161,18 @@ public struct ObservationRuleSet: Codable, Equatable, Sendable {
                   ($0.scope != nil || $0.minimumQuotaTier != nil || $0.connected != nil || $0.focusEnabled != nil) })
         else { throw ContractError.invalidField("observationRules") }
     }
+    public func replacing(_ rule: ObservationRule) throws -> Self {
+        var updated = rules.filter { $0.id != rule.id }
+        updated.append(rule)
+        let result = Self(rules: updated)
+        try result.validate()
+        return result
+    }
+    public func removing(_ id: UUID) throws -> Self {
+        let result = Self(rules: rules.filter { $0.id != id })
+        try result.validate()
+        return result
+    }
     public static func decode(_ data: Data) throws -> Self {
         guard data.count <= 65_536 else { throw ContractError.oversizedDocument }
         let value = try JSONDecoder().decode(Self.self, from: data)
