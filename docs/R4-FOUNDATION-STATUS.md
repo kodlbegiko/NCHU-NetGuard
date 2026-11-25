@@ -246,3 +246,18 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 
 - Added HostProbeCheck.swift and --netguard-host-check / make host-check for read-only local compatibility evidence before production delegate initialization. Coarse outcomes only; no raw probe output or identity disclosure. Exit 0 is limited compatibility evidence, exit 2 is inconclusive, not acceptance. CI logs the check after native fixture smoke; hosted output is not a replacement for physical-device verification. No additional automated regression cases in this iteration.
 - Prior integrated CI 45643965729 completed successfully including Swift tests, Python/static checks, app build and bundle verification. Iterations 42–43 eligible for non-forced integration and fresh exact-HEAD verification. Fixture UI smoke and real-host check remain unverified on the new revision. No paid services or release.
+
+## Forty-fourth iteration
+
+- Added DestinationEvidence.swift: numeric IPv4/IPv6 address-space classification, mapped IPv4 handling and bounded, duplicate-rejecting, overflow-checked directional measured-flow aggregation. Four regression tests and module ownership/aliases. Public/private address space does not prove actual path, reachability or billing; the special-use range list is conservative and not exhaustive. No live flow source, actual LAN/Internet byte split or modification to the physical ledger. UI explicitly reports the split as unmeasured.
+- Prior integrated CI 45644908290 was queued at last check. Candidate remains staged until prior CI and exact candidate verification. No paid services, packet capture, new privileges or release.
+
+## Forty-fifth iteration
+
+- Added TCPFlowEvidence.swift, strict experimental numeric IPv4 established TCP hierarchy parser and adjacent matched monotonic delta accumulator; three synthetic fixture tests. Explicit local `make flow-check` samples twice via fixed read-only nettop/ps invocations, outputs only directional address-class aggregates or inconclusive status. Not part of normal monitoring, no raw output persisted, no generated traffic, no admin request, no packet capture. Actual CSV format, tuple reuse, completeness, IPv6/UDP and VPN overlap remain unresolved; no claim of real LAN/Internet separation.
+- Prior integrated CI 45644908290 still queued at last check. Iterations 44–45 staged pending prior CI and candidate validation. No paid services or release.
+
+## Forty-sixth iteration
+
+- Fixed the CI smoke initialization failure by setting explicit content size and deferring hosting view geometry checks. Integrated repair-only SHA 41b278c795112de65865b4a6c3ad9299030ff89e; run 45647338414 pending. Previous CI 45644908290 passed 161 Swift tests, static/Python, app build and bundle but failed smoke; host check skipped.
+- Experimental dual-stack TCP adapter adds bracketed IPv6 canonicalization and accepted-row continuity metrics, including matched, new, disappeared and reset/changed rows. Two synthetic tests. No real socket generation identifier, scoped literals, UDP or full traffic coverage. No active ledger updates. Candidate branch carries the same smoke repair content but requires merge ancestry reconciliation and exact-head CI before integration. No paid services or release.

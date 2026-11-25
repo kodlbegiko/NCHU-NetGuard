@@ -84,4 +84,12 @@ public typealias TrafficEventKind = NetGuardObservation.TrafficEventKind
 public typealias TrafficObservationEvent = NetGuardObservation.TrafficObservationEvent
 public typealias TrafficEventDetector = NetGuardObservation.TrafficEventDetector
 public typealias TrafficEventRules = NetGuardObservation.TrafficEventRules
+public typealias DestinationAddressKind = NetGuardTraffic.DestinationAddressKind
+public typealias DestinationFlowDelta = NetGuardTraffic.DestinationFlowDelta
+public typealias DestinationByteTotals = NetGuardTraffic.DestinationByteTotals
+public typealias DestinationFlowProjection = NetGuardTraffic.DestinationFlowProjection
+public typealias TCPFlowCounter = NetGuardTraffic.TCPFlowCounter
+public typealias TCPFlowParser = NetGuardTraffic.TCPFlowParser
+public typealias TCPFlowAccumulator = NetGuardTraffic.TCPFlowAccumulator
+public typealias TCPFlowCoverage = NetGuardTraffic.TCPFlowCoverage
 #endif

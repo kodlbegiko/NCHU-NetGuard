@@ -36,7 +36,9 @@
     "ConnectionBudgetPeriod.swift": 7,
     "TrafficEventDetector.swift": 2,
     "TrafficEventArchive.swift": 7,
-    "HistoryBundle.swift": 7
+    "HistoryBundle.swift": 7,
+    "DestinationEvidence.swift": 1,
+    "TCPFlowEvidence.swift": 1
   },
   "shared_paths": {
     "src/main.swift": 0,
@@ -111,6 +113,8 @@
     "ConnectionBudgetPeriod.swift": "NetGuardData",
     "TrafficEventDetector.swift": "NetGuardObservation",
     "TrafficEventArchive.swift": "NetGuardCore",
-    "HistoryBundle.swift": "NetGuardCore"
+    "HistoryBundle.swift": "NetGuardCore",
+    "DestinationEvidence.swift": "NetGuardTraffic",
+    "TCPFlowEvidence.swift": "NetGuardTraffic"
   }
 }
