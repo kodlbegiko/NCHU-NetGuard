@@ -226,3 +226,8 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 
 - Added event-time rule snapshots and evidence validation; manual TrafficEventArchive with bounded local persistence, idempotent retries, validated reads and confirmed clearing. Native historical event UI; no automatic recording, network identity, process attribution, notifications or quota mutation. Four regression tests. Archive operations require a single serial caller; no multi-instance locking, automatic retention, secure erasure or complete backup integration.
 - Previous integrated run 45641149215 completed successfully. Iterations 36–39 eligible for fast-forward integration and fresh exact-HEAD CI. Candidate app and local behavior remain unverified. No paid services or release.
+
+## Fortieth iteration
+
+- Integrated CI 45642942716 failed on ConnectionBudgetPeriod.swift:39 (throwing anchor call missing try). Fixed and fast-forwarded the repair only to integration SHA d3c9a622691081dec999d52914c69e64dbb8aff3; repair run 45643262817 is pending final verification.
+- Added HistoryBundle.swift: four saved history categories, SHA-256 inventory and versioned manifest, validated staging, non-overwriting publication and read-only preflight. Native settings create/inspect directory. Optional history writes paused within this process during backup; skipped process intervals are not fabricated. Three regression tests. No active-store restoration, simultaneous snapshot, settings/current-day backup, encryption/signatures or cross-process locking. Candidate remains on feat/r4-history-bundle until repair and exact candidate validation. No paid services or release.
