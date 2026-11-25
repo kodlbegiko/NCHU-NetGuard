@@ -30,3 +30,6 @@ jobs:
           test -f build/NCHUTraffic.app/Contents/Resources/traffic_monitor.py
           test -f build/NCHUTraffic.app/Contents/Resources/popover.html
           plutil -lint build/NCHUTraffic.app/Contents/Info.plist
+
+      - name: Native fixture smoke (no production startup)
+        run: python3 scripts/smoke_test.py --app build/NCHUTraffic.app
