@@ -88,6 +88,53 @@ final class HistoryStoreTests: XCTestCase {
     }
 
 
+    func testRejectsUnrecognizedSchemaWithoutMigration() throws {
+        try withURL { url in
+            var database: OpaquePointer?
+            XCTAssertEqual(sqlite3_open(url.path, &database), SQLITE_OK)
+            guard let database else { throw HistoryStoreError.database("fixture") }
+            XCTAssertEqual(sqlite3_exec(database, "CREATE TABLE unrelated(value TEXT); INSERT INTO unrelated VALUES('preserve');", nil, nil, nil), SQLITE_OK)
+            sqlite3_close(database)
+            XCTAssertThrowsError(try HistoryStore(url: url))
+            var reopened: OpaquePointer?
+            XCTAssertEqual(sqlite3_open_v2(url.path, &reopened, SQLITE_OPEN_READONLY, nil), SQLITE_OK)
+            defer { sqlite3_close(reopened) }
+            var statement: OpaquePointer?
+            XCTAssertEqual(sqlite3_prepare_v2(reopened, "SELECT value FROM unrelated", -1, &statement, nil), SQLITE_OK)
+            defer { sqlite3_finalize(statement) }
+            XCTAssertEqual(sqlite3_step(statement), SQLITE_ROW)
+            XCTAssertEqual(String(cString: sqlite3_column_text(statement, 0)), "preserve")
+        }
+    }
+    func testHistoryRejectsSymlink() throws {
+        try withURL { url in
+            let target = url.deletingLastPathComponent().appendingPathComponent("target.sqlite")
+            let store = try HistoryStore(url: target)
+            try store.upsert(HistoryDay(day: "2026-11-25", total: 1, download: nil, upload: nil))
+            try FileManager.default.createSymbolicLink(at: url, withDestinationURL: target)
+            XCTAssertThrowsError(try HistoryStore(url: url))
+            XCTAssertThrowsError(try HistoryBackupInspector.inspect(url))
+            XCTAssertEqual(try store.recent().first?.total, 1)
+        }
+    }
+    func testConcurrentInitializationUsesSingleMigration() throws {
+        try withURL { url in
+            let lock = NSLock()
+            var failures: [String] = []
+            DispatchQueue.concurrentPerform(iterations: 4) { _ in
+                do {
+                    let store = try HistoryStore(url: url)
+                    _ = try store.recent()
+                } catch {
+                    lock.lock()
+                    failures.append(String(describing: error))
+                    lock.unlock()
+                }
+            }
+            XCTAssertTrue(failures.isEmpty, failures.joined(separator: ", "))
+            XCTAssertTrue(try HistoryStore(url: url).recent().isEmpty)
+        }
+    }
     func testActualV1DatabaseMigratesWithoutReclassification() throws {
         try withURL { url in
             var database: OpaquePointer?

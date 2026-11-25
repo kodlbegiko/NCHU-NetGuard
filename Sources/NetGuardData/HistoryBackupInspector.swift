@@ -21,13 +21,21 @@ public enum HistoryBackupInspector {
               size.int64Value > 0, size.int64Value <= 64 * 1024 * 1024
         else { throw HistoryStoreError.database("invalid backup file") }
         var database: OpaquePointer?
-        let status = sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil)
+        let status = sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_NOFOLLOW, nil)
         guard status == SQLITE_OK, let db = database else {
             if let database { sqlite3_close(database) }
             throw HistoryStoreError.database("backup read")
         }
         defer { sqlite3_close(db) }
         sqlite3_busy_timeout(db, 250)
+        // Bound attacker-controlled query work as well as the file size.
+        var deadline = ProcessInfo.processInfo.systemUptime + 5
+        return try withUnsafeMutablePointer(to: &deadline) { context in
+        sqlite3_progress_handler(db, 1000, { opaque in
+            guard let opaque else { return 1 }
+            return ProcessInfo.processInfo.systemUptime >= opaque.assumingMemoryBound(to: Double.self).pointee ? 1 : 0
+        }, UnsafeMutableRawPointer(context))
+        defer { sqlite3_progress_handler(db, 0, nil, nil) }
         guard sqlite3_exec(db, "PRAGMA query_only=ON; PRAGMA trusted_schema=OFF", nil, nil, nil) == SQLITE_OK
         else { throw HistoryStoreError.database("backup read-only setup") }
         func query(_ sql: String, _ body: (OpaquePointer) throws -> Void) throws {
@@ -114,5 +122,6 @@ public enum HistoryBackupInspector {
             }
         }
         return HistoryBackupSummary(schemaVersion: version, recordedDays: count, classifiedRows: classified)
+        }
     }
 }

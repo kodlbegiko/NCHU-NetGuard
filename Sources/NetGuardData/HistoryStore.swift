@@ -104,31 +104,35 @@ public struct ScopedHistoryDay: Equatable, Sendable {
 public final class HistoryStore {
     private var db: OpaquePointer?
     public init(url: URL) throws {
-        let rc = sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil)
+        guard url.isFileURL else { throw HistoryStoreError.database("invalid history URL") }
+        let rc = sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_NOFOLLOW, nil)
         guard rc == SQLITE_OK else {
             if let db { sqlite3_close(db) }
             db = nil
             throw HistoryStoreError.database("open")
         }
         do {
-            sqlite3_busy_timeout(db, 1000)
-            try execute("PRAGMA journal_mode=DELETE")
+            sqlite3_busy_timeout(db, 3000)
+            try execute("PRAGMA trusted_schema=OFF")
+            try execute("PRAGMA foreign_keys=ON")
             try execute("PRAGMA synchronous=FULL")
-            let version = try scalar("PRAGMA user_version")
-            guard (0...2).contains(version) else { throw HistoryStoreError.unsupportedSchema }
-            if version == 0 {
-                try transaction {
+            // Read schema version only after acquiring the write transaction.
+            // A second initializer must observe the first one's committed migration.
+            try transaction {
+                let version = try scalar("PRAGMA user_version")
+                guard (0...2).contains(version) else { throw HistoryStoreError.unsupportedSchema }
+                try validateTableInventory(version: version)
+                if version == 0 {
                     try execute("CREATE TABLE history_days(day TEXT PRIMARY KEY, total INTEGER NOT NULL CHECK(total >= 0), download INTEGER, upload INTEGER, CHECK((download IS NULL AND upload IS NULL) OR (download IS NOT NULL AND upload IS NOT NULL AND download >= 0 AND upload >= 0 AND download + upload = total)))")
-                    try execute("PRAGMA user_version=1")
                 }
-            }
-            if version < 2 {
-                try transaction {
+                if version < 2 {
                     try execute("CREATE TABLE history_scopes(day TEXT NOT NULL REFERENCES history_days(day), scope TEXT NOT NULL CHECK(scope IN ('dorm','campusWifi','external','unknown')), download INTEGER NOT NULL CHECK(download >= 0), upload INTEGER NOT NULL CHECK(upload >= 0), CHECK(download + upload > 0), PRIMARY KEY(day,scope))")
                     try execute("PRAGMA user_version=2")
                 }
+                try validateTableInventory(version: 2)
             }
-            try execute("PRAGMA foreign_keys=ON")
+            // No schema mutation or journal mode change before validating the inventory.
+            try execute("PRAGMA journal_mode=DELETE")
         } catch {
             if let db { sqlite3_close(db) }
             db = nil
@@ -148,7 +152,7 @@ public final class HistoryStore {
     public static func backup(from source: URL, to destination: URL) throws {
         guard source.isFileURL else { throw HistoryStoreError.database("backup source") }
         var connection: OpaquePointer?
-        let status = sqlite3_open_v2(source.path, &connection, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil)
+        let status = sqlite3_open_v2(source.path, &connection, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_NOFOLLOW, nil)
         guard status == SQLITE_OK, let connection else {
             if let connection { sqlite3_close(connection) }
             throw HistoryStoreError.database("backup source open")
@@ -166,7 +170,7 @@ public final class HistoryStore {
         else { throw HistoryStoreError.database("backup destination exists or unavailable") }
         defer { try? fm.removeItem(at: temporary) }
         var target: OpaquePointer?
-        let open = sqlite3_open_v2(temporary.path, &target, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil)
+        let open = sqlite3_open_v2(temporary.path, &target, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_NOFOLLOW, nil)
         guard open == SQLITE_OK, let target else {
             if let target { sqlite3_close(target) }
             throw HistoryStoreError.database("backup open")
@@ -189,6 +193,29 @@ public final class HistoryStore {
         _ = try HistoryBackupInspector.inspect(temporary)
         // moveItem refuses an existing destination, including a race after the initial check.
         try fm.moveItem(at: temporary, to: destination)
+    }
+
+    /// Reject views, triggers, virtual tables and foreign table inventories.
+    /// Older v1 fixtures need not have today's CHECK clauses. Column names
+    /// and primary-key positions must nevertheless match the supported model.
+    private func validateTableInventory(version: Int64) throws {
+        let expected = version == 0 ? 0 : (version == 1 ? 1 : 2)
+        guard try scalar("SELECT count(*) FROM sqlite_master WHERE type IN ('view','trigger')") == 0,
+              try scalar("SELECT count(*) FROM sqlite_master WHERE type='table'") == expected,
+              try scalar("SELECT count(*) FROM pragma_table_list WHERE schema='main' AND name IN ('history_days','history_scopes') AND type='table'") == expected
+        else { throw HistoryStoreError.database("unexpected history schema") }
+        if version >= 1 {
+            guard try scalar("SELECT count(*) FROM pragma_table_info('history_days')") == 4,
+                  try scalar("SELECT count(*) FROM pragma_table_info('history_days') WHERE (cid=0 AND name='day' AND type='TEXT' AND pk=1) OR (cid=1 AND name='total' AND type='INTEGER' AND pk=0) OR (cid=2 AND name='download' AND type='INTEGER' AND pk=0) OR (cid=3 AND name='upload' AND type='INTEGER' AND pk=0)") == 4,
+                  try scalar("SELECT count(*) FROM pragma_table_xinfo('history_days')") == 4
+            else { throw HistoryStoreError.database("unexpected history days columns") }
+        }
+        if version == 2 {
+            guard try scalar("SELECT count(*) FROM pragma_table_info('history_scopes')") == 4,
+                  try scalar("SELECT count(*) FROM pragma_table_info('history_scopes') WHERE (cid=0 AND name='day' AND type='TEXT' AND pk=1) OR (cid=1 AND name='scope' AND type='TEXT' AND pk=2) OR (cid=2 AND name='download' AND type='INTEGER' AND pk=0) OR (cid=3 AND name='upload' AND type='INTEGER' AND pk=0)") == 4,
+                  try scalar("SELECT count(*) FROM pragma_table_xinfo('history_scopes')") == 4
+            else { throw HistoryStoreError.database("unexpected history scope columns") }
+        }
     }
 
     private func execute(_ sql: String) throws {
