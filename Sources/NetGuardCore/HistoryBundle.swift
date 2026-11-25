@@ -122,4 +122,45 @@ public enum HistoryBundle {
         let events = try TrafficEventArchive(directory: root.appendingPathComponent("event-history")).read()
         return .init(database: database, processDays: days.count, connectionSessions: connections.count, events: events.count)
     }
+
+    /// Recover a verified copy into a NEW directory only. Never replaces the
+    /// active stores. The input manifest is pinned for the whole operation.
+    /// A failed copy or verification leaves no published destination.
+    public static func recoverCopy(from source: URL, to destination: URL) throws -> HistoryBundleSummary {
+        guard source.isFileURL, destination.isFileURL,
+              source.standardizedFileURL != destination.standardizedFileURL,
+              !fm.fileExists(atPath: destination.path) else { throw fail() }
+        let sourcePath = source.resolvingSymlinksInPath().standardizedFileURL.path
+        let parentPath = destination.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL.path
+        guard parentPath != sourcePath, !parentPath.hasPrefix(sourcePath + "/") else { throw fail() }
+        let manifestData = try read(source.appendingPathComponent("manifest.json"), max: 128 * 1024)
+        let manifest = try JSONDecoder().decode(HistoryBundleManifest.self, from: manifestData)
+        let expectedSummary = try inspect(source)
+        guard try read(source.appendingPathComponent("manifest.json"), max: 128 * 1024) == manifestData,
+              manifest.files == (try inventory(source, manifestPresent: true)) else { throw fail() }
+
+        let temp = destination.deletingLastPathComponent().appendingPathComponent(".netguard-recovery-" + UUID().uuidString)
+        try fm.createDirectory(at: temp, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? fm.removeItem(at: temp) }
+        for folder in ["process-history", "connection-history", "event-history"] {
+            try fm.createDirectory(at: temp.appendingPathComponent(folder), withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700])
+        }
+        // Derive paths from the validated inventory, never unchecked input.
+        let entries = try inventory(source, manifestPresent: true)
+        guard entries == manifest.files else { throw fail() }
+        for entry in entries {
+            let data = try read(source.appendingPathComponent(entry.path),
+                max: entry.path == "history.sqlite" ? 64 * 1024 * 1024 : 2 * 1024 * 1024)
+            let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            guard data.count == entry.bytes, digest == entry.sha256 else { throw fail() }
+            try write(data, to: temp.appendingPathComponent(entry.path))
+        }
+        try write(manifestData, to: temp.appendingPathComponent("manifest.json"))
+        let summary = try inspect(temp)
+        guard summary == expectedSummary else { throw fail() }
+        try fm.moveItem(at: temp, to: destination)
+        return summary
+    }
+
 }
