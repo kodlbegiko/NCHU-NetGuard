@@ -277,6 +277,11 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var observedInterfaceRates: [String: ObservedInterfaceRate] = [:]
     var throughputWindow = ThroughputWindow()
     var trafficEventDetector = TrafficEventDetector()
+    private let eventArchiveQueue = DispatchQueue(label: "NetGuard.event-archive", qos: .utility)
+    private var eventArchiveBusy = false
+    private var eventArchive: TrafficEventArchive {
+        TrafficEventArchive(directory: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/NCHU-NetGuard/event-history", isDirectory: true))
+    }
     var lastPingUptime: TimeInterval?
     var appProbeInFlight = false
     var appProbeTimestamp: TimeInterval?
@@ -1249,6 +1254,33 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func performEventArchiveOperation(message: String,
+        operation: @escaping @Sendable (TrafficEventArchive) throws -> Void) {
+        guard !eventArchiveBusy else { return }
+        eventArchiveBusy = true
+        managementModel.eventArchiveBusy = true
+        let store = eventArchive
+        eventArchiveQueue.async { [weak self] in
+            let rows: [TrafficObservationEvent]?
+            let status: String
+            do {
+                try operation(store)
+                rows = try store.read()
+                status = message
+            } catch {
+                rows = nil
+                status = "事件紀錄操作失敗或未確認；請重新讀取"
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.eventArchiveBusy = false
+                self.managementModel.eventArchiveBusy = false
+                self.managementModel.eventArchiveStatus = status
+                self.managementModel.eventArchiveRows = rows ?? []
+            }
+        }
+    }
+
     private func configureTrafficEvents(_ rules: TrafficEventRules) {
         guard let data = try? JSONEncoder().encode(rules),
               let validated = TrafficEventRules.validatedDecode(data) else { return }
@@ -1345,6 +1377,18 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 reloadHistory: { [weak self] in self?.reloadProcessHistory() },
                 testDNS: { [weak self] in self?.testDNS() },
                 configureTrafficEvents: { [weak self] rules in self?.configureTrafficEvents(rules) },
+                saveEventArchive: { [weak self] in
+                    guard let self else { return }
+                    let events = self.trafficEventDetector.recent()
+                    guard !events.isEmpty else { return }
+                    self.performEventArchiveOperation(message: "已保存本次事件") { try $0.save(events) }
+                },
+                loadEventArchive: { [weak self] in
+                    self?.performEventArchiveOperation(message: "已讀取事件歷史") { _ in }
+                },
+                clearEventArchive: { [weak self] in
+                    self?.performEventArchiveOperation(message: "已清除保存的事件歷史") { try $0.clear() }
+                },
                 clearTrafficEvents: { [weak self] in
                     self?.trafficEventDetector.clear()
                     self?.syncManagementModel()
