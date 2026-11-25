@@ -6,7 +6,7 @@ all: build
 
 build:
 	mkdir -p "$(APP)/Contents/MacOS" "$(APP)/Contents/Resources"
-	swiftc -O src/main.swift src/QuickPanel.swift src/HistoryAnalyticsView.swift Sources/NetGuardCore/*.swift -lsqlite3 -o "$(APP)/Contents/MacOS/NCHUTraffic"
+	swiftc -O src/main.swift src/QuickPanel.swift src/HistoryAnalyticsView.swift src/SettingsView.swift Sources/NetGuardCore/*.swift -lsqlite3 -o "$(APP)/Contents/MacOS/NCHUTraffic"
 	cp src/Info.plist "$(APP)/Contents/"
 	cp src/Resources/popover.html scripts/traffic_monitor.py "$(APP)/Contents/Resources/"
 
