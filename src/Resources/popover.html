@@ -1,0 +1,1462 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    :root {
+      /* Dark Theme (Default) */
+      --bg: #0d1117;
+      --bg-gradient: radial-gradient(circle at 50% 0%, rgba(56, 189, 248, 0.09) 0%, transparent 60%), radial-gradient(circle at 90% 100%, rgba(99, 102, 241, 0.06) 0%, transparent 50%);
+      --card-bg: rgba(255, 255, 255, 0.04);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --card-hover-border: rgba(255, 255, 255, 0.15);
+      --card-shadow: 0 4px 16px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+
+      --text-main: #f8fafc;
+      --text-sub: #94a3b8;
+      --text-muted: #64748b;
+
+      --track-bg: rgba(255, 255, 255, 0.08);
+      --row-bg: rgba(255, 255, 255, 0.025);
+      --row-hover-bg: rgba(255, 255, 255, 0.05);
+
+      --speed-bg: rgba(56, 189, 248, 0.12);
+      --speed-text: #38bdf8;
+      --accent-indigo: #818cf8;
+
+      --bubble-bg: rgba(255, 255, 255, 0.06);
+      --bubble-border: rgba(255, 255, 255, 0.09);
+
+      --switch-off: rgba(255, 255, 255, 0.16);
+
+      --btn-bg: rgba(255, 255, 255, 0.06);
+      --btn-border: rgba(255, 255, 255, 0.1);
+      --btn-text: #e2e8f0;
+      --btn-hover-bg: rgba(255, 255, 255, 0.12);
+      --btn-hover-border: rgba(255, 255, 255, 0.18);
+
+      --mode-dorm-bg: rgba(99, 102, 241, 0.18);
+      --mode-dorm-text: #a5b4fc;
+      --mode-dorm-border: rgba(99, 102, 241, 0.25);
+
+      --mode-ext-bg: rgba(16, 185, 129, 0.18);
+      --mode-ext-text: #6ee7b7;
+      --mode-ext-border: rgba(16, 185, 129, 0.25);
+
+      --mode-wifi-bg: rgba(14, 165, 233, 0.18);
+      --mode-wifi-text: #38bdf8;
+      --mode-wifi-border: rgba(14, 165, 233, 0.25);
+
+      /* Capsule Safe */
+      --capsule-safe-bg: rgba(16, 185, 129, 0.1);
+      --capsule-safe-border: rgba(16, 185, 129, 0.22);
+      --capsule-safe-text: #34d399;
+      --capsule-safe-badge-bg: rgba(16, 185, 129, 0.2);
+      --capsule-safe-badge-text: #10b981;
+
+      /* Capsule Warning */
+      --capsule-warning-bg: rgba(245, 158, 11, 0.12);
+      --capsule-warning-border: rgba(245, 158, 11, 0.28);
+      --capsule-warning-text: #fbbf24;
+      --capsule-warning-badge-bg: rgba(245, 158, 11, 0.22);
+      --capsule-warning-badge-text: #fbbf24;
+
+      /* Capsule Danger */
+      --capsule-danger-bg: rgba(239, 68, 68, 0.15);
+      --capsule-danger-border: rgba(239, 68, 68, 0.35);
+      --capsule-danger-text: #f87171;
+      --capsule-danger-badge-bg: rgba(239, 68, 68, 0.25);
+      --capsule-danger-badge-text: #ef4444;
+
+      --btn-panic-bg: rgba(239, 68, 68, 0.12);
+      --btn-panic-border: rgba(239, 68, 68, 0.3);
+      --btn-panic-text: #fca5a5;
+
+      --hist-border: rgba(255, 255, 255, 0.05);
+      --hist-hover-border: rgba(255, 255, 255, 0.09);
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root {
+        /* Light Theme - Crisp, High-Contrast macOS Native Look */
+        --bg: #f1f5f9;
+        --bg-gradient: radial-gradient(circle at 50% 0%, rgba(56, 189, 248, 0.12) 0%, transparent 60%), radial-gradient(circle at 90% 100%, rgba(99, 102, 241, 0.06) 0%, transparent 50%);
+        --card-bg: #ffffff;
+        --card-border: rgba(0, 0, 0, 0.08);
+        --card-hover-border: rgba(0, 0, 0, 0.15);
+        --card-shadow: 0 2px 10px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
+
+        --text-main: #0f172a;       /* Deep slate/black, ultra readable */
+        --text-sub: #334155;        /* Slate-700 */
+        --text-muted: #64748b;      /* Slate-500 */
+
+        --track-bg: #e2e8f0;
+        --row-bg: #f8fafc;
+        --row-hover-bg: #f1f5f9;
+
+        --speed-bg: rgba(2, 132, 199, 0.09);
+        --speed-text: #0284c7;
+        --accent-indigo: #4f46e5;
+
+        --bubble-bg: #f8fafc;
+        --bubble-border: rgba(0, 0, 0, 0.08);
+
+        --switch-off: #cbd5e1;
+
+        --btn-bg: #ffffff;
+        --btn-border: #cbd5e1;
+        --btn-text: #1e293b;
+        --btn-hover-bg: #f8fafc;
+        --btn-hover-border: #94a3b8;
+
+        --mode-dorm-bg: rgba(79, 70, 229, 0.09);
+        --mode-dorm-text: #4338ca;
+        --mode-dorm-border: rgba(79, 70, 229, 0.22);
+
+        --mode-ext-bg: rgba(5, 150, 105, 0.09);
+        --mode-ext-text: #047857;
+        --mode-ext-border: rgba(5, 150, 105, 0.22);
+
+        --mode-wifi-bg: rgba(2, 132, 199, 0.09);
+        --mode-wifi-text: #0284c7;
+        --mode-wifi-border: rgba(2, 132, 199, 0.22);
+
+        /* Capsule Safe (Light Mode) */
+        --capsule-safe-bg: #ecfdf5;
+        --capsule-safe-border: #a7f3d0;
+        --capsule-safe-text: #065f46;
+        --capsule-safe-badge-bg: #d1fae5;
+        --capsule-safe-badge-text: #047857;
+
+        /* Capsule Warning (Light Mode - Clear, high contrast dark amber) */
+        --capsule-warning-bg: #fffbeb;
+        --capsule-warning-border: #fde68a;
+        --capsule-warning-text: #92400e;
+        --capsule-warning-badge-bg: #fef3c7;
+        --capsule-warning-badge-text: #b45309;
+
+        /* Capsule Danger (Light Mode - Clear, high contrast crimson) */
+        --capsule-danger-bg: #fef2f2;
+        --capsule-danger-border: #fecaca;
+        --capsule-danger-text: #991b1b;
+        --capsule-danger-badge-bg: #fee2e2;
+        --capsule-danger-badge-text: #dc2626;
+
+        --btn-panic-bg: #fef2f2;
+        --btn-panic-border: #fecaca;
+        --btn-panic-text: #dc2626;
+
+        --hist-border: rgba(0, 0, 0, 0.06);
+        --hist-hover-border: rgba(0, 0, 0, 0.12);
+      }
+    }
+
+    * { 
+      box-sizing: border-box; 
+      margin: 0; 
+      padding: 0; 
+      user-select: none; 
+      -webkit-user-select: none; 
+    }
+    
+    ::-webkit-scrollbar { width: 3px; }
+    ::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.3); border-radius: 3px; }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang TC", "Helvetica Neue", sans-serif;
+      background: var(--bg);
+      background-image: var(--bg-gradient);
+      color: var(--text-main);
+      padding: 11px 12px;
+      width: 380px;
+      box-sizing: border-box;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    .card {
+      background: var(--card-bg);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--card-border);
+      border-radius: 13px;
+      padding: 10px 12px;
+      box-shadow: var(--card-shadow);
+      transition: border-color 0.2s ease, transform 0.15s ease, background 0.2s ease;
+    }
+
+    .card:hover {
+      border-color: var(--card-hover-border);
+    }
+
+    .interactive-card {
+      cursor: pointer;
+    }
+    .interactive-card:active {
+      transform: scale(0.988);
+    }
+
+    .icon-bubble {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: var(--bubble-bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      border: 1px solid var(--bubble-border);
+      flex-shrink: 0;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      padding-bottom: 7px;
+      border-bottom: 1px solid var(--card-border);
+    }
+
+    .header-title {
+      font-size: 13.5px;
+      font-weight: 700;
+      letter-spacing: -0.2px;
+      color: var(--text-main);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .mode-tag {
+      font-size: 9.5px;
+      padding: 2px 6px;
+      border-radius: 5px;
+      font-weight: 700;
+      background: var(--mode-dorm-bg);
+      color: var(--mode-dorm-text);
+      border: 1px solid var(--mode-dorm-border);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .mode-tag.ext {
+      background: var(--mode-ext-bg);
+      color: var(--mode-ext-text);
+      border: 1px solid var(--mode-ext-border);
+    }
+    .mode-tag.wifi {
+      background: var(--mode-wifi-bg);
+      color: var(--mode-wifi-text);
+      border: 1px solid var(--mode-wifi-border);
+    }
+
+    .badge {
+      font-size: 10.5px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: var(--capsule-safe-bg);
+      color: var(--capsule-safe-badge-text);
+      border: 1px solid var(--capsule-safe-border);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .pulse-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--capsule-safe-badge-text);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse { 
+      0%, 100% { opacity: 1; transform: scale(1); } 
+      50% { opacity: 0.35; transform: scale(0.8); } 
+    }
+
+    .grid-2 { 
+      display: grid; 
+      grid-template-columns: 1fr 1fr; 
+      gap: 8px; 
+      margin-top: 8px; 
+    }
+
+    .progress-track {
+      width: 100%;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--track-bg);
+      overflow: hidden;
+      margin: 7px 0;
+      position: relative;
+    }
+
+    .progress-bar {
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #10b981 0%, #06b6d4 100%);
+      transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 0 8px rgba(6, 182, 212, 0.35);
+    }
+
+    .btn {
+      background: var(--btn-bg);
+      border: 1px solid var(--btn-border);
+      color: var(--btn-text);
+      padding: 5px 8px;
+      border-radius: 7px;
+      font-size: 10.5px;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      white-space: nowrap;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    }
+    .btn:hover { 
+      background: var(--btn-hover-bg);
+      border-color: var(--btn-hover-border);
+      transform: translateY(-1px);
+    }
+    .btn:active {
+      transform: translateY(0);
+      background: var(--btn-bg);
+    }
+
+    .btn-panic {
+      background: var(--btn-panic-bg);
+      border: 1px solid var(--btn-panic-border);
+      color: var(--btn-panic-text);
+      font-weight: 600;
+    }
+    .btn-panic:hover {
+      background: var(--btn-panic-border);
+      color: #ffffff;
+    }
+    .btn-panic.active {
+      background: linear-gradient(135deg, #ef4444, #dc2626);
+      border-color: #f87171;
+      color: #ffffff;
+      box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
+    }
+
+    /* iOS Switch Control */
+    .switch-control {
+      width: 36px;
+      height: 20px;
+      background: var(--switch-off);
+      border-radius: 999px;
+      position: relative;
+      cursor: pointer;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      flex-shrink: 0;
+    }
+    .switch-control.on {
+      background: linear-gradient(135deg, #10b981, #059669);
+      box-shadow: 0 0 10px rgba(16, 185, 129, 0.4);
+    }
+    .switch-knob {
+      width: 16px;
+      height: 16px;
+      background: #ffffff;
+      border-radius: 50%;
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    }
+    .switch-control.on .switch-knob {
+      transform: translateX(16px);
+    }
+
+    .app-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      padding: 4.5px 7px;
+      margin-top: 3px;
+      border-radius: 6px;
+      background: var(--row-bg);
+      transition: background 0.15s;
+    }
+    .app-row:hover {
+      background: var(--row-hover-bg);
+    }
+    .app-row span:first-child { 
+      color: var(--text-main); 
+      font-weight: 500;
+      max-width: 210px; 
+      overflow: hidden; 
+      text-overflow: ellipsis; 
+      white-space: nowrap; 
+    }
+    .app-row span:last-child { 
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace; 
+      font-weight: 600; 
+      color: var(--speed-text); 
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* 歷史紀錄卡片樣式 */
+    .hist-item {
+      background: var(--row-bg);
+      border-radius: 8px;
+      padding: 7px 9px;
+      margin-top: 5px;
+      border: 1px solid var(--hist-border);
+      transition: all 0.2s ease;
+    }
+    .hist-item:hover {
+      background: var(--row-hover-bg);
+      border-color: var(--hist-hover-border);
+    }
+    .hist-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-main);
+      gap: 6px;
+    }
+    .hist-header span:first-child {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .hist-header span:last-child {
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .hist-sub {
+      display: flex;
+      justify-content: space-between;
+      font-size: 9.5px;
+      color: var(--text-muted);
+      margin-top: 3px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* 歷史對比 KPI 膠囊 */
+    .hist-kpi-badge {
+      background: var(--row-bg);
+      border: 1px solid var(--hist-border);
+      border-radius: 7px;
+      padding: 4px 5px;
+      text-align: center;
+      transition: background 0.15s ease;
+    }
+    .hist-kpi-badge:hover {
+      background: var(--row-hover-bg);
+    }
+    .kpi-label {
+      display: block;
+      font-size: 8px;
+      color: var(--text-muted);
+      font-weight: 500;
+      letter-spacing: 0.02em;
+    }
+    .kpi-val {
+      display: block;
+      font-size: 10.5px;
+      font-weight: 700;
+      color: var(--text-main);
+      font-variant-numeric: tabular-nums;
+      margin-top: 1px;
+    }
+    .kpi-val.down { color: #34d399; }
+    .kpi-val.up { color: #f87171; }
+
+    /* 7日長條柱狀圖樣式 */
+    .chart-container-card {
+      position: relative;
+      background: rgba(0, 0, 0, 0.12);
+      border-radius: 9px;
+      padding: 18px 8px 6px 8px;
+      margin-top: 6px;
+      border: 1px solid var(--hist-border);
+    }
+    @media (prefers-color-scheme: light) {
+      .chart-container-card {
+        background: rgba(0, 0, 0, 0.025);
+      }
+    }
+
+    .chart-quota-line {
+      position: absolute;
+      left: 6px;
+      right: 6px;
+      top: 30px; /* 100% 配額基準線位置 */
+      height: 1px;
+      border-top: 1px dashed rgba(239, 68, 68, 0.45);
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    .chart-bars-wrap {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      height: 76px;
+      position: relative;
+      z-index: 2;
+      padding: 0 2px;
+    }
+
+    .chart-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      flex: 1;
+      height: 100%;
+      justify-content: flex-end;
+      cursor: pointer;
+      position: relative;
+      transition: transform 0.15s ease;
+    }
+    .chart-col:hover {
+      transform: translateY(-2px);
+    }
+
+    .col-top-val {
+      font-size: 8px;
+      font-weight: 700;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+      margin-bottom: 2px;
+      white-space: nowrap;
+      transition: color 0.15s;
+    }
+    .chart-col:hover .col-top-val {
+      color: var(--text-main);
+    }
+
+    .col-bar-track {
+      width: 18px;
+      height: 50px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 4px 4px 2px 2px;
+      display: flex;
+      align-items: flex-end;
+      overflow: hidden;
+      position: relative;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    @media (prefers-color-scheme: light) {
+      .col-bar-track {
+        background: rgba(0, 0, 0, 0.05);
+        border: 1px solid rgba(0, 0, 0, 0.06);
+      }
+    }
+
+    .col-bar-fill {
+      width: 100%;
+      border-radius: 3px 3px 0 0;
+      transition: height 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .col-bar-fill.safe {
+      background: linear-gradient(180deg, #10b981 0%, #059669 100%);
+      box-shadow: 0 0 5px rgba(16, 185, 129, 0.3);
+    }
+    .col-bar-fill.warning {
+      background: linear-gradient(180deg, #fbbf24 0%, #d97706 100%);
+      box-shadow: 0 0 5px rgba(245, 158, 11, 0.3);
+    }
+    .col-bar-fill.danger {
+      background: linear-gradient(180deg, #f87171 0%, #dc2626 100%);
+      box-shadow: 0 0 7px rgba(239, 68, 68, 0.45);
+    }
+
+    .chart-col.is-today .col-bar-track {
+      border: 1.5px solid #38bdf8;
+      box-shadow: 0 0 8px rgba(56, 189, 248, 0.35);
+    }
+
+    .col-bottom-label {
+      margin-top: 3px;
+      font-size: 8.5px;
+      font-weight: 600;
+      color: var(--text-sub);
+      text-align: center;
+      white-space: nowrap;
+      line-height: 1.1;
+    }
+    .col-bottom-date {
+      font-size: 7.5px;
+      color: var(--text-muted);
+      font-weight: normal;
+      display: block;
+    }
+    .chart-col.is-today .col-bottom-label {
+      color: #38bdf8;
+      font-weight: 700;
+    }
+
+    /* 懸停詳細資訊卡 */
+    .chart-tooltip-panel {
+      margin-top: 6px;
+      padding: 4px 8px;
+      border-radius: 6px;
+      background: var(--bubble-bg);
+      border: 1px solid var(--bubble-border);
+      font-size: 8.5px;
+      color: var(--text-main);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+      animation: fadeIn 0.2s ease;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(2px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes pulseGlow {
+      0% { box-shadow: 0 0 0 rgba(239, 68, 68, 0); }
+      50% { box-shadow: 0 0 12px rgba(239, 68, 68, 0.45); }
+      100% { box-shadow: 0 0 0 rgba(239, 68, 68, 0); }
+    }
+
+    /* 動態預估膠囊樣式 */
+    .runout-capsule {
+      margin-top: 9px;
+      padding: 7px 11px;
+      border-radius: 9px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      transition: all 0.3s ease;
+      gap: 8px;
+    }
+    .runout-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      flex: 1;
+    }
+    .runout-text {
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 10.5px;
+    }
+    .risk-badge {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 3px 9px;
+      border-radius: 999px;
+      white-space: nowrap;
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      letter-spacing: 0.02em;
+    }
+    .runout-capsule.safe {
+      background: var(--capsule-safe-bg);
+      border: 1px solid var(--capsule-safe-border);
+    }
+    .runout-capsule.safe .runout-text { color: var(--capsule-safe-text); }
+    .runout-capsule.safe .risk-badge {
+      background: var(--capsule-safe-badge-bg);
+      color: var(--capsule-safe-badge-text);
+    }
+
+    .runout-capsule.warning {
+      background: var(--capsule-warning-bg);
+      border: 1px solid var(--capsule-warning-border);
+    }
+    .runout-capsule.warning .runout-text { color: var(--capsule-warning-text); }
+    .runout-capsule.warning .risk-badge {
+      background: var(--capsule-warning-badge-bg);
+      color: var(--capsule-warning-badge-text);
+    }
+
+    .runout-capsule.danger {
+      background: var(--capsule-danger-bg);
+      border: 1px solid var(--capsule-danger-border);
+    }
+    .runout-capsule.danger .runout-text { color: var(--capsule-danger-text); }
+    .runout-capsule.danger .risk-badge {
+      background: var(--capsule-danger-badge-bg);
+      color: var(--capsule-danger-badge-text);
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <div class="header">
+    <div style="display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1;">
+      <div class="icon-bubble" id="header-icon">🌐</div>
+      <div style="min-width: 0; flex: 1;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <h2 class="header-title" id="header-title">興大二村 宿網</h2>
+          <span class="mode-tag" id="mode-tag">有線宿網</span>
+        </div>
+        <p style="font-size: 10px; color: var(--text-muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="date-label">今日日期: 2026-09-23</p>
+      </div>
+    </div>
+    <div class="badge" id="latency-badge" style="flex-shrink: 0; margin-left: 6px;">
+      <span class="pulse-dot"></span>
+      <span id="latency-text">2.1 ms</span>
+    </div>
+  </div>
+
+  <!-- High-Priority P2P Hazard Alert Banner -->
+  <div id="p2p-alert-banner" style="display: none; margin-bottom: 8px; padding: 7px 11px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 10px; animation: pulseGlow 2s infinite;">
+    <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+      <div style="display: flex; align-items: center; gap: 7px; min-width: 0;">
+        <span style="font-size: 15px; flex-shrink: 0;">🚨</span>
+        <div style="min-width: 0;">
+          <div style="font-size: 11px; font-weight: 700; color: #f87171; white-space: nowrap;">宿網 P2P 違規高危警告！</div>
+          <div style="font-size: 9.5px; color: var(--text-sub); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="p2p-alert-text">偵測到 P2P 運行中，計中鎖孔風險極高！</div>
+        </div>
+      </div>
+      <button class="btn btn-panic" style="padding: 3px 8px; font-size: 9.5px; white-space: nowrap; flex-shrink: 0;" onclick="callNative('killP2PApp')">🛑 強制終止</button>
+    </div>
+  </div>
+
+  <!-- Wi-Fi Failover Banner -->
+  <div id="failover-banner" style="display: none; margin-bottom: 8px; padding: 6px 10px; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.28); border-radius: 9px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+      <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
+        <span style="font-size: 13px; flex-shrink: 0;">🛡️</span>
+        <div style="min-width: 0;">
+          <div style="font-size: 10.5px; font-weight: 700; color: #fbbf24; white-space: nowrap;">宿網避難中 (免拔線)</div>
+          <div style="font-size: 9px; color: var(--text-sub); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">有線網卡已暫停，現正改用校園 Wi-Fi</div>
+        </div>
+      </div>
+      <button class="btn" style="padding: 3px 7px; font-size: 9.5px; white-space: nowrap; flex-shrink: 0;" onclick="callNative('restoreWired')">🔌 恢復有線</button>
+    </div>
+  </div>
+
+  <!-- Mode 1: 宿網/校園網配額視圖 (Quota View) -->
+  <div id="dorm-view">
+    <!-- Main Quota Gauge: Primary Download Quota -->
+    <div class="card" style="margin-bottom: 8px; position: relative; overflow: hidden;">
+      <div style="position: absolute; right: -25px; top: -25px; width: 110px; height: 110px; background: radial-gradient(circle, rgba(16, 185, 129, 0.12) 0%, transparent 70%); pointer-events: none;"></div>
+
+      <div style="display: flex; justify-content: space-between; align-items: baseline;">
+        <span style="font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-sub); font-weight: 600;" id="hero-quota-title">今日下載額度剩餘</span>
+        <span style="font-size: 12px; font-weight: 700; color: var(--capsule-safe-badge-text); font-variant-numeric: tabular-nums;" id="usage-pct">已載 0.0%</span>
+      </div>
+
+      <div style="display: flex; align-items: baseline; gap: 6px; margin: 4px 0 6px 0;">
+        <span style="font-size: 34px; font-weight: 800; letter-spacing: -0.8px; color: var(--text-main); font-variant-numeric: tabular-nums;" id="rem-total">10.00</span>
+        <span style="font-size: 13px; color: var(--text-muted); font-weight: 500;" id="total-quota-limit">/ 10.00 GB</span>
+      </div>
+
+      <div class="progress-track">
+        <div class="progress-bar" id="main-progress" style="width: 0.0%;"></div>
+      </div>
+
+      <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; margin-top: 5px;">
+        <span style="color: var(--text-sub); font-variant-numeric: tabular-nums; white-space: nowrap;" id="used-total-text">今日已載: 0 MB</span>
+        <span style="color: var(--speed-text); font-weight: 600; font-variant-numeric: tabular-nums; background: var(--speed-bg); padding: 2px 7px; border-radius: 5px; white-space: nowrap;" id="speed-indicator">⚡ ↓ 0 B/s  ↑ 0 B/s</span>
+      </div>
+
+      <!-- 智能耗盡預估與安全等級膠囊 -->
+      <div id="runout-capsule" class="runout-capsule safe">
+        <div class="runout-left">
+          <span style="font-size: 12px; flex-shrink: 0;">⏱️</span>
+          <span id="runout-text" class="runout-text">網速平穩，流量充足安全</span>
+        </div>
+        <span id="risk-badge" class="risk-badge">🟢 安全</span>
+      </div>
+    </div>
+
+    <!-- Breakdown Cards (Total & UL) -->
+    <div class="grid-2">
+      <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 10.5px; color: var(--text-sub);">
+          <span style="font-weight: 600; white-space: nowrap;">🌐 全日總額 (下+上)</span>
+          <span style="font-size: 9.5px; padding: 1px 5px; border-radius: 4px; background: var(--bubble-bg); color: var(--text-muted); white-space: nowrap;" id="sub-total-quota-limit">限 15G</span>
+        </div>
+        <div style="font-size: 18px; font-weight: 700; margin: 4px 0 2px 0; color: var(--text-main); font-variant-numeric: tabular-nums;" id="sub-rem-total">
+          15.00 <span style="font-size: 11px; font-weight: 500; color: var(--text-muted);">GB 剩</span>
+        </div>
+        <div class="progress-track" style="height: 5px; margin: 4px 0;">
+          <div class="progress-bar" id="sub-total-progress" style="width: 0.0%; background: linear-gradient(90deg, #10b981, #06b6d4);"></div>
+        </div>
+        <div style="font-size: 10px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap;" id="sub-used-total-text">總計已用 0 MB</div>
+      </div>
+
+      <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 10.5px; color: var(--text-sub);">
+          <span style="font-weight: 600; white-space: nowrap;">📤 上傳額度</span>
+          <span style="font-size: 9.5px; padding: 1px 5px; border-radius: 4px; background: var(--bubble-bg); color: var(--text-muted); white-space: nowrap;" id="ul-quota-limit">限 5G</span>
+        </div>
+        <div style="font-size: 18px; font-weight: 700; margin: 4px 0 2px 0; color: var(--text-main); font-variant-numeric: tabular-nums;" id="rem-ul">
+          5.00 <span style="font-size: 11px; font-weight: 500; color: var(--text-muted);">GB 剩</span>
+        </div>
+        <div class="progress-track" style="height: 5px; margin: 4px 0;">
+          <div class="progress-bar" id="ul-progress" style="width: 0.0%; background: linear-gradient(90deg, #6366f1, #38bdf8);"></div>
+        </div>
+        <div style="font-size: 10px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap;" id="used-ul-text">已傳 0 MB</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mode 2: 非宿網 / 外部網路 / 熱點視圖 (External Network View) -->
+  <div id="ext-view" style="display: none;">
+    <!-- Main External Usage Card -->
+    <div class="card" style="margin-bottom: 8px;">
+      <div style="display: flex; justify-content: space-between; align-items: baseline;">
+        <span style="font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-sub); font-weight: 600;">今日外部網路傳輸總量</span>
+        <span style="font-size: 10.5px; font-weight: 600; color: var(--capsule-safe-badge-text); background: var(--capsule-safe-bg); padding: 2px 6px; border-radius: 6px;">🟢 暢連無上限</span>
+      </div>
+      <div style="display: flex; align-items: baseline; gap: 6px; margin: 4px 0 6px 0;">
+        <span style="font-size: 34px; font-weight: 800; letter-spacing: -0.8px; color: var(--speed-text); font-variant-numeric: tabular-nums;" id="ext-total">0 B</span>
+      </div>
+      <div style="font-size: 10px; color: var(--text-muted); background: var(--bubble-bg); padding: 5px 8px; border-radius: 6px; margin: 6px 0 8px 0; border: 1px solid var(--bubble-border);">
+        💡 目前處於外部網路/熱點，不受 11GB 配額限制，放心暢遊！
+      </div>
+      <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-sub);">
+        <span id="ext-sub-summary" style="font-variant-numeric: tabular-nums;">下載: 0 B  •  上傳: 0 B</span>
+        <span style="color: var(--speed-text); font-weight: 600; font-variant-numeric: tabular-nums;" id="ext-speed-indicator">⚡ ↓ 0 B/s  ↑ 0 B/s</span>
+      </div>
+    </div>
+
+    <!-- External DL & UL Breakdown -->
+    <div class="grid-2">
+      <div class="card">
+        <div style="font-size: 10.5px; color: var(--text-sub); font-weight: 600;">📥 今日累計下載</div>
+        <div style="font-size: 18px; font-weight: 700; margin: 4px 0 2px 0; color: var(--speed-text); font-variant-numeric: tabular-nums;" id="ext-dl">0 B</div>
+        <div style="font-size: 10px; color: var(--capsule-safe-badge-text);">即時接收中</div>
+      </div>
+
+      <div class="card">
+        <div style="font-size: 10.5px; color: var(--text-sub); font-weight: 600;">📤 今日累計上傳</div>
+        <div style="font-size: 18px; font-weight: 700; margin: 4px 0 2px 0; color: var(--accent-indigo); font-variant-numeric: tabular-nums;" id="ext-ul">0 B</div>
+        <div style="font-size: 10px; color: var(--speed-text);">即時發送中</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Top App Consumers -->
+  <div class="card" style="margin-top: 8px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+      <span style="font-size: 11px; font-weight: 700; color: var(--text-main);">📱 今日最耗流量 App 排行</span>
+      <span style="font-size: 9.5px; color: var(--text-muted); font-weight: 500;" id="top-status">點開即時採樣</span>
+    </div>
+    <div id="apps-container">
+      <div class="app-row"><span>1. Google Chrome</span><span>18.7 MB</span></div>
+      <div class="app-row"><span>2. Antigravity IDE</span><span>8.1 MB</span></div>
+    </div>
+  </div>
+
+  <!-- 4 Guard Cards (2x2 Grid) -->
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 8px;">
+    <!-- Lid Guard -->
+    <div class="card interactive-card" style="padding: 8px 9px; margin-top: 0;" onclick="callNative('toggleLidGuard')">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
+          <div class="icon-bubble" style="font-size: 12px; width: 23px; height: 23px; min-width: 23px;">🛡️</div>
+          <div style="min-width: 0;">
+            <div style="font-size: 10.5px; font-weight: 700; color: var(--text-main); white-space: nowrap;">盒蓋休眠守護</div>
+            <div style="font-size: 8px; color: var(--text-muted); margin-top: 1px; white-space: nowrap;" id="lid-guard-desc">盒蓋凍結背景</div>
+          </div>
+        </div>
+        <div class="switch-control on" id="lid-switch-control" style="transform: scale(0.8); transform-origin: right center;">
+          <div class="switch-knob"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Idle Guard -->
+    <div class="card interactive-card" style="padding: 8px 9px; margin-top: 0;" onclick="callNative('toggleIdleGuard')">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
+          <div class="icon-bubble" style="font-size: 12px; width: 23px; height: 23px; min-width: 23px;">🚶</div>
+          <div style="min-width: 0;">
+            <div style="font-size: 10.5px; font-weight: 700; color: var(--text-main); white-space: nowrap;">離座閒置守護</div>
+            <div style="font-size: 8px; color: var(--text-muted); margin-top: 1px; white-space: nowrap;" id="idle-guard-desc">10分無操作急停</div>
+          </div>
+        </div>
+        <div class="switch-control on" id="idle-switch-control" style="transform: scale(0.8); transform-origin: right center;">
+          <div class="switch-knob"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- P2P Hazard Shield -->
+    <div class="card interactive-card" style="padding: 8px 9px; margin-top: 0;" onclick="callNative('toggleP2PShield')">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
+          <div class="icon-bubble" style="font-size: 12px; width: 23px; height: 23px; min-width: 23px;">🛑</div>
+          <div style="min-width: 0;">
+            <div style="font-size: 10.5px; font-weight: 700; color: var(--text-main); white-space: nowrap;">P2P 違規攔截盾</div>
+            <div style="font-size: 8px; color: var(--text-muted); margin-top: 1px; white-space: nowrap;" id="p2p-shield-desc">宿網自動攔截</div>
+          </div>
+        </div>
+        <div class="switch-control on" id="p2p-switch-control" style="transform: scale(0.8); transform-origin: right center;">
+          <div class="switch-knob"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Midnight Scheduler -->
+    <div class="card interactive-card" style="padding: 8px 9px; margin-top: 0;" onclick="callNative('toggleMidnightSchedule')">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
+          <div class="icon-bubble" style="font-size: 12px; width: 23px; height: 23px; min-width: 23px;">🌙</div>
+          <div style="min-width: 0;">
+            <div style="font-size: 10.5px; font-weight: 700; color: var(--text-main); white-space: nowrap;">換日大檔排程</div>
+            <div style="font-size: 8px; color: var(--text-muted); margin-top: 1px; white-space: nowrap;" id="midnight-desc">00:05 重置啟動</div>
+          </div>
+        </div>
+        <div class="switch-control" id="midnight-switch-control" style="transform: scale(0.8); transform-origin: right center;">
+          <div class="switch-knob"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Smart Routing & Campus Diagnostics Card -->
+  <div class="card" style="margin-top: 8px; padding: 10px 11px;">
+    <!-- Smart Speed Race & Auto-Switch Row -->
+    <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 7px; border-bottom: 1px solid var(--hist-border); cursor: pointer;" onclick="callNative('toggleSpeedAutoSwitch')">
+      <div style="display: flex; align-items: center; gap: 7px; min-width: 0;">
+        <div class="icon-bubble" style="font-size: 13px; width: 24px; height: 24px; min-width: 24px;">⚡</div>
+        <div style="min-width: 0;">
+          <div style="display: flex; align-items: center; gap: 5px;">
+            <span style="font-size: 11px; font-weight: 700; color: var(--text-main);">慢速自動換快網</span>
+            <span id="speed-race-badge" style="font-size: 8.5px; padding: 1px 5px; border-radius: 4px; background: var(--capsule-safe-badge-bg); color: var(--capsule-safe-badge-text); font-weight: 700;">🔌 4.0ms 勝出</span>
+          </div>
+          <div style="font-size: 8.5px; color: var(--text-muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="speed-race-desc">有線 22.8M (4ms) vs 無線 1.0M (46ms) • 變慢秒切</div>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 5px; flex-shrink: 0;">
+        <button class="btn" id="speed-race-btn" style="padding: 2px 6px; font-size: 9px;" onclick="event.stopPropagation(); callNative('runSpeedRaceNow')">⚡ 競速</button>
+        <div class="switch-control on" id="speed-auto-switch-control" style="transform: scale(0.82); transform-origin: right center;">
+          <div class="switch-knob"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dual Interface Split Routing Row -->
+    <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 7px; padding-bottom: 7px; border-bottom: 1px solid var(--hist-border); cursor: pointer;" onclick="callNative('toggleSplitRouting')">
+      <div style="display: flex; align-items: center; gap: 7px; min-width: 0;">
+        <div class="icon-bubble" style="font-size: 13px; width: 24px; height: 24px; min-width: 24px;">🔀</div>
+        <div style="min-width: 0;">
+          <div style="display: flex; align-items: center; gap: 5px;">
+            <span style="font-size: 11px; font-weight: 700; color: var(--text-main);">雙軌智慧分流</span>
+            <span style="font-size: 8.5px; padding: 1px 4px; border-radius: 4px; background: var(--mode-wifi-bg); color: var(--mode-wifi-text); font-weight: 600;" id="split-mode-tag">Codex專線+影音分流</span>
+          </div>
+          <div style="font-size: 8.5px; color: var(--text-muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="split-routing-status">🟢 Codex 走 4ms 有線 • YouTube/更新分流 Wi-Fi</div>
+        </div>
+      </div>
+      <div class="switch-control on" id="split-switch-control" style="transform: scale(0.82); transform-origin: right center;">
+        <div class="switch-knob"></div>
+      </div>
+    </div>
+
+    <!-- Blacklist Diagnostics Row -->
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 7px;">
+      <div style="display: flex; align-items: center; gap: 7px; min-width: 0;">
+        <div class="icon-bubble" style="font-size: 13px; width: 24px; height: 24px; min-width: 24px;">🔍</div>
+        <div style="min-width: 0;">
+          <div style="display: flex; align-items: center; gap: 5px;">
+            <span style="font-size: 11px; font-weight: 700; color: var(--text-main);">計中黑名單診斷</span>
+            <span id="blacklist-badge" style="font-size: 8.5px; padding: 1px 5px; border-radius: 4px; background: var(--capsule-safe-badge-bg); color: var(--capsule-safe-badge-text); font-weight: 700;">🟢 正常安全</span>
+          </div>
+          <div style="font-size: 8.5px; color: var(--text-muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="blacklist-status-desc">IP 未遭鎖定 • ipblock.nchu.edu.tw</div>
+        </div>
+      </div>
+      <div style="display: flex; gap: 3px; flex-shrink: 0;">
+        <button class="btn" style="padding: 2px 6px; font-size: 9px;" onclick="callNative('checkBlocklistNow')">🔍 診斷</button>
+        <button class="btn" style="padding: 2px 6px; font-size: 9px;" onclick="callNative('openIpBlock')">🌐 計中</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Detailed History & 7-Day Trend Section -->
+  <div class="card" id="history-card" style="margin-top: 8px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+      <div style="display: flex; align-items: center; gap: 5px;">
+        <span style="font-size: 11px; font-weight: 700; color: var(--text-main);">📅 7 日流量趨勢對比</span>
+        <span style="font-size: 9px; padding: 1px 4px; border-radius: 4px; background: var(--capsule-safe-bg); color: var(--capsule-safe-badge-text); font-weight: 600;" id="history-quota-tip">每日結算</span>
+      </div>
+      <button class="btn" style="padding: 2px 7px; font-size: 9px;" id="hist-toggle-btn" onclick="toggleHistoryView()">📋 清單</button>
+    </div>
+
+    <!-- 3 Key Metric Badges (KPI Row) -->
+    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px;">
+      <div class="hist-kpi-badge">
+        <span class="kpi-label">7日日均</span>
+        <span class="kpi-val" id="kpi-avg">--</span>
+      </div>
+      <div class="hist-kpi-badge">
+        <span class="kpi-label">較昨日</span>
+        <span class="kpi-val" id="kpi-diff">--</span>
+      </div>
+      <div class="hist-kpi-badge">
+        <span class="kpi-label">本週單日最高</span>
+        <span class="kpi-val" id="kpi-max">--</span>
+      </div>
+    </div>
+
+    <!-- 7-Day Visual Bar Chart View -->
+    <div id="history-chart-view" class="chart-container-card">
+      <!-- Quota Guideline (100% 配額基準虛線) -->
+      <div class="chart-quota-line" id="chart-quota-line"></div>
+
+      <!-- 7 Columns Container -->
+      <div class="chart-bars-wrap" id="chart-bars-wrap">
+        <!-- Rendered dynamically via JS -->
+      </div>
+
+      <!-- Interactive Detail Bar Info -->
+      <div id="chart-tooltip-panel" class="chart-tooltip-panel">
+        <span id="tooltip-date-title" style="font-weight: 600;">點擊或懸停柱體查看詳情</span>
+        <span id="tooltip-details" style="color: var(--speed-text);">近7天完整統計</span>
+      </div>
+    </div>
+
+    <!-- Collapsible Detailed List View -->
+    <div id="history-list-view" style="display: none; max-height: 120px; overflow-y: auto; padding-right: 2px; margin-top: 6px;">
+      <div id="history-container">
+        <!-- Generated dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Action Bar -->
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--card-border);">
+    <div style="display: flex; gap: 4px; align-items: center;">
+      <button class="btn" onclick="callNative('refresh')">🔄 校準</button>
+      <button class="btn btn-panic" id="panic-btn" onclick="callNative('panicFreeze')">⚡ 省流</button>
+      <button class="btn" id="wifi-toggle-btn" onclick="callNative('switchToWifi')">🔀 換Wi-Fi</button>
+      <button class="btn" onclick="callNative('openTop100')">🌐 查詢</button>
+    </div>
+    <div>
+      <button class="btn" onclick="callNative('showMenu')">⚙️ 選項</button>
+    </div>
+  </div>
+
+  <script>
+    var currentHistMode = 'chart';
+    function toggleHistoryView() {
+      var chartView = document.getElementById('history-chart-view');
+      var listView = document.getElementById('history-list-view');
+      var toggleBtn = document.getElementById('hist-toggle-btn');
+      if (currentHistMode === 'chart') {
+        currentHistMode = 'list';
+        if (chartView) chartView.style.display = 'none';
+        if (listView) listView.style.display = 'block';
+        if (toggleBtn) toggleBtn.innerText = '📊 圖表';
+      } else {
+        currentHistMode = 'chart';
+        if (chartView) chartView.style.display = 'block';
+        if (listView) listView.style.display = 'none';
+        if (toggleBtn) toggleBtn.innerText = '📋 清單';
+      }
+    }
+
+    function showBarDetail(index) {
+      if (!window._cachedChartDays || !window._cachedChartDays[index]) return;
+      var d = window._cachedChartDays[index];
+      var titleEl = document.getElementById('tooltip-date-title');
+      var detEl = document.getElementById('tooltip-details');
+      if (titleEl && detEl) {
+        var statusBadge = d.statusLevel === 'danger' ? '🔴 超標' : (d.statusLevel === 'warning' ? '🟡 警戒' : '🟢 正常');
+        var dateLabel = d.isToday ? '🌟 今日 (' + d.shortDate + ')' : d.shortDate + ' (' + d.dayLabel + ')';
+        titleEl.innerHTML = dateLabel + ' ' + statusBadge;
+        detEl.innerHTML = '<b>' + d.totalStr + '</b> (↓' + d.dlStr + ' • ↑' + d.ulStr + ')';
+      }
+    }
+
+    function callNative(action) {
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.nativeApp) {
+        window.webkit.messageHandlers.nativeApp.postMessage(action);
+      }
+    }
+
+    function updateStats(data) {
+      if (!data) return;
+
+      var isQuotaRestricted = (data.isQuotaRestricted === true || data.isDorm === true || data.isCampusWifi === true);
+      if (isQuotaRestricted) {
+        document.getElementById('dorm-view').style.display = 'block';
+        document.getElementById('ext-view').style.display = 'none';
+        
+        if (data.isCampusWifi) {
+          document.getElementById('header-icon').innerText = '📶';
+          document.getElementById('header-title').innerText = '興大校園 Wi-Fi';
+          document.getElementById('mode-tag').innerText = '校園 Wi-Fi';
+          document.getElementById('mode-tag').className = 'mode-tag wifi';
+        } else {
+          document.getElementById('header-icon').innerText = '🌐';
+          document.getElementById('header-title').innerText = '興大二村 宿網';
+          document.getElementById('mode-tag').innerText = '有線宿網';
+          document.getElementById('mode-tag').className = 'mode-tag';
+        }
+      } else {
+        document.getElementById('dorm-view').style.display = 'none';
+        document.getElementById('ext-view').style.display = 'block';
+        document.getElementById('header-icon').innerText = '⚡';
+        document.getElementById('header-title').innerText = (data.networkTypeName || '外部網路');
+        document.getElementById('mode-tag').innerText = '自由無上限';
+        document.getElementById('mode-tag').className = 'mode-tag ext';
+
+        if (data.extTotalStr) document.getElementById('ext-total').innerText = data.extTotalStr;
+        if (data.extDlStr) document.getElementById('ext-dl').innerText = data.extDlStr;
+        if (data.extUlStr) document.getElementById('ext-ul').innerText = data.extUlStr;
+        if (data.extDlStr && data.extUlStr) {
+          document.getElementById('ext-sub-summary').innerText = '下載: ' + data.extDlStr + '  •  上傳: ' + data.extUlStr;
+        }
+        if (data.speedStr) document.getElementById('ext-speed-indicator').innerText = '⚡ ' + data.speedStr;
+      }
+
+      // Hero Card: Focus on Download Quota (下載額度)
+      var heroTitle = document.getElementById('hero-quota-title');
+      if (heroTitle) heroTitle.innerText = '今日下載額度剩餘';
+      if (data.remDlStr) document.getElementById('rem-total').innerText = data.remDlStr;
+      if (data.quotaDlGB) {
+        var totalLim = document.getElementById('total-quota-limit');
+        if (totalLim) totalLim.innerText = '/ ' + data.quotaDlGB + '.00 GB';
+      }
+      if (data.dlPctStr) {
+        document.getElementById('usage-pct').innerText = '已載 ' + data.dlPctStr;
+        document.getElementById('main-progress').style.width = data.dlPctStr;
+      }
+      if (data.usedDlStr) document.getElementById('used-total-text').innerText = '今日已載: ' + data.usedDlStr;
+      if (data.speedStr) document.getElementById('speed-indicator').innerText = '⚡ ' + data.speedStr;
+
+      // Subcard 1: Total Quota (下 + 上)
+      if (data.quotaTotalGB) {
+        var subTotalLim = document.getElementById('sub-total-quota-limit');
+        if (subTotalLim) subTotalLim.innerText = '限 ' + data.quotaTotalGB + 'G';
+        var qTip = document.getElementById('history-quota-tip');
+        if (qTip) qTip.innerText = '限額 ' + data.quotaTotalGB + ' GB';
+      }
+      if (data.remTotalStr) {
+        var subRemTotal = document.getElementById('sub-rem-total');
+        if (subRemTotal) subRemTotal.innerHTML = data.remTotalStr + ' <span style="font-size: 11px; font-weight: 500; color: var(--text-muted);">GB 剩</span>';
+      }
+      if (data.usagePctStr) {
+        var subTotalProg = document.getElementById('sub-total-progress');
+        if (subTotalProg) subTotalProg.style.width = data.usagePctStr;
+      }
+      if (data.usedTotalStr) {
+        var subUsedText = document.getElementById('sub-used-total-text');
+        if (subUsedText) subUsedText.innerText = '總計已用 ' + data.usedTotalStr;
+      }
+
+      // Subcard 2: Upload Quota
+      if (data.quotaUlGB) {
+        var ulLim = document.getElementById('ul-quota-limit');
+        if (ulLim) ulLim.innerText = '限 ' + data.quotaUlGB + 'G';
+      }
+      if (data.remUlStr) document.getElementById('rem-ul').innerHTML = data.remUlStr + ' <span style="font-size: 11px; font-weight: 500; color: var(--text-muted);">GB 剩</span>';
+      if (data.ulPctStr) document.getElementById('ul-progress').style.width = data.ulPctStr;
+      if (data.usedUlStr) document.getElementById('used-ul-text').innerText = '已傳 ' + data.usedUlStr;
+
+      var netNote = isQuotaRestricted ? (data.isCampusWifi ? '校園Wi-Fi' : '宿網') : '外網';
+      var ipInfo = data.currentIP ? (' • ' + data.currentIP + ' (' + netNote + ')') : '';
+      if (data.date) document.getElementById('date-label').innerText = data.date + ipInfo;
+
+      if (data.latencyStr) document.getElementById('latency-text').innerText = data.latencyStr;
+
+      if (data.runoutText) {
+        var runoutEl = document.getElementById('runout-text');
+        var capsule = document.getElementById('runout-capsule');
+        var riskBadge = document.getElementById('risk-badge');
+        if (runoutEl && capsule && riskBadge) {
+          runoutEl.innerText = data.runoutText;
+          if (data.riskLevel === 'danger') {
+            capsule.className = 'runout-capsule danger';
+            riskBadge.innerText = '🔴 危險';
+          } else if (data.riskLevel === 'warning') {
+            capsule.className = 'runout-capsule warning';
+            riskBadge.innerText = '🟡 警戒';
+          } else {
+            capsule.className = 'runout-capsule safe';
+            riskBadge.innerText = '🟢 安全';
+          }
+        }
+      }
+
+      var panicBtn = document.getElementById('panic-btn');
+      if (panicBtn) {
+        if (data.isPanicActive) {
+          panicBtn.innerText = '▶️ 恢復';
+          panicBtn.classList.add('active');
+        } else {
+          panicBtn.innerText = '⚡ 省流';
+          panicBtn.classList.remove('active');
+        }
+      }
+
+      var failoverBanner = document.getElementById('failover-banner');
+      var wifiToggleBtn = document.getElementById('wifi-toggle-btn');
+      if (data.isWiredTemporarilyDisabled) {
+        if (failoverBanner) failoverBanner.style.display = 'block';
+        if (wifiToggleBtn) {
+          wifiToggleBtn.innerText = '🔌 恢復有線';
+          wifiToggleBtn.onclick = function() { callNative('restoreWired'); };
+        }
+      } else {
+        if (failoverBanner) failoverBanner.style.display = 'none';
+        if (wifiToggleBtn) {
+          if (data.isCampusWifi) {
+            wifiToggleBtn.innerText = '🔌 換回有線';
+            wifiToggleBtn.onclick = function() { callNative('restoreWired'); };
+          } else {
+            wifiToggleBtn.innerText = '🔀 換Wi-Fi';
+            wifiToggleBtn.onclick = function() { callNative('switchToWifi'); };
+          }
+        }
+      }
+
+      if (typeof data.isLidGuardEnabled !== 'undefined') {
+        var switchCtrl = document.getElementById('lid-switch-control');
+        var lidDesc = document.getElementById('lid-guard-desc');
+        if (switchCtrl) {
+          if (data.isLidGuardEnabled) {
+            switchCtrl.classList.add('on');
+            if (lidDesc) lidDesc.innerText = '盒蓋凍結背景';
+          } else {
+            switchCtrl.classList.remove('on');
+            if (lidDesc) lidDesc.innerText = '已關閉';
+          }
+        }
+      }
+
+      if (typeof data.isIdleGuardEnabled !== 'undefined') {
+        var idleCtrl = document.getElementById('idle-switch-control');
+        var idleDesc = document.getElementById('idle-guard-desc');
+        if (idleCtrl) {
+          if (data.isIdleGuardEnabled) {
+            idleCtrl.classList.add('on');
+            if (idleDesc) idleDesc.innerText = data.isUserCurrentlyIdle ? '離座守護中 🌙' : '10分無操作急停';
+          } else {
+            idleCtrl.classList.remove('on');
+            if (idleDesc) idleDesc.innerText = '已關閉';
+          }
+        }
+      }
+
+      // P2P Alert Banner
+      var p2pBanner = document.getElementById('p2p-alert-banner');
+      var p2pAlertText = document.getElementById('p2p-alert-text');
+      if (p2pBanner) {
+        if (data.isP2PDetected) {
+          p2pBanner.style.display = 'block';
+          if (p2pAlertText) p2pAlertText.innerText = '偵測到 ' + (data.p2pAppName || 'P2P 軟體') + ' 正在運行！宿網嚴禁 P2P 下載！';
+        } else {
+          p2pBanner.style.display = 'none';
+        }
+      }
+
+      // P2P Shield Control
+      if (typeof data.isP2PShieldAutoKillEnabled !== 'undefined') {
+        var p2pCtrl = document.getElementById('p2p-switch-control');
+        var p2pDesc = document.getElementById('p2p-shield-desc');
+        if (p2pCtrl) {
+          if (data.isP2PShieldAutoKillEnabled) {
+            p2pCtrl.classList.add('on');
+            if (p2pDesc) p2pDesc.innerText = data.isP2PDetected ? '⚠️ 偵測到違規' : '宿網自動攔截';
+          } else {
+            p2pCtrl.classList.remove('on');
+            if (p2pDesc) p2pDesc.innerText = '僅警告不攔截';
+          }
+        }
+      }
+
+      // Midnight Scheduler Control
+      if (typeof data.isMidnightScheduleEnabled !== 'undefined') {
+        var midCtrl = document.getElementById('midnight-switch-control');
+        var midDesc = document.getElementById('midnight-desc');
+        if (midCtrl) {
+          if (data.isMidnightScheduleEnabled) {
+            midCtrl.classList.add('on');
+            if (midDesc) midDesc.innerText = '00:05 充飽重啟';
+          } else {
+            midCtrl.classList.remove('on');
+            if (midDesc) midDesc.innerText = '已關閉';
+          }
+        }
+      }
+
+      // Smart Speed Race & Auto-Switch Control
+      if (typeof data.isSpeedAutoSwitchEnabled !== 'undefined') {
+        var spdCtrl = document.getElementById('speed-auto-switch-control');
+        var spdBadge = document.getElementById('speed-race-badge');
+        var spdDesc = document.getElementById('speed-race-desc');
+        var spdBtn = document.getElementById('speed-race-btn');
+        if (spdCtrl) {
+          if (data.isSpeedAutoSwitchEnabled) spdCtrl.classList.add('on');
+          else spdCtrl.classList.remove('on');
+        }
+        if (spdBtn) {
+          spdBtn.innerText = data.isRunningSpeedRace ? '⏳ 測速中' : '⚡ 競速';
+        }
+        var wPing = data.wiredReachable ? (data.wiredPingMs + 'ms') : '中斷';
+        var wfPing = data.wifiReachable ? (data.wifiPingMs + 'ms') : '中斷';
+        var wMbps = data.wiredReachable ? (data.wiredSpeedMbps + 'M') : '0M';
+        var wfMbps = data.wifiReachable ? (data.wifiSpeedMbps + 'M') : '0M';
+        if (spdBadge) {
+          if (data.isRunningSpeedRace) {
+            spdBadge.innerText = '⏳ 雙網競速中...';
+          } else if (data.activeInterface === 'en6' && data.wiredReachable) {
+            spdBadge.innerText = '🔌 有線 ' + wPing + ' 勝出';
+            spdBadge.style.background = 'var(--capsule-safe-badge-bg)';
+            spdBadge.style.color = 'var(--capsule-safe-badge-text)';
+          } else {
+            spdBadge.innerText = '🛜 無線 ' + wfPing + ' 接管';
+            spdBadge.style.background = 'var(--mode-wifi-bg)';
+            spdBadge.style.color = 'var(--mode-wifi-text)';
+          }
+        }
+        if (spdDesc) {
+          var statusPrefix = data.isSpeedAutoSwitchEnabled ? '🟢 自動擇優：' : '⚪ 僅監測：';
+          spdDesc.innerText = statusPrefix + '有線 ' + wMbps + ' (' + wPing + ') vs 無線 ' + wfMbps + ' (' + wfPing + ')';
+        }
+      }
+
+      // Dual-Interface Split Routing Control & Status
+      if (typeof data.isSplitRoutingEnabled !== 'undefined') {
+        var splitCtrl = document.getElementById('split-switch-control');
+        var splitDesc = document.getElementById('split-routing-status');
+        var splitTag = document.getElementById('split-mode-tag');
+        if (splitCtrl) {
+          if (data.isSplitRoutingEnabled) {
+            splitCtrl.classList.add('on');
+            if (!data.isWiredTemporarilyDisabled) {
+              if (splitTag) splitTag.innerText = 'Codex專線+影音分流';
+              if (splitDesc) splitDesc.innerText = '🟢 Codex 走 4ms 有線 • YouTube/背景更新分流 Wi-Fi';
+            } else {
+              if (splitTag) splitTag.innerText = '校內千兆免額度';
+              if (splitDesc) splitDesc.innerText = '🟢 校內 140.120.* 走千兆 • 外網走 Wi-Fi';
+            }
+          } else {
+            splitCtrl.classList.remove('on');
+            if (splitDesc) splitDesc.innerText = '⚪ 未開啟：所有流量走同一介面';
+          }
+        }
+      }
+
+      // NCHU Blacklist Diagnostics
+      var blBadge = document.getElementById('blacklist-badge');
+      var blDesc = document.getElementById('blacklist-status-desc');
+      if (blBadge) {
+        if (data.isBlacklisted) {
+          blBadge.innerText = '🔴 遭校方封鎖！';
+          blBadge.style.background = 'var(--capsule-danger-badge-bg)';
+          blBadge.style.color = 'var(--capsule-danger-badge-text)';
+          if (blDesc) blDesc.innerText = '原因: ' + (data.blacklistReason || '違規封鎖') + ' (' + (data.lastBlacklistCheckTime || '') + ')';
+        } else {
+          blBadge.innerText = '🟢 正常安全';
+          blBadge.style.background = 'var(--capsule-safe-badge-bg)';
+          blBadge.style.color = 'var(--capsule-safe-badge-text)';
+          if (blDesc) blDesc.innerText = 'IP 未遭鎖定 • ' + (data.lastBlacklistCheckTime ? data.lastBlacklistCheckTime : 'ipblock.nchu.edu.tw');
+        }
+      }
+
+      if (data.isEmergencyBrakeActive) {
+        var runoutEl = document.getElementById('runout-text');
+        var capsule = document.getElementById('runout-capsule');
+        var riskBadge = document.getElementById('risk-badge');
+        if (runoutEl && capsule && riskBadge) {
+          capsule.className = 'runout-capsule danger';
+          riskBadge.innerText = '🚨 急停';
+          runoutEl.innerText = '已達 90% 下載上限！已急停背景影音與同步';
+        }
+      }
+
+      if (data.topApps && data.topApps.length > 0) {
+        var html = '';
+        data.topApps.forEach(function(item, idx) {
+          html += '<div class="app-row"><span>' + (idx+1) + '. ' + item.name + '</span><span>' + item.bytes + '</span></div>';
+        });
+        document.getElementById('apps-container').innerHTML = html;
+      }
+
+      // 渲染 7 日柱狀圖與 KPI 指標
+      if (data.chartData) {
+        var cd = data.chartData;
+        if (cd.avg7DayStr) document.getElementById('kpi-avg').innerText = cd.avg7DayStr;
+        if (cd.diffVsYesterdayStr) {
+          var diffEl = document.getElementById('kpi-diff');
+          diffEl.innerText = cd.diffVsYesterdayStr + (cd.diffTrend === 'down' ? ' ⬇️' : (cd.diffTrend === 'up' ? ' ⬆️' : ' ➡️'));
+          diffEl.className = 'kpi-val ' + (cd.diffTrend === 'down' ? 'down' : (cd.diffTrend === 'up' ? 'up' : ''));
+        }
+        if (cd.maxWeekStr) document.getElementById('kpi-max').innerText = cd.maxWeekStr;
+
+        if (cd.days && cd.days.length > 0) {
+          window._cachedChartDays = cd.days;
+          var barsHtml = '';
+          cd.days.forEach(function(d, index) {
+            // 計算長條高度：track 總高 50px，38px 代表 100% 配額
+            var pctNum = parseFloat(d.pctOfQuota) || 0;
+            var fillHeightPx = Math.max(3, Math.min(50, Math.round((pctNum / 100.0) * 38)));
+            var todayClass = d.isToday ? ' is-today' : '';
+            var fillClass = d.statusLevel || 'safe';
+            var displayVal = (parseFloat(d.totalGB) > 0.05 ? d.totalGB + 'G' : d.totalStr);
+            
+            barsHtml += '<div class="chart-col' + todayClass + '" onmouseover="showBarDetail(' + index + ')" onclick="showBarDetail(' + index + ')">' +
+              '<span class="col-top-val">' + displayVal + '</span>' +
+              '<div class="col-bar-track">' +
+                '<div class="col-bar-fill ' + fillClass + '" style="height: ' + fillHeightPx + 'px;"></div>' +
+              '</div>' +
+              '<div class="col-bottom-label">' + d.dayLabel + '<span class="col-bottom-date">' + d.shortDate + '</span></div>' +
+            '</div>';
+          });
+          document.getElementById('chart-bars-wrap').innerHTML = barsHtml;
+          showBarDetail(cd.days.length - 1);
+        }
+      }
+
+      if (data.history && data.history.length > 0) {
+        var histHtml = '';
+        data.history.forEach(function(item) {
+          var barColor = '#10b981';
+          var statusDot = '🟢';
+          var pctWidth = item.pct;
+          var pctNum = parseFloat(item.pct) || 0;
+
+          if (item.pct === '自由') {
+            barColor = '#06b6d4';
+            statusDot = '🟢';
+            pctWidth = '100%';
+          } else if (pctNum >= 85) {
+            barColor = '#ef4444';
+            statusDot = '🔴';
+          } else if (pctNum >= 60) {
+            barColor = '#f59e0b';
+            statusDot = '🟡';
+          }
+
+          histHtml += '<div class="hist-item">' +
+            '<div class="hist-header">' +
+              '<span>' + statusDot + ' ' + item.label + ' <span style="font-size:9.5px; font-weight:normal; color:var(--text-muted);">(' + item.date + ')</span></span>' +
+              '<span style="font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, monospace; font-variant-numeric:tabular-nums; color:var(--text-main);">' + item.total + ' <span style="font-size:9.5px; font-weight:normal; color:var(--text-muted);">(' + item.pct + ')</span></span>' +
+            '</div>' +
+            '<div class="progress-track" style="height:4px; margin:4px 0 3px 0;">' +
+              '<div class="progress-bar" style="width:' + pctWidth + '; background:' + barColor + ';"></div>' +
+            '</div>' +
+            '<div class="hist-sub">' +
+              '<span>↓ 下載: ' + item.dl + '</span>' +
+              '<span>↑ 上傳: ' + item.ul + '</span>' +
+            '</div>' +
+          '</div>';
+        });
+        document.getElementById('history-container').innerHTML = histHtml;
+      }
+    }
+  </script>
+</body>
+</html>
