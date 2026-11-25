@@ -4,6 +4,9 @@ import Foundation
 final class ManagementModel: ObservableObject {
     @Published var snapshot: ManagementSnapshot?
     @Published var automation: AutomationSnapshot?
+    @Published var historyEnabled = false
+    @Published var historyStatus = "預設關閉；不儲存程序名稱"
+    @Published var historyDays: [ProcessHistoryDay] = []
 }
 
 struct ManagementView: View {
@@ -12,11 +15,15 @@ struct ManagementView: View {
     let openProvider: () -> Void
     let setAlerts: (Bool) -> Void
     let setFocus: (Bool) -> Void
+    let setHistoryEnabled: (Bool) -> Void
+    let reloadHistory: () -> Void
     @State private var tab = 0
     @State private var selectedInterface: String? = nil
     @State private var processQuery = ""
     @State private var processOrder = 0
     @State private var processMode = 0
+    @State private var historyDayIndex = 0
+    @State private var historyHour = -1
 
     private func visibleProcesses(_ rows: [ProcessSampleRow]) -> [ProcessSampleRow] {
         ProcessSamplePresentation.visible(rows, query: processQuery,
@@ -84,10 +91,11 @@ struct ManagementView: View {
                             Picker("統計類型", selection: $processMode) {
                                 Text("目前快照").tag(0)
                                 Text("本次觀測用量").tag(1)
+                                Text("本機歷史").tag(2)
                             }.pickerStyle(.segmented)
                             if processMode == 0 {
                                 Text(snapshot.processStatus).font(.caption).foregroundStyle(.secondary)
-                            } else {
+                            } else if processMode == 1 {
                                 Text("僅累計面板開啟期間可辨識的程序增量，不是完整今日用量。").font(.caption).foregroundStyle(.secondary)
                             }
                             TextField(processMode == 0 ? "搜尋目前前 20 個程序" : "搜尋已觀測程序", text: $processQuery)
@@ -111,6 +119,8 @@ struct ManagementView: View {
                                     }
                                     Divider()
                                 }
+                            } else if processMode == 2 {
+                                processHistoryPanel
                             } else if let report = snapshot.sessionUsage {
                                 Text("有效配對採樣區間：\(report.measuredIntervals)").font(.caption)
                                 if snapshot.focusEnabled { Text("重要工作模式：累計暫停").font(.caption) }
@@ -160,4 +170,57 @@ struct ManagementView: View {
         .padding(20)
         .frame(minWidth: 460, minHeight: 400)
     }
+
+    private var processHistoryPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle("本次執行允許儲存程序歷史", isOn: Binding(
+                get: { model.historyEnabled }, set: setHistoryEnabled))
+            Text("預設關閉。只儲存程序名稱與雙向觀測增量；不儲存 PID、IP 或目的地。停止後保留舊資料，不包含在一般流量資料庫備份。")
+                .font(.caption).foregroundStyle(.secondary)
+            Text(model.historyStatus).font(.caption)
+            Button("讀取本機歷史", action: reloadHistory)
+            Picker("日期", selection: $historyDayIndex) {
+                Text("今日").tag(0)
+                Text("昨日").tag(1)
+            }.pickerStyle(.segmented)
+            Picker("小時（台北時間）", selection: $historyHour) {
+                Text("全天觀測").tag(-1)
+                ForEach(0..<24, id: \.self) { hour in
+                    Text(String(format: "%02d:00", hour)).tag(hour)
+                }
+            }
+            if model.historyDays.indices.contains(historyDayIndex) {
+                let day = model.historyDays[historyDayIndex]
+                let hour = historyHour < 0 ? nil : historyHour
+                let buckets = day.buckets.filter { hour == nil || $0.hour == hour }
+                Text(day.day + " · 有效配對區間 " + String(buckets.reduce(0) { $0 + $1.intervals }))
+                    .font(.caption)
+                if buckets.contains(where: \.limited) {
+                    Text("部分增量未計入").font(.caption)
+                }
+                if buckets.isEmpty {
+                    Text("無觀測紀錄，不代表零用量").foregroundStyle(.secondary)
+                } else if let rows = try? day.totals(hour: hour) {
+                    let ordered = visibleProcesses(rows.map { ProcessSampleRow(name: $0.name, bytes: $0.total) })
+                    let indexed = Dictionary(uniqueKeysWithValues: rows.map { ($0.name, $0) })
+                    if rows.isEmpty { Text("沒有可歸屬的非零增量").foregroundStyle(.secondary) }
+                    ForEach(ordered) { item in
+                        if let row = indexed[item.name] {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(row.name).lineLimit(2)
+                                Text(String(format: "下載 %.2f · 上傳 %.2f MiB", Double(row.download) / 1_048_576, Double(row.upload) / 1_048_576))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Divider()
+                        }
+                    }
+                } else {
+                    Text("歷史加總無法驗證").foregroundStyle(.secondary)
+                }
+            } else {
+                Text("尚未讀取歷史").foregroundStyle(.secondary)
+            }
+        }
+    }
+
 }
