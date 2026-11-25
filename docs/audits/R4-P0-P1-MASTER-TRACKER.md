@@ -77,3 +77,7 @@ Next: review exact branch CI, audit all trust boundaries, verify recovery journa
 
 ## Closure batch 13 (candidate)
 - Legacy WebView: local-document-only navigation, nonpersistent data store, file-only read access and CSP denying network/frame/form/object sources, pass payload as WebKit arguments rather than generated code, replace dynamic HTML markup sinks with DOM text and bounded numeric style. Keyboard focus on history bars. Static gate added. Native and legacy display suppress invalid local quota estimates after accounting overflow; local binary labels clarified. Daily state/legacy reads bounded and no-follow; overflowing days retained in raw archive rather than finalized as complete SQLite totals. Traffic event writes use cooperating lock. Exact macOS tests and interactive accessibility still required.
+
+## Closure batch 14 (candidate)
+- CLI finalized history uses read-only SQLite v1/v2, bounded rows/time, table/schema and directional validation; legacy fallback only when database absent. Corrupt/unknown active DB does not masquerade as stale legacy history. Fixture regression added.
+- Add opt-in read-only macOS benchmark of explicitly selected existing NCHUTraffic PID: CPU-time delta, sampled peak RSS, hardware/OS metadata, bounded duration, restart/identity rejection and deterministic parser tests. No actual M4 benchmark has been run; this is a measurement tool, not evidence of target attainment.

@@ -83,6 +83,25 @@ class FoundationTests(unittest.TestCase):
             link.symlink_to(path)
             self.assertIsNone(monitor.read_json_object(link))
 
+    def test_cli_reads_finalized_sqlite_not_stale_legacy(self):
+        import sqlite3
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            db = pathlib.Path(root) / "history.sqlite"
+            legacy = pathlib.Path(root) / "legacy.json"
+            legacy.write_text('{"2026-11-24": 999}')
+            with sqlite3.connect(db) as conn:
+                conn.execute("PRAGMA user_version=2")
+                conn.execute("CREATE TABLE history_days(day TEXT, total INTEGER, download INTEGER, upload INTEGER)")
+                conn.execute("INSERT INTO history_days VALUES('2026-11-24',15,10,5)")
+            with patch.object(monitor, "HISTORY_DB", str(db)), patch.object(monitor, "HISTORY_FILE", str(legacy)):
+                self.assertEqual(monitor.load_history(), {"2026-11-24": {"total": 15, "dl": 10, "ul": 5}})
+                with sqlite3.connect(db) as conn:
+                    conn.execute("UPDATE history_days SET total=999")
+                self.assertEqual(monitor.load_history(), {})
+                db.unlink()
+                self.assertEqual(monitor.load_history(), {"2026-11-24": 999})
+
     def test_json_cli(self):
         output = subprocess.check_output([sys.executable, str(ROOT / "scripts/traffic_monitor.py"), "--json"], text=True, timeout=20)
         result = json.loads(output)

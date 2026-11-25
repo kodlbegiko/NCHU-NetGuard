@@ -13,6 +13,8 @@ import re
 import subprocess
 import selectors
 import stat
+import sqlite3
+from pathlib import Path
 import urllib.request
 import ssl
 import json
@@ -25,6 +27,7 @@ import ipaddress
 
 STATE_FILE = os.path.expanduser("~/.nchu_traffic_state.json")
 HISTORY_FILE = os.path.expanduser("~/.nchu_traffic_history.json")
+HISTORY_DB = os.path.expanduser("~/Library/Application Support/NCHU-NetGuard/history.sqlite")
 
 def get_today_string():
     return datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
@@ -49,7 +52,47 @@ def read_json_object(path):
         return None
 
 def load_history():
-    return read_json_object(HISTORY_FILE) or {}
+    """Use finalized SQLite history; never create or alter the active store."""
+    path = Path(HISTORY_DB)
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return read_json_object(HISTORY_FILE) or {}
+    except OSError:
+        return {}
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid() or info.st_size > 64 * 1024 * 1024:
+        return {}
+    connection = None
+    try:
+        connection = sqlite3.connect(path.absolute().as_uri() + "?mode=ro", uri=True, timeout=.25)
+        deadline = time.monotonic() + 1
+        connection.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
+        connection.execute("PRAGMA query_only=ON")
+        connection.execute("PRAGMA trusted_schema=OFF")
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if version not in (1, 2):
+            return {}
+        kind = connection.execute("SELECT type FROM sqlite_master WHERE name='history_days'").fetchone()
+        if kind != ("table",):
+            return {}
+        rows = connection.execute("SELECT day,total,download,upload FROM history_days ORDER BY day DESC LIMIT 366")
+        history = {}
+        for day, total, dl, ul in rows:
+            if not isinstance(day, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+                return {}
+            datetime.strptime(day, "%Y-%m-%d")
+            if day in history or type(total) is not int or total < 0:
+                return {}
+            if (dl is None) != (ul is None) or (dl is not None and
+                    (type(dl) is not int or type(ul) is not int or min(dl, ul) < 0 or dl + ul != total)):
+                return {}
+            history[day] = {"total": total, "dl": dl, "ul": ul}
+        return history
+    except (OSError, ValueError, sqlite3.Error):
+        return {}
+    finally:
+        if connection is not None:
+            connection.close()
 
 def load_state():
     data = read_json_object(STATE_FILE)
