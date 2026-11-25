@@ -27,6 +27,8 @@ struct NetGuardSettingsView: View {
     let clearBudget: () -> Void
     let createBackup: () -> Void
     let inspectBackup: () -> Void
+    let createBundle: () -> Void
+    let inspectBundle: () -> Void
 
     @State private var budgetScope = NetworkScope.external
     @State private var budgetGB = ""
@@ -85,9 +87,13 @@ struct NetGuardSettingsView: View {
                     Button("建立歷史資料備份", action: createBackup)
                     Button("檢查備份檔", action: inspectBackup)
                 }.disabled(model.backupBusy)
+                HStack {
+                    Button("建立完整歷史備份", action: createBundle)
+                    Button("預檢歷史備份目錄", action: inspectBundle)
+                }.disabled(model.backupBusy)
                 if model.backupBusy { ProgressView().controlSize(.small) }
                 Text(model.backupStatus).font(.caption).foregroundStyle(.secondary)
-                Text("備份僅包含歷史 SQLite 資料；不包含今日尚未結算的流量與設定。檢查不會覆寫現有資料庫。")
+                Text("一般備份僅含歷史 SQLite；完整歷史備份另含已保存的程序、連線與事件紀錄，具有 SHA-256 清單。各資料來源非同時點快照；不含今日未結算流量、設定或未保存觀測。預檢不會匯入或覆寫現有資料。")
                     .font(.caption).foregroundStyle(.secondary)
                 Text("校方配額尚待驗證；自動切換、分流、網路設定回滾與程序控制尚未開放。")
                     .font(.caption).foregroundStyle(.secondary)
