@@ -34,16 +34,25 @@ public struct ScopedCounterAccumulator: Sendable {
     public mutating func ingest(_ samples: [ScopedInterfaceSample], day: String,
                                 uptime: TimeInterval, maxGap: TimeInterval = 5)
         -> [String: ScopedTrafficDelta] {
-        if previousDay != day || !uptime.isFinite ||
+        let ids = Set(samples.map { $0.counters.interfaceID })
+        let missing = Set(previous.keys).subtracting(ids)
+        let invalid = ScopedTrafficDelta(scope: .unknown,
+            delta: TrafficDelta(received: 0, sent: 0, quality: .unknown))
+        guard uptime.isFinite, uptime >= 0, maxGap.isFinite, maxGap > 0 else {
+            let affected = ids.union(previous.keys)
+            reset()
+            return Dictionary(uniqueKeysWithValues: affected.map { ($0, invalid) })
+        }
+        if previousDay != day ||
             previousUptime.map({ uptime <= $0 || uptime - $0 > maxGap }) == true {
             reset()
         }
         previousDay = day
-        previousUptime = uptime.isFinite ? uptime : nil
+        previousUptime = uptime
         let counts = Dictionary(grouping: samples, by: { $0.counters.interfaceID })
         let deltas = accumulator.ingest(samples.map(\.counters))
         var next: [String: ScopedInterfaceSample] = [:]
-        var result: [String: ScopedTrafficDelta] = [:]
+        var result = Dictionary(uniqueKeysWithValues: missing.map { ($0, invalid) })
         for (id, group) in counts {
             guard group.count == 1, let sample = group.first, let delta = deltas[id] else {
                 result[id] = ScopedTrafficDelta(scope: .unknown,
@@ -58,5 +67,14 @@ public struct ScopedCounterAccumulator: Sendable {
         }
         previous = next
         return result
+    }
+}
+
+/// Duplicate interface identities are ambiguous, not a reason to trap.
+public enum InterfaceScopeProjection {
+    public static func scopes(_ samples: [ScopedInterfaceSample]) -> [String: NetworkScope] {
+        Dictionary(grouping: samples, by: { $0.counters.interfaceID }).mapValues { group in
+            group.count == 1 ? (group.first?.scope ?? .unknown) : .unknown
+        }
     }
 }
