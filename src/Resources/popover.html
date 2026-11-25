@@ -696,7 +696,7 @@
   </style>
 </head>
 <body>
-  <div style="padding:8px;font-size:11px;border:1px solid #888;border-radius:6px;margin-bottom:8px;">R4.0 安全模式：流量為本機估計；自動切換、分流與進程控制暫停，校方狀態需另行確認。</div>
+  <div style="padding:8px;font-size:11px;border:1px solid #888;border-radius:6px;margin-bottom:8px;">R4.0 安全模式：流量為本機估計；自動切換、分流與進程控制暫停，校方狀態需另行確認。<div id="accounting-status" style="margin-top:4px;">尚未取得介面採樣</div></div>
   <!-- Header -->
   <div class="header">
     <div style="display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1;">
@@ -1348,6 +1348,14 @@
             if (splitDesc) splitDesc.innerText = '⚪ 未開啟：所有流量走同一介面';
           }
         }
+      }
+
+      const accountingStatus = document.getElementById('accounting-status');
+      if (accountingStatus) {
+        accountingStatus.textContent = '介面：' + (data.observedInterfaces || '未知') +
+          '｜未歸屬：' + (data.unattributedTotalStr || '未知') +
+          '｜採樣缺口：' + (data.sampleGapCount ?? '未知') +
+          '；介面統計含區網流量，不等同校方用量。';
       }
 
       // NCHU Blacklist Diagnostics
