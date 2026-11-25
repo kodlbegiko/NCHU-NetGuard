@@ -263,6 +263,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var pathMonitor: NWPathMonitor?
     var routeEventToken = UUID()
     var dualStackEvidence: DualStackEvidence?
+    var connectionSession = ConnectionSessionMeter()
+    var lastConnectionSamples: [ScopedInterfaceSample] = []
     var observedAddressEvidence: [String: InterfaceAddressEvidence] = [:]
     var observedTunnelCandidates: [String] = []
     var observedInterfaceRates: [String: ObservedInterfaceRate] = [:]
@@ -695,6 +697,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         observedInterfaceRates = [:]
         observedTunnelCandidates = []
         observedAddressEvidence = [:]
+        connectionSession.stop()
+        lastConnectionSamples = []
         dualStackEvidence = nil
         networkQuality.reset()
         resetQualityEvidence()
@@ -829,6 +833,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.routeEventToken = UUID()
+                self.connectionSession.stop()
+                self.lastConnectionSamples = []
                 self.dualStackEvidence = nil
                 self.observedAddressEvidence = [:]
                 self.observationSchedule.networkChanged()
@@ -1149,7 +1155,33 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         controller.window?.makeKeyAndOrderFront(nil)
     }
 
+    private func startConnectionSession(label: String, text: String) {
+        guard connectionSession.reading()?.stopped != false else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let fresh = lastSampleUptime.map { now >= $0 && now - $0 <= 5 } ?? false
+        let matches = lastConnectionSamples.filter { $0.counters.interfaceID == activeInterface }
+        guard isConnected, workflowPowerGuard.allowsSampling, fresh, activeSpeedMeasured,
+              matches.count == 1, let sample = matches.first,
+              let gb = UInt64(text.trimmingCharacters(in: .whitespacesAndNewlines)),
+              connectionSession.begin(label: label, gigabytes: gb, sample: sample) else {
+            managementModel.connectionSessionStatus = "請確認目前實體網卡已有連續採樣，並輸入有效名稱及整數 GB"
+            return
+        }
+        managementModel.connectionSessionStatus = "已開始；首個採樣區間不納入用量"
+        syncManagementModel()
+    }
+
+    private func stopConnectionSession() {
+        connectionSession.stop()
+        syncManagementModel()
+    }
+
     func syncManagementModel() {
+        let session = connectionSession.reading()
+        if managementModel.connectionSession != session { managementModel.connectionSession = session }
+        if session?.stopped == true {
+            managementModel.connectionSessionStatus = "本次計量已停止；重新開始將建立新紀錄"
+        }
         let now = ProcessInfo.processInfo.systemUptime
         let connected = isConnected && workflowPowerGuard.allowsSampling
         let scope = sampledScopes[activeInterface] ?? .unknown
@@ -1227,6 +1259,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 setProcessBackground: { [weak self] in self?.setProcessBackgroundEnabled($0) },
                 reloadHistory: { [weak self] in self?.reloadProcessHistory() },
                 testDNS: { [weak self] in self?.testDNS() },
+                startConnectionSession: { [weak self] label, text in self?.startConnectionSession(label: label, text: text) },
+                stopConnectionSession: { [weak self] in self?.stopConnectionSession() },
                 setHistoryRetention: { [weak self] in self?.setProcessHistoryRetention($0) },
                 deleteHistory: { [weak self] in self?.deleteProcessHistory() }
             ))
@@ -1907,6 +1941,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     private func applyDiscoveredNetwork(interface: String, ip: String) {
         if activeInterface != interface || currentIP != ip {
+            connectionSession.stop()
+            lastConnectionSamples = []
             networkQuality.reset()
             resetQualityEvidence()
             throughputWindow.reset()
@@ -2236,6 +2272,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                     }
                 }
             }
+            connectionSession.stop()
+            lastConnectionSamples = []
             currentDateString = todayStr
             dormTodayInBytes = 0.0
             dormTodayOutBytes = 0.0
@@ -2328,6 +2366,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         let uptime = ProcessInfo.processInfo.systemUptime
         let elapsed = lastSampleUptime.map { max(uptime - $0, 0.001) } ?? 1
         let deltas = scopedAccumulator.ingest(samples, day: currentDateString, uptime: uptime)
+        connectionSession.ingest(samples: samples, deltas: deltas, currentInterface: activeInterface, connectionKnown: isConnected)
+        lastConnectionSamples = samples
         lastSampleUptime = uptime
         currentDownSpeed = 0
         currentUpSpeed = 0
