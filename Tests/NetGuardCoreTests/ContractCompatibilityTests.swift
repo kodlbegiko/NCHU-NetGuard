@@ -50,4 +50,22 @@ final class ContractCompatibilityTests: XCTestCase {
     func testEventRecordV1() throws {
         try verify(EventRecord.self, #"{"schemaVersion":1,"eventID":"00000000-0000-4000-8000-000000000001","timestamp":0,"category":"fixture","redactedReason":"fixture","outcome":"observed"}"#)
     }
+
+    func testPublicConstruction() throws {
+        let date = Date(timeIntervalSinceReferenceDate: 0)
+        let id = UUID()
+        try NetworkSnapshot(observedAt: date, interfaces: [
+            .init(serviceID: "fixture", name: "en0", scope: .dorm, quality: .estimated)
+        ]).validate()
+        try PolicyDecision(decisionID: id, kind: .observe, reason: "fixture",
+                           requiresAuthorization: false, expiresAt: date).validate()
+        try NetworkAction(transactionID: id, operation: .changeOwnedRoute, targetServiceID: "fixture",
+                          preconditionDigest: "fixture", timeoutSeconds: 10).validate()
+        try RecoverySnapshot(transactionID: id, observedAt: date, ownedConfiguration: ["fixture":"before"],
+                             integrityDigest: "fixture").validate()
+        try ProtectedWorkflow(workflowID: id, processIdentity: "fixture", optedIn: false, expiresAt: date).validate()
+        try EventRecord(eventID: id, timestamp: date, correlationID: nil, category: "fixture",
+                        redactedReason: "fixture", outcome: "observed", errorCode: nil).validate()
+    }
+
 }
