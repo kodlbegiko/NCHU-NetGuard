@@ -200,3 +200,8 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 
 - Added ConnectionSessionMeter.swift, local manual connection label and decimal GB budget with direction counters, first-interval exclusion, and fail-closed stop on continuity or classification changes. Native network management exposes start/stop and partial usage estimates. Four regression tests and module ownership registration. Session only; no persistent per-network attribution or LAN exclusion. Route events are best-effort, so identical-address network changes may be missed. No new permissions or system mutations.
 - Previous run 45640350189 passed static/Python and Swift tests; application compilation was ongoing at last check. Candidate staged pending full preceding CI and exact candidate verification. No paid dependencies or release.
+
+## Thirty-fifth iteration
+
+- Added independent ConnectionHistoryStore.swift, explicit manual saving of stopped nonempty observations, per-session UUID deduplication and confirmed per-record deletion. Bounded archive, background serialized I/O, validation and four tests. Same-name records remain separate; saved labels are user-provided and not verified network identities. No IP/SSID/hardware IDs stored, no quota integration, no automatic reconnect attribution, no automatic retention or multi-instance locking. Local UI and file behavior require device acceptance.
+- Prior integrated CI 45640350189 completed successfully (static/Python, Swift, app build and bundle). Iterations 34–35 eligible for non-forced fast-forward and fresh exact-HEAD CI. No paid services, host mutation or release.
