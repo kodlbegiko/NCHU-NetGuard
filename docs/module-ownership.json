@@ -17,7 +17,8 @@
     "WorkflowPowerGuard.swift": 6,
     "HistoryStore.swift": 7,
     "ProviderObservation.swift": 7,
-    "UsageMigration.swift": 7
+    "UsageMigration.swift": 7,
+    "QuickPanelState.swift": 0
   },
   "shared_paths": {
     "src/main.swift": 0,
@@ -28,6 +29,7 @@
     "scripts/traffic_monitor.py": 7,
     ".github/workflows/": 8,
     "Tests/": 8,
-    "tests/": 8
+    "tests/": 8,
+    "src/QuickPanel.swift": 4
   }
 }
