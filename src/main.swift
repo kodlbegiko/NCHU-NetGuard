@@ -148,6 +148,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var nativePanelEnabled = false
     let quickPanelModel = QuickPanelModel()
     var historyWindowController: NSWindowController?
+    var settingsWindowController: NSWindowController?
+    let settingsModel = NetGuardSettingsModel()
     var activeSpeedMeasured = false
     
     var secondTimer: Timer?
@@ -799,6 +801,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 toggleFocus: { [weak self] in self?.toggleFocusMode() },
                 toggleAlerts: { [weak self] in self?.handleToggleAlert(); self?.pushDataToWebUI() },
                 openHistory: { [weak self] in self?.openHistoryAnalytics() },
+                openSettings: { [weak self] in self?.openNativeSettings() },
                 openAdvanced: { [weak self] in self?.switchPanel(native: false) }
             ))
             return
@@ -845,13 +848,14 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         if quickPanelModel.state != state { quickPanelModel.state = state }
     }
 
-    func switchPanel(native: Bool) {
+    func switchPanel(native: Bool, show: Bool = true) {
         guard nativePanelEnabled != native else { return }
         popover?.performClose(nil)
         nativePanelEnabled = native
         setupPopoverUI()
         pushDataToWebUI()
-        if let button = statusItem.button {
+        syncSettingsModel()
+        if show, let button = statusItem.button {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
     }
@@ -889,6 +893,62 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
+    }
+
+    func syncSettingsModel() {
+        if settingsModel.alertsEnabled != isAlertEnabled { settingsModel.alertsEnabled = isAlertEnabled }
+        if settingsModel.focusEnabled != workflowPowerGuard.focusEnabled { settingsModel.focusEnabled = workflowPowerGuard.focusEnabled }
+        if settingsModel.nativePreview != nativePanelEnabled { settingsModel.nativePreview = nativePanelEnabled }
+        if settingsModel.displayMode != displayMode { settingsModel.displayMode = displayMode }
+        if settingsModel.persistenceStatus != persistenceStatus { settingsModel.persistenceStatus = persistenceStatus }
+    }
+
+    @objc func openNativeSettings() {
+        popover?.performClose(nil)
+        syncSettingsModel()
+        if let controller = settingsWindowController {
+            NSApp.activate(ignoringOtherApps: true)
+            controller.showWindow(nil)
+            controller.window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        let content = NSHostingController(rootView: NetGuardSettingsView(
+            model: settingsModel,
+            setAlerts: { [weak self] enabled in
+                guard let self, self.isAlertEnabled != enabled else { return }
+                self.handleToggleAlert()
+                self.syncSettingsModel()
+                if self.popover.isShown { self.pushDataToWebUI() }
+            },
+            setFocus: { [weak self] enabled in
+                guard let self, self.workflowPowerGuard.focusEnabled != enabled else { return }
+                self.toggleFocusMode()
+                self.syncSettingsModel()
+            },
+            setNativePreview: { [weak self] enabled in
+                self?.switchPanel(native: enabled, show: false)
+            },
+            setDisplayMode: { [weak self] mode in
+                guard let self, (0...4).contains(mode), self.displayMode != mode else { return }
+                self.displayMode = mode
+                self.savePersistedState()
+                self.updateStatusBar()
+                self.syncSettingsModel()
+            }
+        ))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 460),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered, defer: false)
+        window.title = "NetGuard · 設定"
+        window.contentViewController = content
+        window.minSize = NSSize(width: 460, height: 390)
+        window.isReleasedWhenClosed = false
+        window.center()
+        let controller = NSWindowController(window: window)
+        settingsWindowController = controller
+        NSApp.activate(ignoringOtherApps: true)
+        controller.showWindow(nil)
+        window.makeKeyAndOrderFront(nil)
     }
 
     @objc func toggleNativePanelPreview() {
@@ -1689,6 +1749,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         }
         
         updateStatusBar()
+        if settingsWindowController?.window?.isVisible == true { syncSettingsModel() }
         
         if popover.isShown {
             pushDataToWebUI()
@@ -1994,6 +2055,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         let historyItem = NSMenuItem(title: "歷史流量與 CSV 匯出", action: #selector(openHistoryAnalytics), keyEquivalent: "")
         historyItem.target = self
         menu.addItem(historyItem)
+        let settingsItem = NSMenuItem(title: "原生設定中心", action: #selector(openNativeSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
         menu.addItem(NSMenuItem.separator())
         
         let netModeMenu = NSMenu()
