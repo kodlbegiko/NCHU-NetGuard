@@ -1355,7 +1355,8 @@
         accountingStatus.textContent = '介面：' + (data.observedInterfaces || '未知') +
           '｜未歸屬：' + (data.unattributedTotalStr || '未知') +
           '｜採樣缺口：' + (data.sampleGapCount ?? '未知') +
-          '；介面統計含區網流量，不等同校方用量。';
+          '；介面統計含區網流量，不等同校方用量。' +
+          '｜' + (data.persistenceStatus || '儲存狀態未知');
       }
 
       // NCHU Blacklist Diagnostics
