@@ -62,15 +62,17 @@ class TrafficHistoryManager {
     }
 
     @discardableResult
-    func recordDay(date: String, dl: Double, ul: Double) -> Bool {
+    func recordDay(date: String, dl: Double, ul: Double, preserveExisting: Bool = false) -> Bool {
         initialize()
         guard let store else { healthy = false; return false }
         guard dl.isFinite, ul.isFinite, dl >= 0, ul >= 0,
               dl.rounded(.towardZero) == dl, ul.rounded(.towardZero) == ul,
               dl + ul <= 9_007_199_254_740_991 else { healthy = false; return false }
         do {
-            try store.upsert(HistoryDay(day: date, total: UInt64(dl + ul),
-                                       download: UInt64(dl), upload: UInt64(ul)))
+            let record = try HistoryDay(day: date, total: UInt64(dl + ul),
+                                        download: UInt64(dl), upload: UInt64(ul))
+            if preserveExisting { try store.insertIfAbsent(record) }
+            else { try store.upsert(record) }
             try refreshCache()
             return true
         } catch {
@@ -1434,7 +1436,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 let ul = Double(usage.dormOut) + Double(usage.wifiOut) +
                     Double(usage.externalOut) + Double(usage.unattributedOut)
                 if dl + ul > 0 || usage.measuredSampleCount > 0 {
-                    guard TrafficHistoryManager.shared.recordDay(date: usage.date, dl: dl, ul: ul) else {
+                    guard TrafficHistoryManager.shared.recordDay(date: usage.date, dl: dl, ul: ul, preserveExisting: true) else {
                         throw HistoryStoreError.database("previous day history unavailable")
                     }
                 }
@@ -1702,12 +1704,14 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 if totalDl + totalUl > 0 || measuredSampleCount > 0 {
                     if !TrafficHistoryManager.shared.recordDay(date: currentDateString, dl: totalDl, ul: totalUl) {
                         savePersistedState()
+                        if persistenceStatus != "本機紀錄已儲存" { persistenceBlocked = true }
                         // Preserve the existing daily file when history cannot be saved.
                         let url = URL(fileURLWithPath: stateFilePath)
                         do {
-                            if FileManager.default.fileExists(atPath: url.path) {
-                                try FileManager.default.copyItem(at: url, to: url.deletingLastPathComponent().appendingPathComponent(".nchu_traffic_archive-" + currentDateString + "-" + UUID().uuidString + ".json"))
+                            guard FileManager.default.fileExists(atPath: url.path) else {
+                                throw HistoryStoreError.database("missing daily backup")
                             }
+                            try FileManager.default.copyItem(at: url, to: url.deletingLastPathComponent().appendingPathComponent(".nchu_traffic_archive-" + currentDateString + "-" + UUID().uuidString + ".json"))
                         } catch { persistenceBlocked = true }
                     }
                 }
