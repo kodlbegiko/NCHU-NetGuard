@@ -216,3 +216,8 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 
 - Added TrafficEventDetector.swift with bounded rate baseline, sustained-high/surge/gap heuristics, repeat suppression, continuity invalidation and up to 100 in-memory events; native diagnostic timeline and explicit clear. Four regression tests, ownership and compatibility aliases. No changes to quota ledger, route policy or process control; no malicious-traffic claims, persistent event archive, calibrated thresholds or device validation.
 - Preceding integrated SHA f45326631bab36f0c6741e46b3cd3067b3a28d4c still returned no PR workflow runs at last check. Iterations 36–37 remain staged pending verification. No third-party code, paid services or release.
+
+## Thirty-eighth iteration
+
+- Added TrafficEventRules configuration, validated local preferences, native editor and defaults reset. Rule changes discard baseline but preserve existing in-memory events; no historical rule snapshot or persistent event archive yet. Three regression tests added. No network mutation or additional probe traffic.
+- Prior integrated SHA f45326631bab36f0c6741e46b3cd3067b3a28d4c now has CI run 45641149215. Static/Python and Swift stages passed; full build and bundle conclusion pending at last check. No evidence that the workflow definition was defective; earlier absent PR-run responses did not establish a CI failure. Candidate remains staged until prior verification completes. No paid services or release.
