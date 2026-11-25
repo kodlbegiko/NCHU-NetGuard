@@ -13,6 +13,7 @@ struct ManagementView: View {
     let setAlerts: (Bool) -> Void
     let setFocus: (Bool) -> Void
     @State private var tab = 0
+    @State private var selectedInterface: String? = nil
     @State private var processQuery = ""
     @State private var processOrder = 0
 
@@ -43,14 +44,31 @@ struct ManagementView: View {
                         if tab == 0 {
                             Text(snapshot.connectionStatus).font(.subheadline)
                             Text(snapshot.latencyStatus).font(.caption).foregroundStyle(.secondary)
+                            Text(snapshot.tunnelStatus).font(.caption).foregroundStyle(.secondary)
+                            Picker("查看網卡", selection: $selectedInterface) {
+                                Text("全部實體網卡").tag(nil as String?)
+                                ForEach(snapshot.interfaces) { item in
+                                    Text(item.name).tag(Optional(item.name))
+                                }
+                            }
+                            Text("僅篩選顯示；不變更路由或流量帳本。").font(.caption2).foregroundStyle(.secondary)
                             if snapshot.interfaces.isEmpty {
                                 Text("尚無介面採樣").foregroundStyle(.secondary)
                             }
-                            ForEach(snapshot.interfaces) { item in
+                            if let selectedInterface, !snapshot.interfaces.contains(where: { $0.name == selectedInterface }) {
+                                Text("選取的網卡目前不可用").foregroundStyle(.secondary)
+                            }
+                            ForEach(snapshot.interfaces.filter { selectedInterface == nil || $0.name == selectedInterface }) { item in
                                 HStack {
                                     VStack(alignment: .leading) {
                                         Text(item.name).font(.system(.body, design: .monospaced))
                                         Text(item.scopeLabel).font(.caption).foregroundStyle(.secondary)
+                                        if let rate = item.rate {
+                                            Text(String(format: "↓ %.2f · ↑ %.2f MiB/s", rate.download / 1_048_576, rate.upload / 1_048_576))
+                                                .font(.caption.monospacedDigit())
+                                        } else {
+                                            Text("速率未量測").font(.caption2).foregroundStyle(.secondary)
+                                        }
                                     }
                                     Spacer()
                                     if item.isDefault { Text("預設路由").font(.caption) }
