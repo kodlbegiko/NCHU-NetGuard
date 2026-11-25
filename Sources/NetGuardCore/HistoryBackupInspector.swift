@@ -25,6 +25,8 @@ public enum HistoryBackupInspector {
         }
         defer { sqlite3_close(db) }
         sqlite3_busy_timeout(db, 250)
+        guard sqlite3_exec(db, "PRAGMA query_only=ON; PRAGMA trusted_schema=OFF", nil, nil, nil) == SQLITE_OK
+        else { throw HistoryStoreError.database("backup read-only setup") }
         func query(_ sql: String, _ body: (OpaquePointer) throws -> Void) throws {
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement
@@ -55,7 +57,8 @@ public enum HistoryBackupInspector {
         // Inspect actual tables only, not attacker-defined views.
         let expected = version == 1 ? 1 : 2
         guard try scalar("SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('history_days','history_scopes')") == expected,
-              try scalar("SELECT count(*) FROM sqlite_master WHERE type IN ('view','trigger')") == 0
+              try scalar("SELECT count(*) FROM sqlite_master WHERE type IN ('view','trigger')") == 0,
+              try scalar("SELECT count(*) FROM sqlite_master WHERE type='table'") == expected
         else { throw HistoryStoreError.database("backup unexpected schema") }
         let count = try scalar("SELECT count(*) FROM history_days")
         guard count <= 36_600 else { throw HistoryStoreError.invalidRecord }
