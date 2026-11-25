@@ -10,6 +10,9 @@ import NetGuardData
 
 public typealias NetworkQualityState = NetGuardObservation.NetworkQualityState
 public typealias NetworkQualityWindow = NetGuardObservation.NetworkQualityWindow
+public typealias LatencySummary = NetGuardObservation.LatencySummary
+public typealias ThroughputPoint = NetGuardObservation.ThroughputPoint
+public typealias ThroughputWindow = NetGuardObservation.ThroughputWindow
 public typealias AppTrafficObservation = NetGuardObservation.AppTrafficObservation
 public typealias AppTrafficParser = NetGuardObservation.AppTrafficParser
 public typealias WorkflowPowerGuard = NetGuardWorkflow.WorkflowPowerGuard
