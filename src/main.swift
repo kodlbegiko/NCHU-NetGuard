@@ -231,7 +231,15 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var currentUpSpeed: Double = 0
     
     var topAppConsumers: [(name: String, bytes: Double)] = []
-    var top100Data: [String: Any]?
+    var providerObservation: ProviderObservation?
+    var providerRequestID = UUID()
+    var providerLastAttempt: Date?
+    var providerRequestInFlight = false
+    var providerStatusText: String {
+        guard isDormNetwork, isConnected else { return "校方榜單不適用或網路未確認" }
+        guard let observation = providerObservation else { return "校方資料尚未確認" }
+        return observation.displayStatus(for: getTodayString(), now: Date())
+    }
     var displayMode: Int = 0
     
     // 盒蓋與離座防偷跑流量守護 (Lid & Idle Traffic Guard)
@@ -1168,6 +1176,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             "isCampusWifi": isCampusWifi,
             "isQuotaRestricted": isQuotaRestricted,
             "networkTypeName": networkTypeName,
+            "providerStatus": providerStatusText,
             "observationStatus": !isConnected ? "網路未確認，請檢查連線" : (isQuotaRestricted ? "監控中 · 配額為本機估計" : "監控中 · 網路配額未確認"),
             "currentIP": currentIP,
             "activeInterface": activeInterface,
@@ -1427,6 +1436,12 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
             DispatchQueue.main.async {
                 let ifaceChanged = (self.activeInterface != foundInterface)
+                if ifaceChanged || self.currentIP != ipOut {
+                    self.providerObservation = nil
+                    self.providerRequestID = UUID()
+                    self.providerRequestInFlight = false
+                    self.providerLastAttempt = nil
+                }
                 self.activeInterface = foundInterface
                 if !ipOut.isEmpty {
                     self.currentIP = ipOut
@@ -1640,7 +1655,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             sampleGapCount = 0
             scopedAccumulator.reset()
             lastSampleUptime = nil
-            top100Data = nil
+            providerObservation = nil
             alertTierSent = 0
             if isWiredTemporarilyDisabled {
                 restoreWiredNetwork(reason: "每日 00:00 額度重設")
@@ -1820,16 +1835,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     func getEffectiveUsedBytes() -> (total: Double, dl: Double, ul: Double) {
-        var dl = isCampusWifi ? wifiTodayInBytes : dormTodayInBytes
-        var ul = isCampusWifi ? wifiTodayOutBytes : dormTodayOutBytes
-        if isDormNetwork, let top = top100Data {
-            if let serverIn = top["in_bytes"] as? Double, serverIn > dl {
-                dl = serverIn
-            }
-            if let serverOut = top["out_bytes"] as? Double, serverOut > ul {
-                ul = serverOut
-            }
-        }
+        // Provider ranking has unverified units and measurement time. Never merge
+        // it with interface counters; both sources are presented independently.
+        let dl = isCampusWifi ? wifiTodayInBytes : dormTodayInBytes
+        let ul = isCampusWifi ? wifiTodayOutBytes : dormTodayOutBytes
         return (dl + ul, dl, ul)
     }
 
@@ -1905,20 +1914,38 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     func syncWithTop100Server() {
-        guard isDormNetwork, isConnected else {
-            DispatchQueue.main.async {
-                self.top100Data = nil
-            }
+        guard isDormNetwork, isConnected, !currentIP.isEmpty else {
+            providerObservation = nil
+            providerRequestID = UUID()
+            providerRequestInFlight = false
             return
         }
+        guard !providerRequestInFlight,
+              providerLastAttempt.map({ Date().timeIntervalSince($0) >= 60 }) ?? true else { return }
         let expectedIP = currentIP
-        top100Data = nil
+        let expectedDay = getTodayString()
+        let requestID = UUID()
+        providerRequestID = requestID
+        providerLastAttempt = Date()
+        providerRequestInFlight = true
         DispatchQueue.global(qos: .background).async { [weak self] in
             guard let self = self else { return }
-            guard let scriptPath = Bundle.main.url(forResource: "traffic_monitor", withExtension: "py")?.path else {
-                DispatchQueue.main.async { self.top100Data = nil }
-                return
+            var result: ProviderObservation?
+            defer {
+                let observation = result
+                DispatchQueue.main.async {
+                    guard self.providerRequestID == requestID else { return }
+                    self.providerRequestInFlight = false
+                    guard self.isConnected, self.isDormNetwork,
+                          self.currentIP == expectedIP, self.getTodayString() == expectedDay else {
+                        self.providerObservation = nil
+                        return
+                    }
+                    self.providerObservation = observation
+                    if self.popover != nil && self.popover.isShown { self.pushDataToWebUI() }
+                }
             }
+            guard let scriptPath = Bundle.main.url(forResource: "traffic_monitor", withExtension: "py")?.path else { return }
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
             process.arguments = [scriptPath, "--json"]
@@ -1927,16 +1954,15 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             do { try process.run() } catch { return }
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
-            guard process.terminationStatus == 0,
+            guard process.terminationStatus == 0, data.count <= 1_048_576,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   json["schema_version"] as? Int == 1,
                   json["ip"] as? String == expectedIP,
                   let top = json["top100"] as? [String: Any],
-                  top["status"] as? String == "listed" else { return }
-            DispatchQueue.main.async {
-                guard self.isConnected, self.currentIP == expectedIP, self.isDormNetwork else { return }
-                self.top100Data = top
-            }
+                  let encoded = try? JSONSerialization.data(withJSONObject: top),
+                  let observation = try? JSONDecoder().decode(ProviderObservation.self, from: encoded)
+            else { return }
+            result = observation
         }
     }
 
