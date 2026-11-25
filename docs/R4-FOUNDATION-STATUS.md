@@ -236,3 +236,8 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 
 - Added HistoryBundle.recoverCopy, pinned manifest and payload verification, isolated staging and non-overwriting publication. Native settings expose the isolated recovery workflow. Two tests for source preservation, existing/nested destinations and corrupted input rejection. No live-store replacement, merge, active-store rollback, crash-proof cleanup or signed provenance. No new permissions or network mutation.
 - Repair CI 45643262817 completed successfully, including app build and bundle checks. Iterations 40–41 are eligible for fast-forward integration and new exact-HEAD CI. No paid services or release.
+
+## Forty-second iteration
+
+- Added fixture-only native SmokeTest delegate and script, make smoke, mandatory Foundation CI step and three mocked runner tests. Launches actual built executable with --netguard-smoke, verifies resource presence/status item/four hosted native views, checks basic layout and exits; no production delegate, real history, network probes, user actions or installation. macOS GUI session required. No claim of real-machine network or normal-startup verification; no third-party or paid service.
+- To run on a Mac in a logged-in GUI session: make smoke. To rerun without rebuilding: python3 scripts/smoke_test.py --app build/NCHUTraffic.app. Success requires exit zero and exact NETGUARD_SMOKE_OK marker. Failure, timeout or absent marker blocks verification. No automatic network mutation or release.
