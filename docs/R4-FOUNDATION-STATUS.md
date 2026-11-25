@@ -288,3 +288,7 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 ## Fifty-second iteration
 
 - Added separately opt-in AI workload-label history, fixed allowlist and independent hourly accumulator; observed increments only, separate directory, 30-day retention on successful save, seven-day per-tool comparison, explicit read and confirmed deletion. No PID, paths or endpoint persistence; shares observed process traffic, never add to general process totals. Existing history bundle does NOT yet include AI history. One serial caller; pending write blocks toggles/deletion, no cross-process lock. Two data tests, smoke fixture inert callbacks. No exact candidate CI; no paid services or release.
+
+## Fifty-third iteration
+
+- Added native seven-day AI observed directional bars, explicit missing/observed-zero/partial labels, observed-day count and deterministic tool ranking with checked arithmetic. Includes current partial day; not compute cost or complete usage. One regression test. AI history still separate from v1 bundle; versioned migration not attempted without CI. Commit workflow lookup for 335c5be8 still returns no PR-triggered runs; candidate not yet independently verified. No paid services or release.

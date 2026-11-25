@@ -723,6 +723,51 @@ struct ManagementView: View {
     }
 
 
+    private func agentTrendPanel(_ trend: AgentTrend) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("七日已觀測流量").font(.headline)
+            Text("有觀測的日期 \(trend.observedDays)／\(trend.days.count)；今日尚未結束。").font(.caption)
+            let maxBytes = Double(max(1, trend.days.map(\.total).max() ?? 0))
+            ForEach(trend.days) { day in
+                HStack {
+                    Text(String(day.day.suffix(5))).font(.caption.monospacedDigit()).frame(width: 44)
+                    if !day.hasObservation {
+                        Text("無觀測").font(.caption).foregroundStyle(.secondary)
+                    } else if day.total == 0 {
+                        Text("已觀測；無可歸屬非零增量").font(.caption2)
+                    } else {
+                        GeometryReader { geometry in
+                            HStack(spacing: 0) {
+                                Rectangle().fill(Color.accentColor).frame(width: geometry.size.width * CGFloat(Double(day.download) / maxBytes))
+                                Rectangle().fill(Color.teal).frame(width: geometry.size.width * CGFloat(Double(day.upload) / maxBytes))
+                                Spacer(minLength: 0)
+                            }
+                        }.frame(height: 12).accessibilityHidden(true)
+                        Text(String(format: "%.2f MiB", Double(day.total) / 1_048_576)).font(.caption.monospacedDigit())
+                    }
+                    if day.limited { Text("部分").font(.caption2).foregroundStyle(.secondary) }
+                    Spacer(minLength: 0)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(day.hasObservation ? day.day + "，已觀測下載 \(day.download) bytes，上傳 \(day.upload) bytes" + (day.limited ? "，部分資料未計入" : "") : day.day + "，無觀測")
+            }
+            HStack {
+                Label("下載", systemImage: "square.fill").foregroundStyle(Color.accentColor)
+                Label("上傳", systemImage: "square.fill").foregroundStyle(Color.teal)
+            }.font(.caption2)
+            Text("期間工具排名（觀測值）").font(.subheadline.weight(.medium))
+            if trend.ranking.isEmpty { Text("無可歸屬資料").font(.caption) }
+            ForEach(trend.ranking) { row in
+                HStack {
+                    Text(row.name)
+                    Spacer()
+                    Text(String(format: "%.2f MiB", Double(row.total) / 1_048_576)).monospacedDigit()
+                }.font(.caption)
+            }
+            Text("排名僅依已觀測位元組；不代表完整用量、算力、成本或效能。").font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
     private var agentHistoryPanel: some View {
         DisclosureGroup("AI 工具歷史（最近七日）", isExpanded: $showAgentHistory) {
             VStack(alignment: .leading, spacing: 8) {
@@ -737,6 +782,11 @@ struct ManagementView: View {
                 }.disabled(model.agentHistoryBusy)
                 if model.agentHistoryBusy { ProgressView().controlSize(.small) }
                 Text(model.agentHistoryStatus).font(.caption)
+                if !model.agentHistoryDays.isEmpty {
+                    if let trend = try? AgentHistoryAnalytics.summarize(model.agentHistoryDays) {
+                        agentTrendPanel(trend)
+                    } else { Text("趨勢資料無法驗證").font(.caption) }
+                }
                 ForEach(model.agentHistoryDays, id: \.day) { day in
                     Text(day.day + " · " + String(day.intervals) + " 個配對區間").font(.caption.weight(.medium))
                     if day.buckets.isEmpty {

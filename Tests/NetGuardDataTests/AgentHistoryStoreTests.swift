@@ -36,4 +36,28 @@ final class AgentHistoryStoreTests: XCTestCase {
         try ProcessHistoryStore(directory: root).save(day: key.day, bucket: bucket)
         XCTAssertThrowsError(try AgentHistoryStore(directory: root).readRecent(now: now))
     }
+
+    func testTrendSeparatesMissingZeroAndObservedRanking() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = AgentHistoryStore(directory: root)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let today = ProcessHistoryStore.hour(at: now)
+        let yesterday = ProcessHistoryStore.hour(at: now.addingTimeInterval(-86400))
+        try store.save(day: today.day, bucket: ProcessHistoryBucket(session: UUID(), hour: today.hour, intervals: 1,
+            rows: [ProcessHistoryRow(name: "Codex", download: 20, upload: 5),
+                   ProcessHistoryRow(name: "Ollama", download: 1, upload: 2)], limited: true))
+        try store.save(day: yesterday.day, bucket: ProcessHistoryBucket(session: UUID(), hour: yesterday.hour, intervals: 1, rows: [], limited: false))
+        let trend = try AgentHistoryAnalytics.summarize(store.readRecent(now: now))
+        XCTAssertEqual(trend.observedDays, 2)
+        XCTAssertEqual(trend.days.last?.total, 28)
+        XCTAssertEqual(trend.days.last?.limited, true)
+        XCTAssertEqual(trend.days.dropLast().last?.hasObservation, true)
+        XCTAssertEqual(trend.days.dropLast().last?.total, 0)
+        XCTAssertEqual(trend.days.first?.hasObservation, false)
+        XCTAssertEqual(trend.ranking.map(\.name), ["Codex", "Ollama"])
+        let duplicate = try store.readRecent(now: now)[0]
+        XCTAssertThrowsError(try AgentHistoryAnalytics.summarize([duplicate, duplicate]))
+    }
+
 }
