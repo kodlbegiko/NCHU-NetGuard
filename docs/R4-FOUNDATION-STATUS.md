@@ -170,3 +170,8 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 
 - Process history retention, confirmed scoped deletion, serialized background I/O, busy/error UI and three regression tests added. Retention defaults to 30 days while opt-in recording is active; no pruning when recording disabled. User must confirm deletion. No secure erasure, multi-process coordination or actual-device performance validation.
 - Previous run 45637141431 remained queued at last check. Candidate on feat/r4-process-privacy includes iteration 27; integration depends on preceding CI, and new code is not yet verified. No paid dependencies, release or network mutation.
+
+## Twenty-ninth iteration
+
+- Added validated personal daily category budget, optional local preferences and native settings progress; no changes to campus quota, alert or route semantics. Added explicit rate units for status bar and quick panel text. Three tests added. No individual network/subscription attribution or verified remaining balance; all-zero unverified categories stay unknown. Local preferences and native UI require exact-HEAD CI and device testing.
+- Preceding run 45637141431 completed successfully (Python, Swift, app compile and bundle). Candidate includes iterations 27–29, eligible for non-forced fast-forward integration and fresh exact-HEAD CI. No paid service, release or host mutation.
