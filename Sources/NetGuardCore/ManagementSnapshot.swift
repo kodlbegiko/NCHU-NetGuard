@@ -1,9 +1,19 @@
 import Foundation
 
+public struct ObservedInterfaceRate: Equatable, Sendable {
+    public let download: Double
+    public let upload: Double
+    public init?(download: Double, upload: Double) {
+        guard download.isFinite, upload.isFinite, download >= 0, upload >= 0 else { return nil }
+        self.download = download; self.upload = upload
+    }
+}
+
 public struct ObservedInterfaceRow: Equatable, Sendable, Identifiable {
     public let name: String
     public let scope: NetworkScope
     public let isDefault: Bool
+    public let rate: ObservedInterfaceRate?
     public var id: String { name }
     public var scopeLabel: String {
         switch scope {
@@ -26,6 +36,7 @@ public struct ManagementSnapshot: Equatable, Sendable {
     public let processStatus: String
     public let connectionStatus: String
     public let latencyStatus: String
+    public let tunnelStatus: String
     public let findings: [DiagnosticFinding]
     public let providerStatus: String
     public let focusEnabled: Bool
@@ -33,13 +44,15 @@ public struct ManagementSnapshot: Equatable, Sendable {
     public init(scopes: [String: NetworkScope], defaultInterface: String,
                 connectionKnown: Bool, latencyStatus: String,
                 processRows: [ProcessSampleRow], processAge: TimeInterval?,
-                focusEnabled: Bool, diagnosticInput: DiagnosticInput, providerStatus: String) {
+                focusEnabled: Bool, diagnosticInput: DiagnosticInput, providerStatus: String,
+                rates: [String: ObservedInterfaceRate] = [:], tunnelCandidates: [String] = []) {
         self.interfaces = scopes.keys.sorted().map {
             ObservedInterfaceRow(name: $0, scope: scopes[$0] ?? .unknown,
-                                 isDefault: connectionKnown && $0 == defaultInterface)
+                                 isDefault: connectionKnown && $0 == defaultInterface, rate: rates[$0])
         }
         self.connectionStatus = connectionKnown ? "已辨識預設 IPv4 路由；不代表網際網路可用" : "連線尚未確認"
         self.latencyStatus = latencyStatus
+        self.tunnelStatus = TunnelEvidence.description(defaultInterface: connectionKnown ? defaultInterface : "", candidates: tunnelCandidates)
         self.focusEnabled = focusEnabled
         let fresh = processAge.map { $0.isFinite && $0 >= 0 && $0 <= 30 } ?? false
         if focusEnabled {
