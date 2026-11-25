@@ -55,4 +55,9 @@ public typealias DailyUsageState = NetGuardData.DailyUsageState
 public typealias UsageMigration = NetGuardData.UsageMigration
 public typealias HistoryBackupSummary = NetGuardData.HistoryBackupSummary
 public typealias HistoryBackupInspector = NetGuardData.HistoryBackupInspector
+public typealias ProcessCounter = NetGuardObservation.ProcessCounter
+public typealias ProcessCounterParser = NetGuardObservation.ProcessCounterParser
+public typealias ProcessUsageRow = NetGuardObservation.ProcessUsageRow
+public typealias ProcessUsageReport = NetGuardObservation.ProcessUsageReport
+public typealias ProcessUsageAccumulator = NetGuardObservation.ProcessUsageAccumulator
 #endif
