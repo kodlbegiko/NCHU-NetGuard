@@ -20,10 +20,11 @@ final class NetGuardSmokeDelegate: NSObject, NSApplicationDelegate {
         window.title = title
         window.isReleasedWhenClosed = false
         window.contentViewController = controller
+        // Explicit window and hosting-view geometry before asynchronous layout.
+        // NSHostingController may initially report a zero-sized SwiftUI view.
+        window.setContentSize(NSSize(width: width, height: height))
+        controller.view.frame = NSRect(x: 0, y: 0, width: width, height: height)
         window.orderFront(nil)
-        controller.view.layoutSubtreeIfNeeded()
-        guard window.contentView != nil, controller.view.bounds.width > 0,
-              controller.view.bounds.height > 0 else { fail(title) }
         windows.append(window)
     }
 
@@ -81,10 +82,15 @@ final class NetGuardSmokeDelegate: NSObject, NSApplicationDelegate {
                 exit(1)
             }
             for window in self.windows {
-                guard let view = window.contentView, view.bounds.width > 0, view.bounds.height > 0 else {
-                    self.fail("window layout")
+                guard let view = window.contentView, let controller = window.contentViewController else {
+                    self.fail("missing window content: " + window.title)
                 }
                 view.layoutSubtreeIfNeeded()
+                controller.view.layoutSubtreeIfNeeded()
+                guard view.bounds.width > 0, view.bounds.height > 0,
+                      controller.view.bounds.width > 0, controller.view.bounds.height > 0 else {
+                    self.fail("window layout: " + window.title)
+                }
                 window.orderOut(nil)
             }
             if let item = self.status { NSStatusBar.system.removeStatusItem(item) }
