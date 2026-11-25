@@ -35,4 +35,11 @@ final class UsageMigrationTests: XCTestCase {
         XCTAssertEqual(s.externalIn, 40)
         XCTAssertEqual(s.sampleGapCount, 2)
     }
+
+    func testMeasuredSampleEvidenceIsOptionalForLegacyState() throws {
+        XCTAssertEqual(try decode(#"{"date":"2026-11-25"}"#).measuredSampleCount, 0)
+        XCTAssertEqual(try decode(#"{"schema_version":1,"date":"2026-11-25","measured_sample_count":30}"#).measuredSampleCount, 30)
+        XCTAssertThrowsError(try decode(#"{"date":"2026-11-25","measured_sample_count":true}"#))
+    }
+
 }
