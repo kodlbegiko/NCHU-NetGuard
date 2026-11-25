@@ -285,6 +285,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
     var processObservationToken = UUID()
     var processUsageWasVisible = false
+    var processBackgroundEnabled = false
     var consecutivePingFailures: Int = 0
     
     var lastRawIBytes: UInt64 = 0
@@ -985,10 +986,30 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         popover?.isShown == true || managementWindowController?.window?.isVisible == true
     }
 
+    private var processObservationAllowed: Bool {
+        workflowPowerGuard.allowsOptionalProbes && (processObservationVisible || processBackgroundEnabled)
+    }
+
+    private func setProcessBackgroundEnabled(_ enabled: Bool) {
+        guard enabled != processBackgroundEnabled else { return }
+        breakProcessContinuity()
+        processBackgroundEnabled = enabled
+        syncManagementModel()
+    }
+
+    private var processObservationStatus: String {
+        if workflowPowerGuard.systemSleeping { return "系統休眠：程序觀測暫停" }
+        if workflowPowerGuard.focusEnabled { return "重要工作模式：程序觀測暫停" }
+        if processBackgroundEnabled { return "本次執行允許背景採樣；非完整全天紀錄" }
+        if processObservationVisible { return "面板開啟期間採樣" }
+        return "面板關閉：程序觀測暫停"
+    }
+
     private func scheduleObservations(at uptime: TimeInterval) {
         let visible = processObservationVisible
-        if !visible && processUsageWasVisible { breakProcessContinuity() }
-        processUsageWasVisible = visible
+        let observing = processObservationAllowed
+        if !observing && processUsageWasVisible { breakProcessContinuity() }
+        processUsageWasVisible = observing
         let busy = activeSpeedMeasured && max(currentDownSpeed, currentUpSpeed) >= 128 * 1024
         if !isDetectingNetwork && observationSchedule.takeRoute(now: uptime, visible: visible) {
             detectActiveNetwork()
@@ -999,7 +1020,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             measurePingLatency()
         }
         if !appProbeInFlight &&
-            observationSchedule.takeApps(now: uptime, visible: visible, busy: busy, allowed: allowed) {
+            observationSchedule.takeApps(now: uptime, visible: visible, busy: busy, allowed: allowed, backgroundEnabled: processBackgroundEnabled) {
             inspectTopAppConsumers()
         }
     }
@@ -1155,7 +1176,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             rates: rateFresh && workflowPowerGuard.allowsSampling ? observedInterfaceRates : [:],
             tunnelCandidates: workflowPowerGuard.allowsSampling && rateFresh ? observedTunnelCandidates : [],
             sessionUsage: processUsage.report(), echoStatus: echoStatus, dnsStatus: dnsStatus,
-            agentUsage: agentUsage.report())
+            agentUsage: agentUsage.report(), processBackgroundEnabled: processBackgroundEnabled,
+            processObservationStatus: processObservationStatus)
         if managementModel.snapshot != snapshot { managementModel.snapshot = snapshot }
         let ledgerStatus: String
         if alertLedgerBlockedDay == currentDateString {
@@ -1194,6 +1216,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                     self.syncManagementModel()
                 },
                 setHistoryEnabled: { [weak self] in self?.setProcessHistoryEnabled($0) },
+                setProcessBackground: { [weak self] in self?.setProcessBackgroundEnabled($0) },
                 reloadHistory: { [weak self] in self?.reloadProcessHistory() },
                 testDNS: { [weak self] in self?.testDNS() },
                 setHistoryRetention: { [weak self] in self?.setProcessHistoryRetention($0) },
@@ -2101,7 +2124,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         guard workflowPowerGuard.allowsOptionalProbes, !appProbeInFlight else { return }
         appProbeInFlight = true
         let generation = workflowPowerGuard.generation
-        let collectSession = processObservationVisible
+        let collectSession = processObservationAllowed
         let token = processObservationToken
         DispatchQueue.global(qos: .background).async { [weak self] in
             let before: [Int: ProcessTreeNode]?
@@ -2128,7 +2151,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.appProbeInFlight = false
                 guard self.workflowPowerGuard.generation == generation else { return }
-                if collectSession && self.processObservationVisible && self.processObservationToken == token {
+                if collectSession && self.processObservationAllowed && self.processObservationToken == token {
                     self.processUsage.ingest(counters, uptime: sampledAt)
                     self.agentUsage.ingest(attributed, uptime: sampledAt)
                     self.recordProcessHistory(counters, date: sampledDate, uptime: sampledAt)
