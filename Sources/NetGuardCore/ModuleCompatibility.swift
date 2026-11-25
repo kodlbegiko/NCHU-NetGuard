@@ -64,4 +64,9 @@ public typealias ProcessHistoryRow = NetGuardData.ProcessHistoryRow
 public typealias ProcessHistoryBucket = NetGuardData.ProcessHistoryBucket
 public typealias ProcessHistoryDay = NetGuardData.ProcessHistoryDay
 public typealias ProcessHistoryStore = NetGuardData.ProcessHistoryStore
+public typealias EchoProbeReading = NetGuardObservation.EchoProbeReading
+public typealias EchoProbeParser = NetGuardObservation.EchoProbeParser
+public typealias EchoProbeWindow = NetGuardObservation.EchoProbeWindow
+public typealias DNSProbeReading = NetGuardObservation.DNSProbeReading
+public typealias DNSProbeParser = NetGuardObservation.DNSProbeParser
 #endif
