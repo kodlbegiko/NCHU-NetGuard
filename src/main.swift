@@ -269,6 +269,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var appProbeInFlight = false
     var appProbeTimestamp: TimeInterval?
     var processUsage = ProcessUsageAccumulator()
+    var agentUsage = ProcessUsageAccumulator()
     var processHistoryUsage = ProcessUsageAccumulator()
     var processHistorySession = UUID()
     var processHistoryDay: String?
@@ -843,6 +844,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     private func breakProcessContinuity() {
         processUsage.breakContinuity()
+        agentUsage.breakContinuity()
         processHistoryUsage.breakContinuity()
         processHistoryLastDate = nil
         processHistoryLastUptime = nil
@@ -1152,7 +1154,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             focusEnabled: workflowPowerGuard.focusEnabled, diagnosticInput: input, providerStatus: providerStatusText,
             rates: rateFresh && workflowPowerGuard.allowsSampling ? observedInterfaceRates : [:],
             tunnelCandidates: workflowPowerGuard.allowsSampling && rateFresh ? observedTunnelCandidates : [],
-            sessionUsage: processUsage.report(), echoStatus: echoStatus, dnsStatus: dnsStatus)
+            sessionUsage: processUsage.report(), echoStatus: echoStatus, dnsStatus: dnsStatus,
+            agentUsage: agentUsage.report())
         if managementModel.snapshot != snapshot { managementModel.snapshot = snapshot }
         let ledgerStatus: String
         if alertLedgerBlockedDay == currentDateString {
@@ -2101,18 +2104,22 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         let collectSession = processObservationVisible
         let token = processObservationToken
         DispatchQueue.global(qos: .background).async { [weak self] in
-            let before: [Int: String]?
-            if collectSession, case .success(let raw) = ProbeRunner.run("/bin/ps", ["-ax", "-o", "pid=,lstart="], timeout: 2) {
-                before = ProcessCounterParser.starts(raw)
+            let before: [Int: ProcessTreeNode]?
+            if collectSession, case .success(let raw) = ProbeRunner.run("/bin/ps", ["-ax", "-o", "pid=,ppid=,lstart=,comm="], timeout: 2) {
+                let parsed = AgentAttribution.parseTree(raw)
+                before = parsed.isEmpty ? nil : parsed
             } else { before = nil }
             let outcome = ProbeRunner.run("/usr/bin/nettop", ["-P", "-L", "1", "-J", "bytes_in,bytes_out"], timeout: 5)
             let sampledAt = ProcessInfo.processInfo.systemUptime
             let sampledDate = Date()
             let counters: [ProcessCounter]?
+            let attributed: [ProcessCounter]?
             if let before, case .success(let raw) = outcome,
-               case .success(let after) = ProbeRunner.run("/bin/ps", ["-ax", "-o", "pid=,lstart="], timeout: 2) {
-                counters = ProcessCounterParser.parse(raw, before: before, after: ProcessCounterParser.starts(after))
-            } else { counters = nil }
+               case .success(let afterOutput) = ProbeRunner.run("/bin/ps", ["-ax", "-o", "pid=,ppid=,lstart=,comm="], timeout: 2) {
+                let after = AgentAttribution.parseTree(afterOutput)
+                counters = after.isEmpty ? nil : ProcessCounterParser.parse(raw, before: before.mapValues { $0.start }, after: after.mapValues { $0.start })
+                attributed = AgentAttribution.attributed(counters, before: before, after: after)
+            } else { counters = nil; attributed = nil }
             let observations: [AppTrafficObservation]?
             if case .success(let out) = outcome {
                 observations = AppTrafficParser.parse(out)
@@ -2123,6 +2130,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 guard self.workflowPowerGuard.generation == generation else { return }
                 if collectSession && self.processObservationVisible && self.processObservationToken == token {
                     self.processUsage.ingest(counters, uptime: sampledAt)
+                    self.agentUsage.ingest(attributed, uptime: sampledAt)
                     self.recordProcessHistory(counters, date: sampledDate, uptime: sampledAt)
                 }
                 self.topAppConsumers = (observations ?? []).map { (name: $0.name, bytes: Double($0.bytes)) }
