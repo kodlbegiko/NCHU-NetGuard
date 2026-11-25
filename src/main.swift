@@ -55,14 +55,14 @@ class TrafficHistoryManager {
         return cache
     }
 
-    func analyticsRecords() throws -> [HistoryDay] {
+    func analyticsRecords(scope: NetworkScope? = nil) throws -> [HistoryDay] {
         initialize()
         guard let store else { throw HistoryStoreError.database("unavailable") }
-        return try store.recent(limit: 366)
+        return try store.recent(limit: 366, scope: scope)
     }
 
     @discardableResult
-    func recordDay(date: String, dl: Double, ul: Double, preserveExisting: Bool = false) -> Bool {
+    func recordDay(date: String, dl: Double, ul: Double, preserveExisting: Bool = false, scopes: [NetworkScope: HistoryDay]? = nil) -> Bool {
         initialize()
         guard let store else { healthy = false; return false }
         guard dl.isFinite, ul.isFinite, dl >= 0, ul >= 0,
@@ -71,7 +71,9 @@ class TrafficHistoryManager {
         do {
             let record = try HistoryDay(day: date, total: UInt64(dl + ul),
                                         download: UInt64(dl), upload: UInt64(ul))
-            if preserveExisting { try store.insertIfAbsent(record) }
+            if let scopes {
+                try store.recordScoped(ScopedHistoryDay(aggregate: record, scopes: scopes), preserveExisting: preserveExisting)
+            } else if preserveExisting { try store.insertIfAbsent(record) }
             else { try store.upsert(record) }
             try refreshCache()
             return true
@@ -265,6 +267,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var unattributedOutBytes: Double = 0
     var sampleGapCount: Int = 0
     var measuredSampleCount: UInt64 = 0
+    // Legacy daily files may have different attribution semantics.
+    var scopedHistoryEligible = true
     var workflowPowerGuard = WorkflowPowerGuard()
     var predictionEngine = PredictionEngine()
     var predictionScope: NetworkScope = .unknown
@@ -871,16 +875,23 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         popover?.performClose(nil)
         let manager = TrafficHistoryManager.shared
         let records: [HistoryDay]
+        let scopedRecords: [NetworkScope: [HistoryDay]]
         let healthy: Bool
         do {
-            records = try manager.analyticsRecords()
+            let all = try manager.analyticsRecords()
+            let byScope = try Dictionary(uniqueKeysWithValues: NetworkScope.allCases.map { scope in
+                (scope, try manager.analyticsRecords(scope: scope))
+            })
+            records = all
+            scopedRecords = byScope
             healthy = manager.healthy
         } catch {
             records = []
+            scopedRecords = [:]
             healthy = false
         }
         let content = NSHostingController(rootView: HistoryAnalyticsView(
-            records: records, today: getTodayString(), storageHealthy: healthy))
+            records: records, scopedRecords: scopedRecords, today: getTodayString(), storageHealthy: healthy))
         let controller: NSWindowController
         if let existing = historyWindowController, let window = existing.window {
             controller = existing
@@ -1416,6 +1427,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 unattributedOutBytes = Double(usage.unattributedOut)
                 sampleGapCount = Int(usage.sampleGapCount)
                 measuredSampleCount = usage.measuredSampleCount
+                scopedHistoryEligible = json["scoped_history_eligible"] as? Bool == true
                 if json["alert_ledger_valid"] as? Bool == false {
                     alertLedgerBlockedDay = today
                 } else if let raw = json["alert_ledger"] {
@@ -1445,6 +1457,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         } catch {
             // Keep invalid/future/unsupported data intact for manual recovery.
             persistenceBlocked = true
+            scopedHistoryEligible = false
             persistenceStatus = "舊紀錄無法驗證，已停止寫入以保護原始檔"
         }
     }
@@ -1464,6 +1477,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             "unattributed_out": unattributedOutBytes,
             "sample_gap_count": sampleGapCount,
             "measured_sample_count": NSNumber(value: measuredSampleCount),
+            "scoped_history_eligible": scopedHistoryEligible,
             "today_in": dormTodayInBytes,
             "today_out": dormTodayOutBytes,
             "network_mode_override": networkModeOverride,
@@ -1694,6 +1708,26 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         }
     }
 
+    func scopedHistoryRows() -> [NetworkScope: HistoryDay]? {
+        guard scopedHistoryEligible, !persistenceBlocked else { return nil }
+        let values: [(NetworkScope, Double, Double)] = [
+            (.dorm, dormTodayInBytes, dormTodayOutBytes),
+            (.campusWifi, wifiTodayInBytes, wifiTodayOutBytes),
+            (.external, extTodayInBytes, extTodayOutBytes),
+            (.unknown, unattributedInBytes, unattributedOutBytes)
+        ]
+        var rows: [NetworkScope: HistoryDay] = [:]
+        for (scope, rx, tx) in values {
+            guard let dl = UInt64(exactly: rx), let ul = UInt64(exactly: tx) else { return nil }
+            let (total, overflow) = dl.addingReportingOverflow(ul)
+            guard !overflow else { return nil }
+            if total == 0 { continue }
+            guard let row = try? HistoryDay(day: currentDateString, total: total, download: dl, upload: ul) else { return nil }
+            rows[scope] = row
+        }
+        return rows
+    }
+
     func tickRealtime() {
         guard workflowPowerGuard.allowsSampling else { return }
         let todayStr = getTodayString()
@@ -1702,7 +1736,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 let totalDl = dormTodayInBytes + wifiTodayInBytes + extTodayInBytes + unattributedInBytes
                 let totalUl = dormTodayOutBytes + wifiTodayOutBytes + extTodayOutBytes + unattributedOutBytes
                 if totalDl + totalUl > 0 || measuredSampleCount > 0 {
-                    if !TrafficHistoryManager.shared.recordDay(date: currentDateString, dl: totalDl, ul: totalUl) {
+                    if !TrafficHistoryManager.shared.recordDay(date: currentDateString, dl: totalDl, ul: totalUl, scopes: scopedHistoryRows()) {
                         savePersistedState()
                         if persistenceStatus != "本機紀錄已儲存" { persistenceBlocked = true }
                         // Preserve the existing daily file when history cannot be saved.
@@ -1727,6 +1761,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             unattributedOutBytes = 0
             sampleGapCount = 0
             measuredSampleCount = 0
+            scopedHistoryEligible = !persistenceBlocked
             scopedAccumulator.reset()
             predictionEngine.reset()
             predictionScope = .unknown
