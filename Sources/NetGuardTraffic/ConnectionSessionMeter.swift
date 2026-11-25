@@ -18,6 +18,7 @@ public struct ConnectionSessionMeter: Sendable {
     private var label: String?
     private var interface: String?
     private var identity: String?
+    private var scope: NetworkScope?
     private var limit: UInt64 = 0
     private var received: UInt64 = 0
     private var sent: UInt64 = 0
@@ -34,6 +35,7 @@ public struct ConnectionSessionMeter: Sendable {
         self.label = name
         interface = sample.counters.interfaceID
         identity = sample.identity
+        scope = sample.scope
         limit = gigabytes * 1_000_000_000
         received = 0; sent = 0; intervals = 0; stopped = false
         return true
@@ -46,7 +48,7 @@ public struct ConnectionSessionMeter: Sendable {
         guard !stopped, let interface, let identity else { return }
         let matching = samples.filter { $0.counters.interfaceID == interface }
         guard connectionKnown, currentInterface == interface, matching.count == 1,
-              matching[0].identity == identity,
+              matching[0].identity == identity, matching[0].scope == scope,
               let value = deltas[interface], value.delta.quality == .measured,
               value.scope == matching[0].scope else { stop(); return }
         // The first delta may have started before the user pressed Start.
