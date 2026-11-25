@@ -46,4 +46,37 @@ final class TCPFlowEvidenceTests: XCTestCase {
         XCTAssertNil(accumulator.ingest(nil, uptime: 26))
         XCTAssertNil(accumulator.ingest(parse(header + parent + flow(200, 200, iface: "en1")), uptime: 27))
     }
+
+    func testIPv6CanonicalizationAndAmbiguousEndpoints() throws {
+        let expanded = "tcp6 [2001:0db8:0:0:0:0:0:1]:12345<->[2606:4700:0:0:0:0:0:1111]:443,100,50,en0,Established,\n"
+        let compressed = "tcp6 [2001:db8::1]:12345<->[2606:4700::1111]:443,120,80,en0,Established,\n"
+        let first = try XCTUnwrap(parse(header + parent + expanded))
+        let second = try XCTUnwrap(parse(header + parent + compressed))
+        XCTAssertEqual(first.count, 1)
+        XCTAssertEqual(first.first?.identity, second.first?.identity)
+        var accumulator = TCPFlowAccumulator()
+        XCTAssertNil(accumulator.ingest(first, uptime: 1))
+        XCTAssertEqual(accumulator.ingest(second, uptime: 2)?[.publicCandidate]?.total, 50)
+        XCTAssertEqual(parse(header + parent + expanded.replacingOccurrences(of: "[2001:0db8:0:0:0:0:0:1]", with: "[fe80::1%en0]"))?.count, 0)
+        XCTAssertEqual(parse(header + parent + expanded.replacingOccurrences(of: "[2606:4700:0:0:0:0:0:1111]", with: "[::]"))?.count, 0)
+    }
+
+    func testCoverageDistinguishesNewDisappearedAndResetRows() {
+        var accumulator = TCPFlowAccumulator()
+        let prior = parse(header + parent + flow() + flow(remote: "1.1.1.1:443") + flow(remote: "9.9.9.9:443"))
+        let current = parse(header + parent + flow(120, 60) + flow(1, 1, remote: "1.1.1.1:443") + flow(remote: "10.0.0.1:443"))
+        XCTAssertNil(accumulator.ingest(prior, uptime: 1))
+        XCTAssertNil(accumulator.coverage)
+        XCTAssertEqual(accumulator.ingest(current, uptime: 3)?[.publicCandidate]?.total, 30)
+        XCTAssertEqual(accumulator.coverage?.priorRows, 3)
+        XCTAssertEqual(accumulator.coverage?.currentRows, 3)
+        XCTAssertEqual(accumulator.coverage?.matchedRows, 1)
+        XCTAssertEqual(accumulator.coverage?.newRows, 1)
+        XCTAssertEqual(accumulator.coverage?.disappearedRows, 1)
+        XCTAssertEqual(accumulator.coverage?.resetRows, 1)
+        XCTAssertEqual(accumulator.coverage?.elapsedSeconds, 2)
+        XCTAssertNil(accumulator.ingest(current, uptime: 30))
+        XCTAssertNil(accumulator.coverage)
+    }
+
 }
