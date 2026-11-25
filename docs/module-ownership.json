@@ -26,7 +26,8 @@
     "HistoryBackupInspector.swift": 7,
     "ModuleCompatibility.swift": 0,
     "ObservationSchedule.swift": 2,
-    "ProcessUsage.swift": 2
+    "ProcessUsage.swift": 2,
+    "ProcessHistoryStore.swift": 7
   },
   "shared_paths": {
     "src/main.swift": 0,
@@ -88,6 +89,7 @@
     "HistoryBackupInspector.swift": "NetGuardData",
     "ModuleCompatibility.swift": "NetGuardCore",
     "ObservationSchedule.swift": "NetGuardObservation",
-    "ProcessUsage.swift": "NetGuardObservation"
+    "ProcessUsage.swift": "NetGuardObservation",
+    "ProcessHistoryStore.swift": "NetGuardData"
   }
 }
