@@ -53,3 +53,9 @@ Do not enable process suspension, firewall rules, real network mutation, deep pa
 
 - Added opt-in history retention options (7/30/90 Taipei calendar days, default 30, session-only configuration). Pruning happens after successful writes only; future-dated files, unrelated names, directories and symlinks are excluded. Explicit confirmed deletion stops recording and clears recognized history files, without changing the SQLite traffic ledger. Deletion is not secure physical erasure and may be partial on I/O failure.
 - Moved history read/write/prune/delete operations to one serial utility queue with at most one in-flight operation. Skipped samples break history continuity; UI reports busy/failure states. No cross-instance locking, crash-durability guarantee, or measured performance gains. Added three regression tests.
+
+## Iteration 29 — personal budgets and speed units
+
+- Network Monitor-inspired personal daily total budget for one existing accounting category (dorm, campus Wi-Fi, or aggregate external), 1–10000 decimal GB, optional and persisted locally. Explicitly independent of official policy, automation, alert ledger, routing and historical records. Category totals are partial observations, not subscription balances; no individual hotspot/SSID identity or monthly billing period yet. All-zero categories remain unavailable until category-specific coverage exists.
+- NetBar-inspired selectable binary byte/s or decimal bit/s formatting in the status bar and quick panel speed text; other charts and historical units are unchanged. Three unit tests added. No imported code or paid dependencies.
+- Remaining adoption priorities: source-verified per-network identity and monthly/custom reset budgets, LAN/Internet separation, stable bundle/AI-agent attribution, DNS and loss diagnostics, complete backup restore, and local smoke tests. Do not claim implementation parity before device evidence.
