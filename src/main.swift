@@ -261,6 +261,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var lastPingUptime: TimeInterval?
     var appProbeInFlight = false
     var appProbeTimestamp: TimeInterval?
+    var processUsage = ProcessUsageAccumulator()
+    var processObservationToken = UUID()
+    var processUsageWasVisible = false
     var consecutivePingFailures: Int = 0
     
     var lastRawIBytes: UInt64 = 0
@@ -670,6 +673,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         lastPingUptime = nil
         appProbeTimestamp = nil
         topAppConsumers = []
+        breakProcessContinuity()
         sampleGapCount += 1
         savePersistedState()
         scopedAccumulator.reset()
@@ -692,6 +696,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     @objc func toggleFocusMode() {
         workflowPowerGuard.setFocus(!workflowPowerGuard.focusEnabled)
         if workflowPowerGuard.focusEnabled {
+            breakProcessContinuity()
             appProbeTimestamp = nil
             topAppConsumers = []
         }
@@ -811,8 +816,19 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         monitor.start(queue: DispatchQueue(label: "NetGuard.path-observer"))
     }
 
+    private func breakProcessContinuity() {
+        processUsage.breakContinuity()
+        processObservationToken = UUID()
+    }
+
+    private var processObservationVisible: Bool {
+        popover?.isShown == true || managementWindowController?.window?.isVisible == true
+    }
+
     private func scheduleObservations(at uptime: TimeInterval) {
-        let visible = popover?.isShown == true || managementWindowController?.window?.isVisible == true
+        let visible = processObservationVisible
+        if !visible && processUsageWasVisible { breakProcessContinuity() }
+        processUsageWasVisible = visible
         let busy = activeSpeedMeasured && max(currentDownSpeed, currentUpSpeed) >= 128 * 1024
         if !isDetectingNetwork && observationSchedule.takeRoute(now: uptime, visible: visible) {
             detectActiveNetwork()
@@ -967,7 +983,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             processRows: rows, processAge: appProbeTimestamp.map { now - $0 },
             focusEnabled: workflowPowerGuard.focusEnabled, diagnosticInput: input, providerStatus: providerStatusText,
             rates: rateFresh && workflowPowerGuard.allowsSampling ? observedInterfaceRates : [:],
-            tunnelCandidates: workflowPowerGuard.allowsSampling && rateFresh ? observedTunnelCandidates : [])
+            tunnelCandidates: workflowPowerGuard.allowsSampling && rateFresh ? observedTunnelCandidates : [],
+            sessionUsage: processUsage.report())
         if managementModel.snapshot != snapshot { managementModel.snapshot = snapshot }
         let ledgerStatus: String
         if alertLedgerBlockedDay == currentDateString {
@@ -1798,8 +1815,20 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         guard workflowPowerGuard.allowsOptionalProbes, !appProbeInFlight else { return }
         appProbeInFlight = true
         let generation = workflowPowerGuard.generation
+        let collectSession = processObservationVisible
+        let token = processObservationToken
         DispatchQueue.global(qos: .background).async { [weak self] in
+            let before: [Int: String]?
+            if collectSession, case .success(let raw) = ProbeRunner.run("/bin/ps", ["-ax", "-o", "pid=,lstart="], timeout: 2) {
+                before = ProcessCounterParser.starts(raw)
+            } else { before = nil }
             let outcome = ProbeRunner.run("/usr/bin/nettop", ["-P", "-L", "1", "-J", "bytes_in,bytes_out"], timeout: 5)
+            let sampledAt = ProcessInfo.processInfo.systemUptime
+            let counters: [ProcessCounter]?
+            if let before, case .success(let raw) = outcome,
+               case .success(let after) = ProbeRunner.run("/bin/ps", ["-ax", "-o", "pid=,lstart="], timeout: 2) {
+                counters = ProcessCounterParser.parse(raw, before: before, after: ProcessCounterParser.starts(after))
+            } else { counters = nil }
             let observations: [AppTrafficObservation]?
             if case .success(let out) = outcome {
                 observations = AppTrafficParser.parse(out)
@@ -1808,6 +1837,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.appProbeInFlight = false
                 guard self.workflowPowerGuard.generation == generation else { return }
+                if collectSession && self.processObservationVisible && self.processObservationToken == token {
+                    self.processUsage.ingest(counters, uptime: sampledAt)
+                }
                 self.topAppConsumers = (observations ?? []).map { (name: $0.name, bytes: Double($0.bytes)) }
                 self.appProbeTimestamp = observations == nil ? nil : ProcessInfo.processInfo.systemUptime
                 if self.popover.isShown { self.pushDataToWebUI() }
