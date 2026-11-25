@@ -16,7 +16,10 @@ import ssl
 import json
 import time
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+from html.parser import HTMLParser
+from urllib.parse import urlparse
+import ipaddress
 
 TOTAL_QUOTA_GB = 11.0
 DL_QUOTA_GB = 7.0
@@ -26,7 +29,7 @@ STATE_FILE = os.path.expanduser("~/.nchu_traffic_state.json")
 HISTORY_FILE = os.path.expanduser("~/.nchu_traffic_history.json")
 
 def get_today_string():
-    return datetime.now().strftime("%Y-%m-%d")
+    return datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
 
 def load_history():
     if os.path.exists(HISTORY_FILE):
@@ -56,7 +59,7 @@ def load_state():
 
 def get_top_apps():
     try:
-        out = subprocess.check_output(["nettop", "-P", "-L", "1", "-J", "bytes_in,bytes_out"], text=True)
+        out = subprocess.check_output(["nettop", "-P", "-L", "1", "-J", "bytes_in,bytes_out"], text=True, timeout=5)
         app_map = {}
         for line in out.splitlines():
             parts = line.strip().split(',')
@@ -77,46 +80,84 @@ def get_top_apps():
     except Exception:
         return []
 
+class RankingParser(HTMLParser):
+    """Collect cells within a single row; never match across rows."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.rows = []
+        self.row = None
+        self.cell = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "tr":
+            self.row, self.cell = [], None
+        elif tag in ("td", "th") and self.row is not None:
+            self.cell = []
+
+    def handle_data(self, data):
+        if self.cell is not None:
+            self.cell.append(data)
+
+    def handle_endtag(self, tag):
+        if tag in ("td", "th") and self.row is not None and self.cell is not None:
+            self.row.append("".join(self.cell).strip())
+            self.cell = None
+        elif tag == "tr" and self.row is not None:
+            self.rows.append(self.row)
+            self.row, self.cell = None, None
+
+
+def parse_ranking(html, ip_addr):
+    """Provisional legacy six-column format; no authoritative byte conversion."""
+    try:
+        target = str(ipaddress.ip_address(ip_addr))
+    except ValueError:
+        return {"status": "invalid_identity", "in_top1000": None}
+    parser = RankingParser()
+    parser.feed(html)
+    matches = []
+    for row in parser.rows:
+        if len(row) != 6 or row[2] != target or not re.fullmatch(r"[1-9][0-9]{0,5}", row[0]):
+            continue
+        values = []
+        for field in row[3:]:
+            match = re.fullmatch(r"([0-9]{1,12}(?:\.[0-9]{1,6})?)\s*(B|KB|MB|GB|TB)", field, re.I)
+            if not match:
+                break
+            values.append(field)
+        if len(values) == 3:
+            matches.append({"status": "listed", "in_top1000": True,
+                            "rank": int(row[0]), "download_display": values[0],
+                            "upload_display": values[1], "total_display": values[2],
+                            "units_verified": False})
+    if len(matches) != 1:
+        return {"status": "not_found_or_unrecognized", "in_top1000": None}
+    return matches[0]
+
+
 def get_top100_data(ip_addr):
     today = get_today_string()
     url = f"https://top100.nchu.edu.tw/nchubody2.php?date={today}"
     ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": "NCHU-NetGuard/4.0"})
         with urllib.request.urlopen(req, context=ctx, timeout=3) as response:
-            html = response.read().decode('big5', errors='ignore')
-            
-            if ip_addr in html:
-                pattern = re.compile(
-                    r'<td[^>]*>(\d+)</td>.*?<td[^>]*><nobr>(.*?)</nobr></td>.*?<td[^>]*><nobr>(.*?)</nobr></td>.*?<td[^>]*><nobr>(.*?)</nobr></td>.*?<td[^>]*><nobr>(.*?)</nobr></td>.*?<td[^>]*><nobr>(.*?)</nobr></td>',
-                    re.DOTALL
-                )
-                for match in pattern.finditer(html):
-                    rank, unit, row_ip, dl_str, ul_str, total_str = match.groups()
-                    if ip_addr in row_ip:
-                        def parse_unit(s):
-                            s = re.sub(r'<[^>]+>', '', s).strip()
-                            if 'GB' in s:
-                                return float(s.replace('GB', '').strip()) * 1024 * 1024 * 1024
-                            elif 'MB' in s:
-                                return float(s.replace('MB', '').strip()) * 1024 * 1024
-                            elif 'KB' in s:
-                                return float(s.replace('KB', '').strip()) * 1024
-                            return 0
-                        return {
-                            "rank": int(rank),
-                            "unit": re.sub(r'<[^>]+>', '', unit).strip(),
-                            "in_bytes": parse_unit(dl_str),
-                            "out_bytes": parse_unit(ul_str),
-                            "total_bytes": parse_unit(total_str),
-                            "in_top1000": True
-                        }
+            final = urlparse(response.geturl())
+            if final.scheme != "https" or final.hostname != "top100.nchu.edu.tw" or response.status != 200:
+                return {"in_top1000": None, "status": "unavailable"}
+            raw = response.read(2_000_001)
+            if len(raw) > 2_000_000:
+                return {"in_top1000": None, "status": "unavailable"}
+            try:
+                html = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                html = raw.decode("big5", errors="strict")
+            result = parse_ranking(html, ip_addr)
+            result["requested_date"] = today
+            result["retrieved_at"] = datetime.now(timezone.utc).isoformat()
+            return result
     except Exception:
-        pass
-    return {"in_top1000": False}
+        return {"in_top1000": None, "status": "unavailable"}
 
 def format_bytes(b):
     if b >= 1024 * 1024 * 1024:
@@ -145,21 +186,25 @@ def print_progress_bar(used, total, length=30):
     return f"{c}[{bar}] {pct:5.1f}%{reset}"
 
 def query_traffic():
-    iface = "en6"
-    ip = "140.120.251.121"
+    iface = ""
+    ip = ""
     try:
-        route_out = subprocess.check_output(["route", "get", "default"], text=True)
+        route_out = subprocess.check_output(["route", "get", "default"], text=True, timeout=3)
         for line in route_out.splitlines():
             if "interface:" in line:
                 iface = line.split(":")[1].strip()
                 break
-        ip_out = subprocess.check_output(["ipconfig", "getifaddr", iface], text=True).strip()
+        if not iface:
+            raise ValueError("No default interface")
+        ip_out = subprocess.check_output(["ipconfig", "getifaddr", iface], text=True, timeout=3).strip()
         if ip_out:
             ip = ip_out
     except Exception:
         pass
 
     state = load_state()
+    if not ip:
+        return {"schema_version": 1, "status": "network_unknown", "top100": {"status": "unavailable", "in_top1000": None}}
     is_dorm = ip.startswith("140.120.")
     if is_dorm:
         local_in = state.get("dorm_in", state.get("today_in", 0.0))
@@ -169,11 +214,9 @@ def query_traffic():
         local_out = state.get("ext_out", 0.0)
     local_total = local_in + local_out
     
-    top100 = get_top100_data(ip) if is_dorm else {"in_top1000": False}
+    top100 = get_top100_data(ip) if is_dorm else {"in_top1000": None, "status": "not_applicable"}
     
-    in_bytes = max(local_in, top100.get("in_bytes", 0))
-    out_bytes = max(local_out, top100.get("out_bytes", 0))
-    total_bytes = max(local_total, top100.get("total_bytes", 0))
+    in_bytes, out_bytes, total_bytes = local_in, local_out, local_total
     
     total_quota_bytes = TOTAL_QUOTA_GB * (1024**3)
     dl_quota_bytes = DL_QUOTA_GB * (1024**3)
@@ -184,6 +227,8 @@ def query_traffic():
     rem_ul_bytes = max(0, ul_quota_bytes - out_bytes)
     
     return {
+        "schema_version": 1,
+        "status": "local_estimate",
         "date": get_today_string(),
         "iface": iface,
         "ip": ip,
@@ -203,6 +248,9 @@ def query_traffic():
 
 def display_report():
     data = query_traffic()
+    if data.get("status") == "network_unknown":
+        print("網路狀態未知；無法可靠估計配額。")
+        return
     top_apps = get_top_apps()
     history = load_history()
     
@@ -235,12 +283,12 @@ def display_report():
         print(f"    今日已上傳: {format_bytes(data['used_ul'])}")
         print(f"    {print_progress_bar(data['used_ul'], data['ul_quota'], 32)}")
     else:
-        print(f" 📶 網路環境模式: \033[1;32m非宿舍網路 (自由暢連，不受 11GB 配額限制)\033[0m")
+        print(f" 📶 網路環境模式: \033[1;32m非宿舍或未確認網路（配額未確認）\033[0m")
         print("\033[1;36m------------------------------------------------------------\033[0m")
-        print(f" 📊 \033[1m今日非宿網傳輸總量: \033[1;36m{format_bytes(data['used_total'])}\033[0m (\033[1;32m🟢 暢連無上限\033[0m)")
+        print(f" 📊 \033[1m今日非宿網傳輸總量: \033[1;36m{format_bytes(data['used_total'])}\033[0m (\033[1;32m配額未確認\033[0m)")
         print(f"    📥 今日下載: {format_bytes(data['used_dl'])}")
         print(f"    📤 今日上傳: {format_bytes(data['used_ul'])}")
-        print(f" 💡 說明: 本日流量不計入興大宿網 11GB 配額，亦不會觸發校內限速懲罰。")
+        print(f" 💡 說明: 本機統計不等同網路提供者的計費或管制紀錄。")
     print("\033[1;36m------------------------------------------------------------\033[0m")
     
     # Top Apps
@@ -260,16 +308,16 @@ def display_report():
         print("\033[1;36m------------------------------------------------------------\033[0m")
         
     if not data['ip'].startswith("140.120."):
-        print(" 💡 \033[1;32m目前網路環境為【外部網路 / 個人熱點】，不受興大宿舍 11GB 配額與限速限制，可自由使用！\033[0m")
+        print(" 💡 \033[1;32m目前網路歸屬及實際配額請向服務提供者確認。\033[0m")
     elif data['top100'].get("in_top1000"):
         rank = data['top100'].get("rank")
         print(f" ⚠️  \033[1;33m校內 Top 1000 狀態: 已列入榜單第 {rank} 名\033[0m")
     else:
-        print(" ✅ \033[1;32m校內 Top 1000 狀態: 安全 (未進入前 1000 名高用量榜單，綠燈)\033[0m")
+        print(" ✅ \033[1;32m校內榜單：未取得可驗證的匹配資料，狀態未知\033[0m")
         
     usage_pct = (data['used_total'] / data['total_quota']) * 100
     if usage_pct < 60:
-        print(" 💡 \033[32m今日流量充裕，可正常瀏覽網頁、觀看 1080p 串流與學習。\033[0m")
+        print(" 💡 \033[32m本機估計用量較低；實際校方配額仍需確認。\033[0m")
     elif usage_pct < 85:
         print(" 💡 \033[33m今日流量已過半，請注意避免進行大型遊戲/大型檔案下載。\033[0m")
     else:
@@ -278,7 +326,13 @@ def display_report():
     print("\033[1;36m============================================================\033[0m")
 
 def main():
-    display_report()
+    parser = argparse.ArgumentParser(description="NetGuard local traffic estimates")
+    parser.add_argument("--json", action="store_true", help="Emit versioned JSON without ANSI escapes")
+    args = parser.parse_args()
+    if args.json:
+        print(json.dumps(query_traffic(), ensure_ascii=False, allow_nan=False))
+    else:
+        display_report()
 
 if __name__ == "__main__":
     main()

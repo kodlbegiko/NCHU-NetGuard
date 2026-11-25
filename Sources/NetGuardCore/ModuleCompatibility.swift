@@ -1,0 +1,104 @@
+// The transitional flattened app build compiles the actual definitions directly.
+// SwiftPM consumers retain the existing NetGuardCore spelling.
+#if SWIFT_PACKAGE
+import NetGuardObservation
+import NetGuardWorkflow
+import NetGuardRecovery
+import NetGuardProvider
+import NetGuardTraffic
+import NetGuardData
+
+public typealias NetworkQualityState = NetGuardObservation.NetworkQualityState
+public typealias NetworkQualityWindow = NetGuardObservation.NetworkQualityWindow
+public typealias ObservationSchedule = NetGuardObservation.ObservationSchedule
+public typealias TunnelEvidence = NetGuardObservation.TunnelEvidence
+public typealias LatencySummary = NetGuardObservation.LatencySummary
+public typealias ThroughputPoint = NetGuardObservation.ThroughputPoint
+public typealias ThroughputWindow = NetGuardObservation.ThroughputWindow
+public typealias AppTrafficObservation = NetGuardObservation.AppTrafficObservation
+public typealias AppTrafficParser = NetGuardObservation.AppTrafficParser
+public typealias WorkflowPowerGuard = NetGuardWorkflow.WorkflowPowerGuard
+public typealias OwnedNetworkConfiguration = NetGuardRecovery.OwnedNetworkConfiguration
+public typealias RecoveryPlan = NetGuardRecovery.RecoveryPlan
+public typealias RecoveryPhase = NetGuardRecovery.RecoveryPhase
+public typealias RecoveryJournalEntry = NetGuardRecovery.RecoveryJournalEntry
+public typealias RecoveryOutcome = NetGuardRecovery.RecoveryOutcome
+public typealias RecoveryEffect = NetGuardRecovery.RecoveryEffect
+public typealias RecoveryTransaction = NetGuardRecovery.RecoveryTransaction
+public typealias JournalValidationError = NetGuardRecovery.JournalValidationError
+public typealias RecoveryJournalStore = NetGuardRecovery.RecoveryJournalStore
+public typealias SimulatedNetworkAdapter = NetGuardRecovery.SimulatedNetworkAdapter
+public typealias ProviderStatus = NetGuardProvider.ProviderStatus
+public typealias ProviderObservation = NetGuardProvider.ProviderObservation
+public typealias SampleQuality = NetGuardTraffic.SampleQuality
+public typealias InterfaceCounters = NetGuardTraffic.InterfaceCounters
+public typealias TrafficDelta = NetGuardTraffic.TrafficDelta
+public typealias TrafficSnapshot = NetGuardTraffic.TrafficSnapshot
+public typealias CounterAccumulator = NetGuardTraffic.CounterAccumulator
+public typealias NetworkScope = NetGuardTraffic.NetworkScope
+public typealias ScopedInterfaceSample = NetGuardTraffic.ScopedInterfaceSample
+public typealias ScopedTrafficDelta = NetGuardTraffic.ScopedTrafficDelta
+public typealias ScopedCounterAccumulator = NetGuardTraffic.ScopedCounterAccumulator
+public typealias InterfaceScopeProjection = NetGuardTraffic.InterfaceScopeProjection
+public typealias HistoryStoreError = NetGuardData.HistoryStoreError
+public typealias HistoryDay = NetGuardData.HistoryDay
+public typealias LegacyHistoryMigration = NetGuardData.LegacyHistoryMigration
+public typealias ScopedHistoryDay = NetGuardData.ScopedHistoryDay
+public typealias HistoryStore = NetGuardData.HistoryStore
+public typealias HistoryPeriodDay = NetGuardData.HistoryPeriodDay
+public typealias HistoryPeriod = NetGuardData.HistoryPeriod
+public typealias HistoryAnalytics = NetGuardData.HistoryAnalytics
+public typealias HistoryChartKind = NetGuardData.HistoryChartKind
+public typealias HistoryChartPoint = NetGuardData.HistoryChartPoint
+public typealias UsageMigrationError = NetGuardData.UsageMigrationError
+public typealias DailyUsageState = NetGuardData.DailyUsageState
+public typealias UsageMigration = NetGuardData.UsageMigration
+public typealias HistoryBackupSummary = NetGuardData.HistoryBackupSummary
+public typealias HistoryBackupInspector = NetGuardData.HistoryBackupInspector
+public typealias ProcessCounter = NetGuardObservation.ProcessCounter
+public typealias ProcessCounterParser = NetGuardObservation.ProcessCounterParser
+public typealias ProcessUsageRow = NetGuardObservation.ProcessUsageRow
+public typealias ProcessUsageReport = NetGuardObservation.ProcessUsageReport
+public typealias ProcessUsageAccumulator = NetGuardObservation.ProcessUsageAccumulator
+public typealias ProcessHistoryRow = NetGuardData.ProcessHistoryRow
+public typealias ProcessHistoryBucket = NetGuardData.ProcessHistoryBucket
+public typealias ProcessHistoryDay = NetGuardData.ProcessHistoryDay
+public typealias ProcessHistoryStore = NetGuardData.ProcessHistoryStore
+public typealias EchoProbeReading = NetGuardObservation.EchoProbeReading
+public typealias EchoProbeParser = NetGuardObservation.EchoProbeParser
+public typealias EchoProbeWindow = NetGuardObservation.EchoProbeWindow
+public typealias DNSProbeReading = NetGuardObservation.DNSProbeReading
+public typealias DNSProbeParser = NetGuardObservation.DNSProbeParser
+public typealias ProcessTreeNode = NetGuardObservation.ProcessTreeNode
+public typealias AgentAttribution = NetGuardObservation.AgentAttribution
+public typealias DefaultRouteParser = NetGuardObservation.DefaultRouteParser
+public typealias DualStackEvidence = NetGuardObservation.DualStackEvidence
+public typealias InterfaceAddressEvidence = NetGuardObservation.InterfaceAddressEvidence
+public typealias ConnectionSessionMeter = NetGuardTraffic.ConnectionSessionMeter
+public typealias ConnectionSessionReading = NetGuardTraffic.ConnectionSessionReading
+public typealias SavedConnectionSession = NetGuardData.SavedConnectionSession
+public typealias ConnectionHistoryStore = NetGuardData.ConnectionHistoryStore
+public typealias ConnectionBudgetPeriod = NetGuardData.ConnectionBudgetPeriod
+public typealias ConnectionCycleReading = NetGuardData.ConnectionCycleReading
+public typealias TrafficEventKind = NetGuardObservation.TrafficEventKind
+public typealias TrafficObservationEvent = NetGuardObservation.TrafficObservationEvent
+public typealias TrafficEventDetector = NetGuardObservation.TrafficEventDetector
+public typealias TrafficEventRules = NetGuardObservation.TrafficEventRules
+public typealias DestinationAddressKind = NetGuardTraffic.DestinationAddressKind
+public typealias DestinationFlowDelta = NetGuardTraffic.DestinationFlowDelta
+public typealias DestinationByteTotals = NetGuardTraffic.DestinationByteTotals
+public typealias DestinationFlowProjection = NetGuardTraffic.DestinationFlowProjection
+public typealias TCPFlowCounter = NetGuardTraffic.TCPFlowCounter
+public typealias TCPFlowParser = NetGuardTraffic.TCPFlowParser
+public typealias TCPFlowAccumulator = NetGuardTraffic.TCPFlowAccumulator
+public typealias TCPFlowCoverage = NetGuardTraffic.TCPFlowCoverage
+public typealias FlowTransport = NetGuardTraffic.FlowTransport
+public typealias DefaultRouteParseStatus = NetGuardObservation.DefaultRouteParseStatus
+public typealias DefaultRouteParseResult = NetGuardObservation.DefaultRouteParseResult
+public typealias FlowParseDiagnostics = NetGuardTraffic.FlowParseDiagnostics
+public typealias TrafficEventNotificationGate = NetGuardObservation.TrafficEventNotificationGate
+public typealias AgentHistoryStore = NetGuardData.AgentHistoryStore
+public typealias AgentHistoryAnalytics = NetGuardData.AgentHistoryAnalytics
+public typealias AgentTrend = NetGuardData.AgentTrend
+public typealias AgentTrendDay = NetGuardData.AgentTrendDay
+#endif

@@ -693,38 +693,44 @@
       background: var(--capsule-danger-badge-bg);
       color: var(--capsule-danger-badge-text);
     }
+    summary:focus-visible, button:focus-visible { outline: 2px solid #408cff; outline-offset: 2px; }
+    [hidden] { display: none !important; }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
   </style>
 </head>
 <body>
+  <div style="padding:8px;font-size:11px;border:1px solid #888;border-radius:6px;margin-bottom:8px;">R4.0 安全模式：流量為本機估計；自動切換、分流與進程控制暫停，校方狀態需另行確認。<div id="accounting-status" style="margin-top:4px;">尚未取得介面採樣</div><div id="provider-status" style="margin-top:4px;">校方資料尚未確認</div></div>
   <!-- Header -->
   <div class="header">
     <div style="display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1;">
       <div class="icon-bubble" id="header-icon">🌐</div>
       <div style="min-width: 0; flex: 1;">
         <div style="display: flex; align-items: center; gap: 6px;">
-          <h2 class="header-title" id="header-title">興大二村 宿網</h2>
-          <span class="mode-tag" id="mode-tag">有線宿網</span>
+          <h2 class="header-title" id="header-title">NetGuard</h2>
+          <span class="mode-tag" id="mode-tag">辨識中</span>
         </div>
-        <p style="font-size: 10px; color: var(--text-muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="date-label">今日日期: 2026-09-23</p>
+        <p style="font-size: 10px; color: var(--text-muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="date-label">等待資料</p>
       </div>
     </div>
     <div class="badge" id="latency-badge" style="flex-shrink: 0; margin-left: 6px;">
       <span class="pulse-dot"></span>
-      <span id="latency-text">2.1 ms</span>
+      <span id="latency-text">未量測</span>
     </div>
   </div>
 
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;"><span id="workflow-status" style="font-size:11px;color:var(--text-sub);">一般監控模式</span><button id="focus-mode-button" class="btn" aria-pressed="false" onclick="callNative('toggleFocusMode')">重要工作模式</button></div>
+  <div id="overview-state" role="status" style="font-size:12px;margin:0 0 10px;color:var(--text-sub);">正在辨識網路，尚無可靠資料。</div>
   <!-- High-Priority P2P Hazard Alert Banner -->
   <div id="p2p-alert-banner" style="display: none; margin-bottom: 8px; padding: 7px 11px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 10px; animation: pulseGlow 2s infinite;">
     <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
       <div style="display: flex; align-items: center; gap: 7px; min-width: 0;">
         <span style="font-size: 15px; flex-shrink: 0;">🚨</span>
         <div style="min-width: 0;">
-          <div style="font-size: 11px; font-weight: 700; color: #f87171; white-space: nowrap;">宿網 P2P 違規高危警告！</div>
-          <div style="font-size: 9.5px; color: var(--text-sub); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="p2p-alert-text">偵測到 P2P 運行中，計中鎖孔風險極高！</div>
+          <div style="font-size: 11px; font-weight: 700; color: #f87171; white-space: nowrap;">可能的 P2P 使用風險</div>
+          <div style="font-size: 9.5px; color: var(--text-sub); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="p2p-alert-text">偵測到可能具 P2P 功能的程式，請自行確認。</div>
         </div>
       </div>
-      <button class="btn btn-panic" style="padding: 3px 8px; font-size: 9.5px; white-space: nowrap; flex-shrink: 0;" onclick="callNative('killP2PApp')">🛑 強制終止</button>
+      <button class="btn btn-panic" style="padding: 3px 8px; font-size: 9.5px; white-space: nowrap; flex-shrink: 0;" onclick="callNative('killP2PApp')">查看提醒</button>
     </div>
   </div>
 
@@ -743,13 +749,13 @@
   </div>
 
   <!-- Mode 1: 宿網/校園網配額視圖 (Quota View) -->
-  <div id="dorm-view">
+  <div id="dorm-view" style="display:none;">
     <!-- Main Quota Gauge: Primary Download Quota -->
     <div class="card" style="margin-bottom: 8px; position: relative; overflow: hidden;">
       <div style="position: absolute; right: -25px; top: -25px; width: 110px; height: 110px; background: radial-gradient(circle, rgba(16, 185, 129, 0.12) 0%, transparent 70%); pointer-events: none;"></div>
 
       <div style="display: flex; justify-content: space-between; align-items: baseline;">
-        <span style="font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-sub); font-weight: 600;" id="hero-quota-title">今日下載額度剩餘</span>
+        <span style="font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-sub); font-weight: 600;" id="hero-quota-title">今日下載剩餘（估計）</span>
         <span style="font-size: 12px; font-weight: 700; color: var(--capsule-safe-badge-text); font-variant-numeric: tabular-nums;" id="usage-pct">已載 0.0%</span>
       </div>
 
@@ -768,10 +774,10 @@
       </div>
 
       <!-- 智能耗盡預估與安全等級膠囊 -->
-      <div id="runout-capsule" class="runout-capsule safe">
+      <div id="runout-capsule" class="runout-capsule" hidden>
         <div class="runout-left">
           <span style="font-size: 12px; flex-shrink: 0;">⏱️</span>
-          <span id="runout-text" class="runout-text">網速平穩，流量充足安全</span>
+          <span id="runout-text" class="runout-text">等待足夠的連續採樣</span>
         </div>
         <span id="risk-badge" class="risk-badge">🟢 安全</span>
       </div>
@@ -815,13 +821,13 @@
     <div class="card" style="margin-bottom: 8px;">
       <div style="display: flex; justify-content: space-between; align-items: baseline;">
         <span style="font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-sub); font-weight: 600;">今日外部網路傳輸總量</span>
-        <span style="font-size: 10.5px; font-weight: 600; color: var(--capsule-safe-badge-text); background: var(--capsule-safe-bg); padding: 2px 6px; border-radius: 6px;">🟢 暢連無上限</span>
+        <span style="font-size: 10.5px; font-weight: 600; color: var(--capsule-safe-badge-text); background: var(--capsule-safe-bg); padding: 2px 6px; border-radius: 6px;">配額未確認</span>
       </div>
       <div style="display: flex; align-items: baseline; gap: 6px; margin: 4px 0 6px 0;">
         <span style="font-size: 34px; font-weight: 800; letter-spacing: -0.8px; color: var(--speed-text); font-variant-numeric: tabular-nums;" id="ext-total">0 B</span>
       </div>
       <div style="font-size: 10px; color: var(--text-muted); background: var(--bubble-bg); padding: 5px 8px; border-radius: 6px; margin: 6px 0 8px 0; border: 1px solid var(--bubble-border);">
-        💡 目前處於外部網路/熱點，不受 11GB 配額限制，放心暢遊！
+        外部或未確認網路：實際配額依網路服務提供者規範，以下為本機估計。
       </div>
       <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-sub);">
         <span id="ext-sub-summary" style="font-variant-numeric: tabular-nums;">下載: 0 B  •  上傳: 0 B</span>
@@ -845,15 +851,16 @@
     </div>
   </div>
 
+  <details id="details-panel" style="margin-top:10px;">
+    <summary style="cursor:pointer;padding:10px;font-size:13px;font-weight:600;border:1px solid var(--card-border);border-radius:8px;">詳細資訊與進階設定</summary>
   <!-- Top App Consumers -->
   <div class="card" style="margin-top: 8px;">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-      <span style="font-size: 11px; font-weight: 700; color: var(--text-main);">📱 今日最耗流量 App 排行</span>
+      <span style="font-size: 11px; font-weight: 700; color: var(--text-main);">應用程式採樣排行（估計）</span>
       <span style="font-size: 9.5px; color: var(--text-muted); font-weight: 500;" id="top-status">點開即時採樣</span>
     </div>
     <div id="apps-container">
-      <div class="app-row"><span>1. Google Chrome</span><span>18.7 MB</span></div>
-      <div class="app-row"><span>2. Antigravity IDE</span><span>8.1 MB</span></div>
+      <div class="app-row"><span>等待採樣</span></div>
     </div>
   </div>
 
@@ -866,7 +873,7 @@
           <div class="icon-bubble" style="font-size: 12px; width: 23px; height: 23px; min-width: 23px;">🛡️</div>
           <div style="min-width: 0;">
             <div style="font-size: 10.5px; font-weight: 700; color: var(--text-main); white-space: nowrap;">盒蓋休眠守護</div>
-            <div style="font-size: 8px; color: var(--text-muted); margin-top: 1px; white-space: nowrap;" id="lid-guard-desc">盒蓋凍結背景</div>
+            <div style="font-size: 8px; color: var(--text-muted); margin-top: 1px; white-space: nowrap;" id="lid-guard-desc">闔蓋流量提醒</div>
           </div>
         </div>
         <div class="switch-control on" id="lid-switch-control" style="transform: scale(0.8); transform-origin: right center;">
@@ -882,7 +889,7 @@
           <div class="icon-bubble" style="font-size: 12px; width: 23px; height: 23px; min-width: 23px;">🚶</div>
           <div style="min-width: 0;">
             <div style="font-size: 10.5px; font-weight: 700; color: var(--text-main); white-space: nowrap;">離座閒置守護</div>
-            <div style="font-size: 8px; color: var(--text-muted); margin-top: 1px; white-space: nowrap;" id="idle-guard-desc">10分無操作急停</div>
+            <div style="font-size: 8px; color: var(--text-muted); margin-top: 1px; white-space: nowrap;" id="idle-guard-desc">閒置流量提醒</div>
           </div>
         </div>
         <div class="switch-control on" id="idle-switch-control" style="transform: scale(0.8); transform-origin: right center;">
@@ -898,7 +905,7 @@
           <div class="icon-bubble" style="font-size: 12px; width: 23px; height: 23px; min-width: 23px;">🛑</div>
           <div style="min-width: 0;">
             <div style="font-size: 10.5px; font-weight: 700; color: var(--text-main); white-space: nowrap;">P2P 違規攔截盾</div>
-            <div style="font-size: 8px; color: var(--text-muted); margin-top: 1px; white-space: nowrap;" id="p2p-shield-desc">宿網自動攔截</div>
+            <div style="font-size: 8px; color: var(--text-muted); margin-top: 1px; white-space: nowrap;" id="p2p-shield-desc">僅偵測提醒</div>
           </div>
         </div>
         <div class="switch-control on" id="p2p-switch-control" style="transform: scale(0.8); transform-origin: right center;">
@@ -926,43 +933,11 @@
 
   <!-- Smart Routing & Campus Diagnostics Card -->
   <div class="card" style="margin-top: 8px; padding: 10px 11px;">
-    <!-- Smart Speed Race & Auto-Switch Row -->
-    <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 7px; border-bottom: 1px solid var(--hist-border); cursor: pointer;" onclick="callNative('toggleSpeedAutoSwitch')">
-      <div style="display: flex; align-items: center; gap: 7px; min-width: 0;">
-        <div class="icon-bubble" style="font-size: 13px; width: 24px; height: 24px; min-width: 24px;">⚡</div>
-        <div style="min-width: 0;">
-          <div style="display: flex; align-items: center; gap: 5px;">
-            <span style="font-size: 11px; font-weight: 700; color: var(--text-main);">慢速自動換快網</span>
-            <span id="speed-race-badge" style="font-size: 8.5px; padding: 1px 5px; border-radius: 4px; background: var(--capsule-safe-badge-bg); color: var(--capsule-safe-badge-text); font-weight: 700;">🔌 4.0ms 勝出</span>
-          </div>
-          <div style="font-size: 8.5px; color: var(--text-muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="speed-race-desc">有線 22.8M (4ms) vs 無線 1.0M (46ms) • 變慢秒切</div>
-        </div>
-      </div>
-      <div style="display: flex; align-items: center; gap: 5px; flex-shrink: 0;">
-        <button class="btn" id="speed-race-btn" style="padding: 2px 6px; font-size: 9px;" onclick="event.stopPropagation(); callNative('runSpeedRaceNow')">⚡ 競速</button>
-        <div class="switch-control on" id="speed-auto-switch-control" style="transform: scale(0.82); transform-origin: right center;">
-          <div class="switch-knob"></div>
-        </div>
-      </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding-bottom:8px;border-bottom:1px solid var(--hist-border);">
+      <div><strong style="font-size:11px;">網路延遲品質</strong><div id="network-quality-status" style="font-size:10px;color:var(--text-muted);">尚未取得樣本</div></div>
+      <button class="btn" onclick="callNative('runSpeedRaceNow')">更新延遲</button>
     </div>
-
-    <!-- Dual Interface Split Routing Row -->
-    <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 7px; padding-bottom: 7px; border-bottom: 1px solid var(--hist-border); cursor: pointer;" onclick="callNative('toggleSplitRouting')">
-      <div style="display: flex; align-items: center; gap: 7px; min-width: 0;">
-        <div class="icon-bubble" style="font-size: 13px; width: 24px; height: 24px; min-width: 24px;">🔀</div>
-        <div style="min-width: 0;">
-          <div style="display: flex; align-items: center; gap: 5px;">
-            <span style="font-size: 11px; font-weight: 700; color: var(--text-main);">雙軌智慧分流</span>
-            <span style="font-size: 8.5px; padding: 1px 4px; border-radius: 4px; background: var(--mode-wifi-bg); color: var(--mode-wifi-text); font-weight: 600;" id="split-mode-tag">Codex專線+影音分流</span>
-          </div>
-          <div style="font-size: 8.5px; color: var(--text-muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="split-routing-status">🟢 Codex 走 4ms 有線 • YouTube/更新分流 Wi-Fi</div>
-        </div>
-      </div>
-      <div class="switch-control on" id="split-switch-control" style="transform: scale(0.82); transform-origin: right center;">
-        <div class="switch-knob"></div>
-      </div>
-    </div>
-
+    <div style="font-size:10px;color:var(--text-muted);padding:8px 0;">自動切換、分流與雙網測速尚未開放。</div>
     <!-- Blacklist Diagnostics Row -->
     <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 7px;">
       <div style="display: flex; align-items: center; gap: 7px; min-width: 0;">
@@ -970,9 +945,9 @@
         <div style="min-width: 0;">
           <div style="display: flex; align-items: center; gap: 5px;">
             <span style="font-size: 11px; font-weight: 700; color: var(--text-main);">計中黑名單診斷</span>
-            <span id="blacklist-badge" style="font-size: 8.5px; padding: 1px 5px; border-radius: 4px; background: var(--capsule-safe-badge-bg); color: var(--capsule-safe-badge-text); font-weight: 700;">🟢 正常安全</span>
+            <span id="blacklist-badge" style="font-size: 8.5px; padding: 1px 5px; border-radius: 4px; background: var(--capsule-safe-badge-bg); color: var(--capsule-safe-badge-text); font-weight: 700;">狀態未知</span>
           </div>
-          <div style="font-size: 8.5px; color: var(--text-muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="blacklist-status-desc">IP 未遭鎖定 • ipblock.nchu.edu.tw</div>
+          <div style="font-size: 8.5px; color: var(--text-muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="blacklist-status-desc">請至計中確認 • ipblock.nchu.edu.tw</div>
         </div>
       </div>
       <div style="display: flex; gap: 3px; flex-shrink: 0;">
@@ -995,7 +970,7 @@
     <!-- 3 Key Metric Badges (KPI Row) -->
     <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px;">
       <div class="hist-kpi-badge">
-        <span class="kpi-label">7日日均</span>
+        <span class="kpi-label">有紀錄日均</span>
         <span class="kpi-val" id="kpi-avg">--</span>
       </div>
       <div class="hist-kpi-badge">
@@ -1021,7 +996,7 @@
       <!-- Interactive Detail Bar Info -->
       <div id="chart-tooltip-panel" class="chart-tooltip-panel">
         <span id="tooltip-date-title" style="font-weight: 600;">點擊或懸停柱體查看詳情</span>
-        <span id="tooltip-details" style="color: var(--speed-text);">近7天完整統計</span>
+        <span id="tooltip-details" style="color: var(--speed-text);">近7天已知紀錄</span>
       </div>
     </div>
 
@@ -1033,12 +1008,13 @@
     </div>
   </div>
 
+  </details>
   <!-- Action Bar -->
   <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--card-border);">
     <div style="display: flex; gap: 4px; align-items: center;">
       <button class="btn" onclick="callNative('refresh')">🔄 校準</button>
-      <button class="btn btn-panic" id="panic-btn" onclick="callNative('panicFreeze')">⚡ 省流</button>
-      <button class="btn" id="wifi-toggle-btn" onclick="callNative('switchToWifi')">🔀 換Wi-Fi</button>
+      <button class="btn btn-panic" id="panic-btn" hidden disabled>流量提醒</button>
+      <button class="btn" id="wifi-toggle-btn" hidden disabled>網路設定（暫停）</button>
       <button class="btn" onclick="callNative('openTop100')">🌐 查詢</button>
     </div>
     <div>
@@ -1086,6 +1062,12 @@
 
     function updateStats(data) {
       if (!data) return;
+      document.getElementById('overview-state').textContent = data.diagnosticSummary || data.observationStatus || '網路狀態未知';
+      document.getElementById('provider-status').textContent = data.providerStatus || '校方資料未知';
+      const focusButton = document.getElementById('focus-mode-button');
+      focusButton.textContent = data.focusEnabled ? '結束重要工作模式' : '重要工作模式';
+      focusButton.setAttribute('aria-pressed', data.focusEnabled ? 'true' : 'false');
+      document.getElementById('workflow-status').textContent = data.workflowStatus || '監控狀態未知';
 
       var isQuotaRestricted = (data.isQuotaRestricted === true || data.isDorm === true || data.isCampusWifi === true);
       if (isQuotaRestricted) {
@@ -1108,7 +1090,7 @@
         document.getElementById('ext-view').style.display = 'block';
         document.getElementById('header-icon').innerText = '⚡';
         document.getElementById('header-title').innerText = (data.networkTypeName || '外部網路');
-        document.getElementById('mode-tag').innerText = '自由無上限';
+        document.getElementById('mode-tag').innerText = '配額未確認';
         document.getElementById('mode-tag').className = 'mode-tag ext';
 
         if (data.extTotalStr) document.getElementById('ext-total').innerText = data.extTotalStr;
@@ -1120,9 +1102,10 @@
         if (data.speedStr) document.getElementById('ext-speed-indicator').innerText = '⚡ ' + data.speedStr;
       }
 
+      // Quota numbers are provisional estimates, not provider-confirmed balances.
       // Hero Card: Focus on Download Quota (下載額度)
       var heroTitle = document.getElementById('hero-quota-title');
-      if (heroTitle) heroTitle.innerText = '今日下載額度剩餘';
+      if (heroTitle) heroTitle.innerText = '今日下載剩餘（估計）';
       if (data.remDlStr) document.getElementById('rem-total').innerText = data.remDlStr;
       if (data.quotaDlGB) {
         var totalLim = document.getElementById('total-quota-limit');
@@ -1169,22 +1152,24 @@
       if (data.date) document.getElementById('date-label').innerText = data.date + ipInfo;
 
       if (data.latencyStr) document.getElementById('latency-text').innerText = data.latencyStr;
+      document.getElementById('network-quality-status').textContent = data.networkQualityStatus || '延遲未知';
 
       if (data.runoutText) {
         var runoutEl = document.getElementById('runout-text');
         var capsule = document.getElementById('runout-capsule');
         var riskBadge = document.getElementById('risk-badge');
         if (runoutEl && capsule && riskBadge) {
+          capsule.hidden = !isQuotaRestricted;
           runoutEl.innerText = data.runoutText;
           if (data.riskLevel === 'danger') {
             capsule.className = 'runout-capsule danger';
-            riskBadge.innerText = '🔴 危險';
+            riskBadge.innerText = '高用量';
           } else if (data.riskLevel === 'warning') {
             capsule.className = 'runout-capsule warning';
-            riskBadge.innerText = '🟡 警戒';
+            riskBadge.innerText = '用量提醒';
           } else {
-            capsule.className = 'runout-capsule safe';
-            riskBadge.innerText = '🟢 安全';
+            capsule.className = 'runout-capsule';
+            riskBadge.innerText = '本機估計';
           }
         }
       }
@@ -1195,7 +1180,7 @@
           panicBtn.innerText = '▶️ 恢復';
           panicBtn.classList.add('active');
         } else {
-          panicBtn.innerText = '⚡ 省流';
+          panicBtn.innerText = '流量提醒';
           panicBtn.classList.remove('active');
         }
       }
@@ -1215,7 +1200,7 @@
             wifiToggleBtn.innerText = '🔌 換回有線';
             wifiToggleBtn.onclick = function() { callNative('restoreWired'); };
           } else {
-            wifiToggleBtn.innerText = '🔀 換Wi-Fi';
+            wifiToggleBtn.innerText = '網路設定（暫停）';
             wifiToggleBtn.onclick = function() { callNative('switchToWifi'); };
           }
         }
@@ -1227,7 +1212,7 @@
         if (switchCtrl) {
           if (data.isLidGuardEnabled) {
             switchCtrl.classList.add('on');
-            if (lidDesc) lidDesc.innerText = '盒蓋凍結背景';
+            if (lidDesc) lidDesc.innerText = '闔蓋流量提醒';
           } else {
             switchCtrl.classList.remove('on');
             if (lidDesc) lidDesc.innerText = '已關閉';
@@ -1241,7 +1226,7 @@
         if (idleCtrl) {
           if (data.isIdleGuardEnabled) {
             idleCtrl.classList.add('on');
-            if (idleDesc) idleDesc.innerText = data.isUserCurrentlyIdle ? '離座守護中 🌙' : '10分無操作急停';
+            if (idleDesc) idleDesc.innerText = data.isUserCurrentlyIdle ? '離座守護中 🌙' : '閒置流量提醒';
           } else {
             idleCtrl.classList.remove('on');
             if (idleDesc) idleDesc.innerText = '已關閉';
@@ -1255,7 +1240,7 @@
       if (p2pBanner) {
         if (data.isP2PDetected) {
           p2pBanner.style.display = 'block';
-          if (p2pAlertText) p2pAlertText.innerText = '偵測到 ' + (data.p2pAppName || 'P2P 軟體') + ' 正在運行！宿網嚴禁 P2P 下載！';
+          if (p2pAlertText) p2pAlertText.innerText = '偵測到 ' + (data.p2pAppName || 'P2P 軟體') + ' 正在運行；程式名稱不代表違規。';
         } else {
           p2pBanner.style.display = 'none';
         }
@@ -1268,7 +1253,7 @@
         if (p2pCtrl) {
           if (data.isP2PShieldAutoKillEnabled) {
             p2pCtrl.classList.add('on');
-            if (p2pDesc) p2pDesc.innerText = data.isP2PDetected ? '⚠️ 偵測到違規' : '宿網自動攔截';
+            if (p2pDesc) p2pDesc.innerText = data.isP2PDetected ? '可能風險' : '僅偵測提醒';
           } else {
             p2pCtrl.classList.remove('on');
             if (p2pDesc) p2pDesc.innerText = '僅警告不攔截';
@@ -1291,64 +1276,6 @@
         }
       }
 
-      // Smart Speed Race & Auto-Switch Control
-      if (typeof data.isSpeedAutoSwitchEnabled !== 'undefined') {
-        var spdCtrl = document.getElementById('speed-auto-switch-control');
-        var spdBadge = document.getElementById('speed-race-badge');
-        var spdDesc = document.getElementById('speed-race-desc');
-        var spdBtn = document.getElementById('speed-race-btn');
-        if (spdCtrl) {
-          if (data.isSpeedAutoSwitchEnabled) spdCtrl.classList.add('on');
-          else spdCtrl.classList.remove('on');
-        }
-        if (spdBtn) {
-          spdBtn.innerText = data.isRunningSpeedRace ? '⏳ 測速中' : '⚡ 競速';
-        }
-        var wPing = data.wiredReachable ? (data.wiredPingMs + 'ms') : '中斷';
-        var wfPing = data.wifiReachable ? (data.wifiPingMs + 'ms') : '中斷';
-        var wMbps = data.wiredReachable ? (data.wiredSpeedMbps + 'M') : '0M';
-        var wfMbps = data.wifiReachable ? (data.wifiSpeedMbps + 'M') : '0M';
-        if (spdBadge) {
-          if (data.isRunningSpeedRace) {
-            spdBadge.innerText = '⏳ 雙網競速中...';
-          } else if (data.activeInterface === 'en6' && data.wiredReachable) {
-            spdBadge.innerText = '🔌 有線 ' + wPing + ' 勝出';
-            spdBadge.style.background = 'var(--capsule-safe-badge-bg)';
-            spdBadge.style.color = 'var(--capsule-safe-badge-text)';
-          } else {
-            spdBadge.innerText = '🛜 無線 ' + wfPing + ' 接管';
-            spdBadge.style.background = 'var(--mode-wifi-bg)';
-            spdBadge.style.color = 'var(--mode-wifi-text)';
-          }
-        }
-        if (spdDesc) {
-          var statusPrefix = data.isSpeedAutoSwitchEnabled ? '🟢 自動擇優：' : '⚪ 僅監測：';
-          spdDesc.innerText = statusPrefix + '有線 ' + wMbps + ' (' + wPing + ') vs 無線 ' + wfMbps + ' (' + wfPing + ')';
-        }
-      }
-
-      // Dual-Interface Split Routing Control & Status
-      if (typeof data.isSplitRoutingEnabled !== 'undefined') {
-        var splitCtrl = document.getElementById('split-switch-control');
-        var splitDesc = document.getElementById('split-routing-status');
-        var splitTag = document.getElementById('split-mode-tag');
-        if (splitCtrl) {
-          if (data.isSplitRoutingEnabled) {
-            splitCtrl.classList.add('on');
-            if (!data.isWiredTemporarilyDisabled) {
-              if (splitTag) splitTag.innerText = 'Codex專線+影音分流';
-              if (splitDesc) splitDesc.innerText = '🟢 Codex 走 4ms 有線 • YouTube/背景更新分流 Wi-Fi';
-            } else {
-              if (splitTag) splitTag.innerText = '校內千兆免額度';
-              if (splitDesc) splitDesc.innerText = '🟢 校內 140.120.* 走千兆 • 外網走 Wi-Fi';
-            }
-          } else {
-            splitCtrl.classList.remove('on');
-            if (splitDesc) splitDesc.innerText = '⚪ 未開啟：所有流量走同一介面';
-          }
-        }
-      }
-
       // NCHU Blacklist Diagnostics
       var blBadge = document.getElementById('blacklist-badge');
       var blDesc = document.getElementById('blacklist-status-desc');
@@ -1359,10 +1286,10 @@
           blBadge.style.color = 'var(--capsule-danger-badge-text)';
           if (blDesc) blDesc.innerText = '原因: ' + (data.blacklistReason || '違規封鎖') + ' (' + (data.lastBlacklistCheckTime || '') + ')';
         } else {
-          blBadge.innerText = '🟢 正常安全';
+          blBadge.innerText = '狀態未知';
           blBadge.style.background = 'var(--capsule-safe-badge-bg)';
           blBadge.style.color = 'var(--capsule-safe-badge-text)';
-          if (blDesc) blDesc.innerText = 'IP 未遭鎖定 • ' + (data.lastBlacklistCheckTime ? data.lastBlacklistCheckTime : 'ipblock.nchu.edu.tw');
+          if (blDesc) blDesc.innerText = '請至計中確認 • ' + (data.lastBlacklistCheckTime ? data.lastBlacklistCheckTime : 'ipblock.nchu.edu.tw');
         }
       }
 
@@ -1372,17 +1299,29 @@
         var riskBadge = document.getElementById('risk-badge');
         if (runoutEl && capsule && riskBadge) {
           capsule.className = 'runout-capsule danger';
-          riskBadge.innerText = '🚨 急停';
-          runoutEl.innerText = '已達 90% 下載上限！已急停背景影音與同步';
+          riskBadge.innerText = '高用量';
+          runoutEl.innerText = '已達 90% 下載上限！請檢查背景傳輸';
         }
       }
 
-      if (data.topApps && data.topApps.length > 0) {
-        var html = '';
-        data.topApps.forEach(function(item, idx) {
-          html += '<div class="app-row"><span>' + (idx+1) + '. ' + item.name + '</span><span>' + item.bytes + '</span></div>';
-        });
-        document.getElementById('apps-container').innerHTML = html;
+      const apps = document.getElementById('apps-container');
+      apps.replaceChildren();
+      document.getElementById('top-status').textContent = data.appSampleStatus || '採樣未知';
+      for (const [index, item] of (data.topApps || []).entries()) {
+        const row = document.createElement('div');
+        row.className = 'app-row';
+        const name = document.createElement('span');
+        name.textContent = (index + 1) + '. ' + item.name;
+        const bytes = document.createElement('span');
+        bytes.textContent = item.bytes;
+        row.append(name, bytes);
+        apps.append(row);
+      }
+      if (!apps.childElementCount) {
+        const empty = document.createElement('div');
+        empty.className = 'app-row';
+        empty.textContent = '沒有可用的近期程序採樣';
+        apps.append(empty);
       }
 
       // 渲染 7 日柱狀圖與 KPI 指標

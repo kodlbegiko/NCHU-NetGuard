@@ -1,0 +1,59 @@
+name: Foundation CI
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [feat/r4-foundation]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: foundation-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  foundation:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: swift --version && python3 --version
+      - name: Static guards and Python tests
+        run: make test
+      - name: Core Swift tests
+        run: swift test
+      - name: Legacy app build (no launch)
+        run: make build
+      - name: Verify bundle
+        run: |
+          test -x build/NCHUTraffic.app/Contents/MacOS/NCHUTraffic
+          test -f build/NCHUTraffic.app/Contents/Resources/traffic_monitor.py
+          test -f build/NCHUTraffic.app/Contents/Resources/popover.html
+          plutil -lint build/NCHUTraffic.app/Contents/Info.plist
+
+      - name: Native fixture smoke (no production startup)
+        run: python3 scripts/smoke_test.py --app build/NCHUTraffic.app
+
+      - name: Host parser compatibility evidence (non-gating)
+        run: |
+          set +e
+          build/NCHUTraffic.app/Contents/MacOS/NCHUTraffic --netguard-host-check
+          rc=$?
+          set -e
+          if [ "$rc" -eq 2 ]; then
+            echo "::warning::Hosted environment did not provide sufficient compatible observations; local host acceptance still required."
+          elif [ "$rc" -ne 0 ]; then
+            exit "$rc"
+          fi
+
+      - name: Experimental flow compatibility evidence (non-gating)
+        run: |
+          for mode in --netguard-flow-check --netguard-udp-check; do
+            rc=0
+            build/NCHUTraffic.app/Contents/MacOS/NCHUTraffic "$mode" || rc=$?
+            if [ "$rc" -eq 2 ]; then
+              echo "::warning::Experimental flow evidence inconclusive ($mode); no coverage or billing claim."
+            elif [ "$rc" -ne 0 ]; then
+              exit "$rc"
+            fi
+          done
