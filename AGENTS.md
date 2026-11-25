@@ -11,3 +11,5 @@ Read docs/ROADMAP.md, docs/UX-PRINCIPLES.md and docs/contracts/v1.md before chan
 - Module ownership and milestones follow ROADMAP; document any scope changes, regressions and known blockers.
 
 - UX is simple-first, powerful-engine: default to readable status and recommended actions, progressively disclose advanced controls, never conceal unknown data or unavailable actions. Every user-facing change must follow docs/UX-PRINCIPLES.md and its acceptance gates; no extra steps unless needed for safety or consent.
+
+- Follow docs/DEVELOPMENT-OWNERSHIP.md; changes to shared legacy runtime, build and contract files must be serialized by the integrator. Decode untrusted contract data with validated decode paths.
