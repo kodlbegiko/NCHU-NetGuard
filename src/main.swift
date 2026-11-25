@@ -553,7 +553,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     // 雙網卡即時競速與慢速自動切換引擎
     func evaluateDualNetworkSpeedAndSwitch(forceSpeedBurst: Bool = false, manualTrigger: Bool = false) {
-        guard !isRunningSpeedRace && !isSwitchingNetwork else { return }
+        guard manualTrigger, !isRunningSpeedRace && !isSwitchingNetwork else { return }
         isRunningSpeedRace = true
         if manualTrigger {
             pushDataToWebUI()
@@ -602,7 +602,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 }
                 
                 let now = Date().timeIntervalSince1970
-                let canSwitch = (self.isSpeedAutoSwitchEnabled || manualTrigger) && (manualTrigger || (now - self.lastSpeedSwitchTime) > 180.0)
+                let canSwitch = false // R4.0 observation-only
                 
                 if canSwitch {
                     let isWiredQuotaSafe = (self.dormTodayInBytes < 6.75 * 1024 * 1024 * 1024) && !self.isBlacklisted
@@ -719,58 +719,11 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     func checkIpBlocklist() {
-        guard let url = URL(string: "https://ipblock.nchu.edu.tw/cblocklist_public.php") else { return }
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData, timeoutInterval: 4.0)
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)", forHTTPHeaderField: "User-Agent")
-        
-        let config = URLSessionConfiguration.ephemeral
-        let session = URLSession(configuration: config)
-        
-        let task = session.dataTask(with: request) { [weak self] data, response, error in
-            guard let self = self else { return }
-            let nowStr = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short)
-            
-            if let data = data, let html = String(data: data, encoding: .utf8) ?? String(data: data, encoding: String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.big5.rawValue)))) {
-                var isBlocked = false
-                var reason = ""
-                
-                if let rangeStart = html.range(of: "<font color=red>", options: .caseInsensitive) {
-                    let sub = html[rangeStart.upperBound...]
-                    if let rangeEnd = sub.range(of: "</font>", options: .caseInsensitive) {
-                        let content = String(sub[..<rangeEnd.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !content.isEmpty {
-                            isBlocked = true
-                            reason = content
-                        }
-                    }
-                }
-                
-                DispatchQueue.main.async {
-                    self.isBlacklisted = isBlocked
-                    self.blacklistReason = reason
-                    self.lastBlacklistCheckTime = "\(nowStr) \(isBlocked ? "遭鎖定" : "正常安全")"
-                    
-                    if isBlocked && !self.hasAlertedBlacklist {
-                        self.hasAlertedBlacklist = true
-                        self.sendSystemNotification(
-                            title: "🚨 興大計中黑名單警報！",
-                            body: "您的宿網 IP 已遭校方封鎖！原因：\(reason)"
-                        )
-                    }
-                    if self.popover.isShown {
-                        self.pushDataToWebUI()
-                    }
-                }
-            } else {
-                DispatchQueue.main.async {
-                    self.lastBlacklistCheckTime = "\(nowStr) 探測逾時"
-                    if self.popover.isShown {
-                        self.pushDataToWebUI()
-                    }
-                }
-            }
-        }
-        task.resume()
+        // Provider's legacy HTML has no verified IP-specific parser.
+        isBlacklisted = false
+        blacklistReason = ""
+        lastBlacklistCheckTime = "狀態未知：請開啟計中官方頁面核對"
+        if popover != nil && popover.isShown { pushDataToWebUI() }
     }
 
     @objc func systemWillSleep() {
@@ -1388,7 +1341,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         process.waitUntilExit()
         
         let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        var foundInterface = "en0"
+        var foundInterface = ""
         for line in out.components(separatedBy: .newlines) {
             if line.contains("interface:") {
                 let parts = line.components(separatedBy: ":")
@@ -1412,6 +1365,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             self.isConnected = true
         } else {
             self.isConnected = false
+                    self.currentIP = ""
         }
     }
 
@@ -1430,7 +1384,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             process.waitUntilExit()
             
             let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            var foundInterface = "en0"
+            var foundInterface = ""
             for line in out.components(separatedBy: .newlines) {
                 if line.contains("interface:") {
                     let parts = line.components(separatedBy: ":")
@@ -1458,6 +1412,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                     self.isConnected = true
                 } else {
                     self.isConnected = false
+                    self.currentIP = ""
                 }
                 
                 // 若連線網卡切換，立即重新採樣硬體計數器，防止產生虛假巨大流量突波
@@ -1530,6 +1485,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 self.consecutivePingFailures += 1
                 if self.consecutivePingFailures >= 3 {
                     self.isConnected = false
+                    self.currentIP = ""
                 }
             }
         }
@@ -1871,12 +1827,14 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     func syncWithTop100Server() {
-        guard isDormNetwork else {
+        guard isDormNetwork, isConnected else {
             DispatchQueue.main.async {
                 self.top100Data = nil
             }
             return
         }
+        let expectedIP = currentIP
+        top100Data = nil
         DispatchQueue.global(qos: .background).async { [weak self] in
             guard let self = self else { return }
             guard let scriptPath = Bundle.main.url(forResource: "traffic_monitor", withExtension: "py")?.path else {
@@ -1888,14 +1846,18 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             process.arguments = [scriptPath, "--json"]
             let pipe = Pipe()
             process.standardOutput = pipe
-            try? process.run()
-            process.waitUntilExit()
-            
+            do { try process.run() } catch { return }
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            if let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] {
-                DispatchQueue.main.async {
-                    self.top100Data = json["top100"] as? [String: Any]
-                }
+            process.waitUntilExit()
+            guard process.terminationStatus == 0,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  json["schema_version"] as? Int == 1,
+                  json["ip"] as? String == expectedIP,
+                  let top = json["top100"] as? [String: Any],
+                  top["status"] as? String == "listed" else { return }
+            DispatchQueue.main.async {
+                guard self.isConnected, self.currentIP == expectedIP, self.isDormNetwork else { return }
+                self.top100Data = top
             }
         }
     }
