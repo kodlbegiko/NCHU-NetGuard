@@ -241,6 +241,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var unattributedInBytes: Double = 0
     var unattributedOutBytes: Double = 0
     var sampleGapCount: Int = 0
+    var predictionEngine = PredictionEngine()
+    var predictionScope: NetworkScope = .unknown
+    var predictionIdentity = Set<String>()
+    var quotaAlertLedger = QuotaAlertLedger()
     var currentDownSpeed: Double = 0
     var currentUpSpeed: Double = 0
     
@@ -775,6 +779,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     func getTodayString() -> String {
         let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = TimeZone(identifier: "Asia/Taipei")
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: Date())
     }
@@ -1138,56 +1145,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         let speedStr = String(format: "↓ %@   ↑ %@", formatSpeed(currentDownSpeed), formatSpeed(currentUpSpeed))
         let extTotal = extTodayInBytes + extTodayOutBytes
         
-        var runoutText = "網速平緩，額度充足"
-        var riskLevel = "safe" // "safe", "warning", "danger"
-        
-        if isCampusWifi {
-            if dlUsed >= (9.0 * 1024 * 1024 * 1024) {
-                riskLevel = "danger"
-            } else if dlUsed >= (7.0 * 1024 * 1024 * 1024) {
-                riskLevel = "warning"
-            }
-            if currentDownSpeed > 60 * 1024 {
-                let mins = (remDl / currentDownSpeed) / 60.0
-                runoutText = String(format: "約 %.0f 分鐘後達到 10GB Wi-Fi 下載上限", max(1, mins))
-            } else {
-                if riskLevel == "danger" {
-                    runoutText = "Wi-Fi 額度低於 1 GB，達到上限後將限速"
-                } else if riskLevel == "warning" {
-                    runoutText = "今日 Wi-Fi 已用較多，請留意用量"
-                } else {
-                    runoutText = "興大 Wi-Fi 配額 10 GB 充足，安心使用"
-                }
-            }
-        } else if isDormNetwork {
-            if dlUsed >= (6.3 * 1024 * 1024 * 1024) {
-                riskLevel = "danger"
-            } else if dlUsed >= (5.0 * 1024 * 1024 * 1024) {
-                riskLevel = "warning"
-            }
-            
-            if currentDownSpeed > 60 * 1024 { // 下載速度 > 60 KB/s 時動態預估
-                let seconds = remDl / currentDownSpeed
-                let mins = seconds / 60.0
-                if mins < 60 {
-                    runoutText = String(format: "約 %.0f 分鐘後耗盡 7GB 下載額度", max(1, mins))
-                } else {
-                    runoutText = String(format: "約 %.1f 小時後達到 7GB 下載上限", mins / 60.0)
-                }
-            } else {
-                if riskLevel == "danger" {
-                    runoutText = "額度低於 700 MB，即將進入限速區"
-                } else if riskLevel == "warning" {
-                    runoutText = "今日已耗較多額度，建議節省串流"
-                } else {
-                    runoutText = "網速平穩，今日流量充足安全"
-                }
-            }
-        } else {
-            runoutText = "外部網路 / 熱點無限制，放心使用"
-            riskLevel = "safe"
-        }
-        
+        let forecast = forecastPresentation()
+        let runoutText = forecast.message
+        let riskLevel = forecast.level
+
         let payload: [String: Any] = [
             "isDorm": isDormNetwork,
             "isCampusWifi": isCampusWifi,
@@ -1565,6 +1526,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     func initHardwareCounters() {
+        predictionEngine.reset()
+        predictionScope = .unknown
+        predictionIdentity = []
         scopedAccumulator.reset()
         let samples = readScopedInterfaces()
         sampledScopes = Dictionary(uniqueKeysWithValues: samples.map { ($0.counters.interfaceID, $0.scope) })
@@ -1685,6 +1649,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             unattributedOutBytes = 0
             sampleGapCount = 0
             scopedAccumulator.reset()
+            predictionEngine.reset()
+            predictionScope = .unknown
+            predictionIdentity = []
             lastSampleUptime = nil
             providerObservation = nil
             alertTierSent = 0
@@ -1784,6 +1751,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             }
         }
 
+        updateForecast(samples: samples, deltas: deltas, elapsed: elapsed)
+
         if Int(now) % 10 == 0 {
             savePersistedState()
         }
@@ -1802,43 +1771,101 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     var lastCriticalNotificationTime: TimeInterval = 0
 
-    func checkAndSendSmartAlerts() {
-        guard isQuotaRestricted else { return }
-        let (_, dlUsed, _) = getEffectiveUsedBytes()
-        let remDlGB = max(0, dlQuotaBytes - dlUsed) / (1024 * 1024 * 1024)
-        let dlUsagePct = (dlUsed / dlQuotaBytes) * 100.0
-        
-        if isDormNetwork {
-            // 宿網避難保護：當下載額度剩餘不足 250 MB 時，自動靜默切換至校園 Wi-Fi (免拔網路線)
-            if isAutoWifiFailoverEnabled && remDlGB <= 0.25 && !isWiredTemporarilyDisabled && !isSwitchingNetwork && Date().timeIntervalSince1970 > failoverCooldownUntil {
-                switchToWifi(reason: String(format: "下載額度僅剩 %.0f MB", remDlGB * 1024))
-                return
-            }
-            
-            // 緊急急停煞車：僅在下載達到 90% (只剩不到 700 MB 即將斷網鎖卡) 時，才發出唯一一次緊急通知
-            if dlUsagePct >= 90.0 && !isEmergencyBrakeActive {
-                isEmergencyBrakeActive = true
-                sendSystemNotification(
-                    title: "🚨 宿網額度僅剩 \(String(format: "%.0f MB", remDlGB * 1024))！",
-                    body: "請檢查非必要背景傳輸；安全模式不會停止任何程式。",
-                    isCritical: true
-                )
-            }
+    func updateForecast(samples: [ScopedInterfaceSample], deltas: [String: ScopedTrafficDelta], elapsed: Double) {
+        let scope = sampledScopes[activeInterface] ?? .unknown
+        guard isConnected, scope == .dorm || scope == .campusWifi else {
+            predictionEngine.reset()
+            predictionScope = .unknown
+            predictionIdentity = []
+            return
+        }
+        let scopedSamples = samples.filter { $0.scope == scope }
+        let identity = Set(scopedSamples.map { $0.counters.interfaceID + "|" + $0.identity })
+        if predictionScope != scope || predictionIdentity != identity {
+            predictionEngine.reset()
+            predictionScope = scope
+            predictionIdentity = identity
+        }
+        guard !scopedSamples.isEmpty,
+              !deltas.values.contains(where: { $0.delta.quality == .unknown || $0.scope == .unknown }),
+              scopedSamples.allSatisfy({ deltas[$0.counters.interfaceID]?.scope == scope })
+        else { predictionEngine.reset(); return }
+        var rx: UInt64 = 0
+        var tx: UInt64 = 0
+        for sample in scopedSamples {
+            guard let delta = deltas[sample.counters.interfaceID]?.delta,
+                  delta.quality == .measured else { predictionEngine.reset(); return }
+            let (nextRx, rxOverflow) = rx.addingReportingOverflow(delta.received)
+            let (nextTx, txOverflow) = tx.addingReportingOverflow(delta.sent)
+            guard !rxOverflow, !txOverflow else { predictionEngine.reset(); return }
+            rx = nextRx
+            tx = nextTx
+        }
+        predictionEngine.append(TrafficRateSample(seconds: elapsed, received: rx, sent: tx))
+    }
+
+    private func localQuotaAssessment() -> LocalQuotaAssessment? {
+        let scope = sampledScopes[activeInterface] ?? .unknown
+        guard isConnected, isQuotaRestricted,
+              (scope == .dorm && isDormNetwork) || (scope == .campusWifi && isCampusWifi) else { return nil }
+        let (_, dl, ul) = getEffectiveUsedBytes()
+        guard let received = UInt64(exactly: dl), let sent = UInt64(exactly: ul) else { return nil }
+        return LocalQuotaPolicy.assess(received: received, sent: sent,
+            receiveLimit: UInt64(dlQuotaBytes), sendLimit: UInt64(ulQuotaBytes), totalLimit: UInt64(totalQuotaBytes))
+    }
+
+    private func budgetLabel(_ budget: LimitingBudget) -> String {
+        switch budget {
+        case .download: return "下載"
+        case .upload: return "上傳"
+        case .total: return "總量"
         }
     }
 
-    // 極簡靜音通知中心：預設所有背景切換、分流、休眠喚醒皆 100% 靜默執行，僅在真正危急 (isCritical == true) 時靜音推播且 4 小時內不重複打擾
-    func sendSystemNotification(title: String, body: String, isCritical: Bool = false) {
+    func forecastPresentation() -> (message: String, level: String) {
+        guard let assessment = localQuotaAssessment() else { return ("配額未確認，暫不預測", "unknown") }
+        let level = assessment.tier >= .high ? "danger" : (assessment.tier == .warning ? "warning" : "unknown")
+        let (_, dl, ul) = getEffectiveUsedBytes()
+        let label = budgetLabel(assessment.limitingBudget)
+        let status = "本機估計：\(label)已用 \(Int(min(assessment.usageRatio * 100, 999)))%"
+        guard !persistenceBlocked, sampleGapCount == 0,
+              predictionScope == sampledScopes[activeInterface],
+              let f = predictionEngine.forecast(receiveRemaining: UInt64(max(0, dlQuotaBytes - dl)),
+                                                 sendRemaining: UInt64(max(0, ulQuotaBytes - ul)),
+                                                 totalRemaining: UInt64(max(0, totalQuotaBytes - dl - ul)))
+        else { return (status + "；暫無可靠耗盡預測", level) }
+        if f.latestSeconds == 0 {
+            return ("本機估計\(budgetLabel(f.limitingBudget))已達設定上限", "danger")
+        }
+        let low = max(1, Int(floor(f.earliestSeconds / 60)))
+        let high = max(low, Int(ceil(f.latestSeconds / 60)))
+        return ("若近期速率持續，\(budgetLabel(f.limitingBudget))約 \(low)–\(high) 分鐘達設定上限（估計）", level)
+    }
+
+    func checkAndSendSmartAlerts() {
+        guard let assessment = localQuotaAssessment() else { return }
+        let scope = sampledScopes[activeInterface] ?? .unknown
+        guard quotaAlertLedger.shouldNotify(day: currentDateString, scope: scope,
+                 tier: assessment.tier, enabled: isAlertEnabled) else { return }
+        sendSystemNotification(title: "NetGuard 本機用量提醒",
+            body: "本機估計\(budgetLabel(assessment.limitingBudget))已達 \(assessment.tier.rawValue == 3 ? "95" : assessment.tier.rawValue == 2 ? "85" : "70")% 設定額度。請核對實際配額，無自動斷網或停止程式。",
+            isCritical: true, quotaAlert: true)
+    }
+
+    // Fixed AppleScript program; external titles/messages are argv data, not code.
+    func sendSystemNotification(title: String, body: String, isCritical: Bool = false, quotaAlert: Bool = false) {
         guard isCritical else { return }
-        let now = Date().timeIntervalSince1970
-        guard (now - lastCriticalNotificationTime) > 14400.0 else { return }
-        lastCriticalNotificationTime = now
-        
+        if !quotaAlert {
+            let now = Date().timeIntervalSince1970
+            guard (now - lastCriticalNotificationTime) > 14400.0 else { return }
+            lastCriticalNotificationTime = now
+        }
         DispatchQueue.global(qos: .utility).async {
-            let script = "display notification \"\(body)\" with title \"\(title)\""
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            process.arguments = ["-e", script]
+            process.arguments = ["-e", "on run argv", "-e",
+                "display notification (item 2 of argv) with title (item 1 of argv)",
+                "-e", "end run", "--", title, body]
             try? process.run()
         }
     }
