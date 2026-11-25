@@ -269,6 +269,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var processHistoryLastDate: Date?
     var processHistoryLastUptime: TimeInterval?
     var processHistoryEnabled = false
+    private let processHistoryQueue = DispatchQueue(label: "NetGuard.process-history", qos: .utility)
+    private var processHistoryBusy = false
+    private var processHistoryRetention = 30
     var processHistoryStore: ProcessHistoryStore {
         ProcessHistoryStore(directory: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/NCHU-NetGuard/process-history", isDirectory: true))
     }
@@ -835,7 +838,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     private func setProcessHistoryEnabled(_ enabled: Bool) {
-        guard enabled != processHistoryEnabled else { return }
+        guard !processHistoryBusy, enabled != processHistoryEnabled else { return }
         breakProcessContinuity()
         processHistoryEnabled = enabled
         processHistoryUsage = ProcessUsageAccumulator()
@@ -847,19 +850,69 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         if enabled { reloadProcessHistory() }
     }
 
+    private func beginProcessHistoryOperation() -> Bool {
+        guard !processHistoryBusy else { return false }
+        processHistoryBusy = true
+        managementModel.historyBusy = true
+        return true
+    }
+
+    private func finishProcessHistoryOperation(message: String, days: [ProcessHistoryDay]?) {
+        processHistoryBusy = false
+        managementModel.historyBusy = false
+        managementModel.historyStatus = message
+        if let days { managementModel.historyDays = days }
+    }
+
     private func reloadProcessHistory() {
-        let today = ProcessHistoryStore.hour(at: Date()).day
-        let yesterday = ProcessHistoryStore.hour(at: Date().addingTimeInterval(-86400)).day
-        do {
-            managementModel.historyDays = try [today, yesterday].map { try processHistoryStore.read(day: $0) }
-        } catch {
-            managementModel.historyDays = []
-            managementModel.historyStatus = "歷史資料讀取失敗；未覆寫檔案"
+        guard beginProcessHistoryOperation() else { return }
+        let store = processHistoryStore
+        let now = Date()
+        let today = ProcessHistoryStore.hour(at: now).day
+        let yesterday = ProcessHistoryStore.hour(at: now.addingTimeInterval(-86400)).day
+        processHistoryQueue.async { [weak self] in
+            let days = try? [today, yesterday].map { try store.read(day: $0) }
+            DispatchQueue.main.async {
+                self?.finishProcessHistoryOperation(
+                    message: days == nil ? "歷史資料讀取失敗；未覆寫檔案" : "已讀取本機歷史",
+                    days: days ?? [])
+            }
+        }
+    }
+
+    private func setProcessHistoryRetention(_ days: Int) {
+        guard !processHistoryBusy, [7, 30, 90].contains(days) else { return }
+        processHistoryRetention = days
+        managementModel.historyRetention = days
+        managementModel.historyStatus = "保留期限已設定；下次成功儲存後清理逾期紀錄"
+    }
+
+    private func deleteProcessHistory() {
+        guard !processHistoryBusy else { return }
+        setProcessHistoryEnabled(false)
+        guard beginProcessHistoryOperation() else { return }
+        // Disable future writes and invalidate in-flight sampling before deletion.
+        breakProcessContinuity()
+        let store = processHistoryStore
+        processHistoryQueue.async { [weak self] in
+            let count = try? store.removeAllHistory()
+            DispatchQueue.main.async {
+                self?.finishProcessHistoryOperation(
+                    message: count.map { "已刪除 \($0) 日程序歷史；記錄維持關閉" } ?? "刪除未完全成功，請重新讀取確認",
+                    days: [])
+            }
         }
     }
 
     private func recordProcessHistory(_ counters: [ProcessCounter]?, date: Date, uptime: TimeInterval) {
         guard processHistoryEnabled else { return }
+        // Bound the queue to one operation; do not bridge an interval skipped by I/O.
+        guard !processHistoryBusy else {
+            processHistoryUsage.breakContinuity()
+            processHistoryLastDate = nil
+            processHistoryLastUptime = nil
+            return
+        }
         let key = ProcessHistoryStore.hour(at: date)
         let clockChanged = processHistoryLastDate.map { oldDate in
             guard let oldUptime = processHistoryLastUptime else { return true }
@@ -882,9 +935,30 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             let rows = try report.rows.map { try ProcessHistoryRow(name: $0.name, download: $0.received, upload: $0.sent) }
             let bucket = try ProcessHistoryBucket(session: processHistorySession, hour: key.hour,
                 intervals: report.measuredIntervals, rows: rows, limited: report.capacityReached)
-            try processHistoryStore.save(day: key.day, bucket: bucket)
-            managementModel.historyStatus = "已儲存可辨識的程序增量"
-            if managementWindowController?.window?.isVisible == true { reloadProcessHistory() }
+            guard beginProcessHistoryOperation() else { return }
+            let store = processHistoryStore
+            let retention = processHistoryRetention
+            let now = Date()
+            let today = ProcessHistoryStore.hour(at: now).day
+            let yesterday = ProcessHistoryStore.hour(at: now.addingTimeInterval(-86400)).day
+            processHistoryQueue.async { [weak self] in
+                var message = "已儲存可辨識的程序增量"
+                var days: [ProcessHistoryDay]?
+                do {
+                    try store.save(day: key.day, bucket: bucket)
+                    do { try store.prune(keepingDays: retention, now: now) }
+                    catch { message = "增量已儲存；逾期紀錄清理未完全成功" }
+                    do { days = try [today, yesterday].map { try store.read(day: $0) } }
+                    catch { message += "；歷史讀取失敗"; days = [] }
+                } catch {
+                    message = "程序歷史寫入失敗；尚未確認最新增量已保存"
+                }
+                let resultMessage = message
+                let resultDays = days
+                DispatchQueue.main.async {
+                    self?.finishProcessHistoryOperation(message: resultMessage, days: resultDays)
+                }
+            }
         } catch {
             managementModel.historyStatus = "程序歷史寫入失敗；尚未確認最新增量已保存"
         }
@@ -1092,7 +1166,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                     self.syncManagementModel()
                 },
                 setHistoryEnabled: { [weak self] in self?.setProcessHistoryEnabled($0) },
-                reloadHistory: { [weak self] in self?.reloadProcessHistory() }
+                reloadHistory: { [weak self] in self?.reloadProcessHistory() },
+                setHistoryRetention: { [weak self] in self?.setProcessHistoryRetention($0) },
+                deleteHistory: { [weak self] in self?.deleteProcessHistory() }
             ))
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 510),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
