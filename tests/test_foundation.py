@@ -1,0 +1,48 @@
+import importlib.util
+import json
+import pathlib
+import subprocess
+import sys
+import unittest
+from unittest.mock import patch
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location("traffic_monitor", ROOT / "scripts/traffic_monitor.py")
+monitor = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(monitor)
+
+class FoundationTests(unittest.TestCase):
+    def test_tls_not_bypassed(self):
+        for path in ["src/main.swift", "scripts/traffic_monitor.py"]:
+            source = (ROOT / path).read_text()
+            for token in ["InsecureCertDelegate", "ssl.CERT_NONE", "check_hostname = False"]:
+                self.assertNotIn(token, source)
+
+    def test_legacy_mutations_disabled(self):
+        source = (ROOT / "src/main.swift").read_text()
+        for token in ["SIGKILL", "SIGSTOP", "SIGCONT", '"/usr/bin/pkill"', '"-setairportpower"', '"-setadditionalroutes"', '"-ordernetworkservices"', '"-setnetworkserviceenabled"']:
+            self.assertNotIn(token, source)
+
+    @patch.object(monitor.subprocess, "check_output", side_effect=OSError("offline"))
+    def test_unknown_network(self, _):
+        result = monitor.query_traffic()
+        self.assertEqual(result["status"], "network_unknown")
+        self.assertIsNone(result["top100"]["in_top1000"])
+
+    @patch.object(monitor.urllib.request, "urlopen", side_effect=OSError("TLS or network failure"))
+    def test_provider_error_unknown(self, _):
+        result = monitor.get_top100_data("192.0.2.1")
+        self.assertIsNone(result["in_top1000"])
+        self.assertEqual(result["status"], "unavailable")
+
+    def test_json_cli(self):
+        output = subprocess.check_output([sys.executable, str(ROOT / "scripts/traffic_monitor.py"), "--json"], text=True, timeout=20)
+        result = json.loads(output)
+        self.assertEqual(result["schema_version"], 1)
+
+    def test_portability(self):
+        self.assertNotIn("/Users/", (ROOT / "src/main.swift").read_text())
+        self.assertIn("scripts/traffic_monitor.py", (ROOT / "Makefile").read_text())
+
+if __name__ == "__main__":
+    unittest.main()

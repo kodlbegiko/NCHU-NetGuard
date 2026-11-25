@@ -2,3 +2,7 @@
 build/
 *.app
 *.swp
+.build/
+.swiftpm/
+__pycache__/
+*.pyc
