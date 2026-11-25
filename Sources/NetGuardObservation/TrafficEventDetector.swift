@@ -33,13 +33,28 @@ public struct TrafficEventRules: Codable, Equatable, Sendable {
     }
 }
 
-public struct TrafficObservationEvent: Equatable, Sendable, Identifiable {
+public struct TrafficObservationEvent: Codable, Equatable, Sendable, Identifiable {
     public let id: UUID
     public let date: Date
     public let kind: TrafficEventKind
     public let bytesPerSecond: Double?
     public let referenceBytesPerSecond: Double?
     public let duration: TimeInterval?
+    public let rules: TrafficEventRules
+
+    public var isValid: Bool {
+        guard date.timeIntervalSince1970.isFinite,
+              TrafficEventRules(highMiB: rules.highMiB, highSeconds: rules.highSeconds, surgeMiB: rules.surgeMiB, surgeMultiplier: rules.surgeMultiplier) != nil else { return false }
+        switch kind {
+        case .observationGap: return bytesPerSecond == nil && referenceBytesPerSecond == nil && duration == nil
+        case .sustainedHigh:
+            guard let rate = bytesPerSecond, let duration else { return false }
+            return rate.isFinite && rate >= Double(rules.highMiB) * 1_048_576 && duration.isFinite && duration >= Double(rules.highSeconds) && referenceBytesPerSecond == nil
+        case .surge:
+            guard let rate = bytesPerSecond, let reference = referenceBytesPerSecond else { return false }
+            return rate.isFinite && reference.isFinite && reference >= 0 && rate > reference && rate >= max(Double(rules.surgeMiB) * 1_048_576, reference * Double(rules.surgeMultiplier)) && duration == nil
+        }
+    }
 }
 
 /// Descriptive local heuristics, not security or billing conclusions.
@@ -67,7 +82,7 @@ public struct TrafficEventDetector: Sendable {
                                  duration: TimeInterval? = nil) {
         guard date.timeIntervalSince1970.isFinite else { return }
         events.append(.init(id: UUID(), date: date, kind: kind,
-            bytesPerSecond: rate, referenceBytesPerSecond: reference, duration: duration))
+            bytesPerSecond: rate, referenceBytesPerSecond: reference, duration: duration, rules: rules))
         if events.count > 100 { events.removeFirst(events.count - 100) }
     }
 
