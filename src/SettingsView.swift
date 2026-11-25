@@ -29,6 +29,7 @@ struct NetGuardSettingsView: View {
     let inspectBackup: () -> Void
     let createBundle: () -> Void
     let inspectBundle: () -> Void
+    let recoverBundle: () -> Void
 
     @State private var budgetScope = NetworkScope.external
     @State private var budgetGB = ""
@@ -91,6 +92,9 @@ struct NetGuardSettingsView: View {
                     Button("建立完整歷史備份", action: createBundle)
                     Button("預檢歷史備份目錄", action: inspectBundle)
                 }.disabled(model.backupBusy)
+                Button("隔離復原至新目錄", action: recoverBundle).disabled(model.backupBusy)
+                Text("隔離復原只建立通過驗證的新副本，不合併或取代正在使用的帳本。")
+                    .font(.caption).foregroundStyle(.secondary)
                 if model.backupBusy { ProgressView().controlSize(.small) }
                 Text(model.backupStatus).font(.caption).foregroundStyle(.secondary)
                 Text("一般備份僅含歷史 SQLite；完整歷史備份另含已保存的程序、連線與事件紀錄，具有 SHA-256 清單。各資料來源非同時點快照；不含今日未結算流量、設定或未保存觀測。預檢不會匯入或覆寫現有資料。")
