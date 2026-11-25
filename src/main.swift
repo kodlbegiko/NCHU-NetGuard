@@ -262,6 +262,16 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var appProbeInFlight = false
     var appProbeTimestamp: TimeInterval?
     var processUsage = ProcessUsageAccumulator()
+    var processHistoryUsage = ProcessUsageAccumulator()
+    var processHistorySession = UUID()
+    var processHistoryDay: String?
+    var processHistoryHour: Int?
+    var processHistoryLastDate: Date?
+    var processHistoryLastUptime: TimeInterval?
+    var processHistoryEnabled = false
+    var processHistoryStore: ProcessHistoryStore {
+        ProcessHistoryStore(directory: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/NCHU-NetGuard/process-history", isDirectory: true))
+    }
     var processObservationToken = UUID()
     var processUsageWasVisible = false
     var consecutivePingFailures: Int = 0
@@ -818,7 +828,66 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     private func breakProcessContinuity() {
         processUsage.breakContinuity()
+        processHistoryUsage.breakContinuity()
+        processHistoryLastDate = nil
+        processHistoryLastUptime = nil
         processObservationToken = UUID()
+    }
+
+    private func setProcessHistoryEnabled(_ enabled: Bool) {
+        guard enabled != processHistoryEnabled else { return }
+        breakProcessContinuity()
+        processHistoryEnabled = enabled
+        processHistoryUsage = ProcessUsageAccumulator()
+        processHistorySession = UUID()
+        processHistoryDay = nil
+        processHistoryHour = nil
+        managementModel.historyEnabled = enabled
+        managementModel.historyStatus = enabled ? "已啟用本次執行的本機程序歷史" : "已停止新增紀錄；既有資料仍保留"
+        if enabled { reloadProcessHistory() }
+    }
+
+    private func reloadProcessHistory() {
+        let today = ProcessHistoryStore.hour(at: Date()).day
+        let yesterday = ProcessHistoryStore.hour(at: Date().addingTimeInterval(-86400)).day
+        do {
+            managementModel.historyDays = try [today, yesterday].map { try processHistoryStore.read(day: $0) }
+        } catch {
+            managementModel.historyDays = []
+            managementModel.historyStatus = "歷史資料讀取失敗；未覆寫檔案"
+        }
+    }
+
+    private func recordProcessHistory(_ counters: [ProcessCounter]?, date: Date, uptime: TimeInterval) {
+        guard processHistoryEnabled else { return }
+        let key = ProcessHistoryStore.hour(at: date)
+        let clockChanged = processHistoryLastDate.map { oldDate in
+            guard let oldUptime = processHistoryLastUptime else { return true }
+            let elapsed = uptime - oldUptime
+            return elapsed <= 0 || abs(date.timeIntervalSince(oldDate) - elapsed) > 2
+        } ?? false
+        if key.day != processHistoryDay || key.hour != processHistoryHour || clockChanged {
+            processHistoryUsage = ProcessUsageAccumulator()
+            processHistorySession = UUID()
+            processHistoryDay = key.day
+            processHistoryHour = key.hour
+        }
+        processHistoryLastDate = date
+        processHistoryLastUptime = uptime
+        let prior = processHistoryUsage.report().measuredIntervals
+        processHistoryUsage.ingest(counters, uptime: uptime)
+        let report = processHistoryUsage.report()
+        guard report.measuredIntervals > prior else { return }
+        do {
+            let rows = try report.rows.map { try ProcessHistoryRow(name: $0.name, download: $0.received, upload: $0.sent) }
+            let bucket = try ProcessHistoryBucket(session: processHistorySession, hour: key.hour,
+                intervals: report.measuredIntervals, rows: rows, limited: report.capacityReached)
+            try processHistoryStore.save(day: key.day, bucket: bucket)
+            managementModel.historyStatus = "已儲存可辨識的程序增量"
+            if managementWindowController?.window?.isVisible == true { reloadProcessHistory() }
+        } catch {
+            managementModel.historyStatus = "程序歷史寫入失敗；尚未確認最新增量已保存"
+        }
     }
 
     private var processObservationVisible: Bool {
@@ -1021,7 +1090,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                     guard let self, self.workflowPowerGuard.focusEnabled != enabled else { return }
                     self.toggleFocusMode()
                     self.syncManagementModel()
-                }
+                },
+                setHistoryEnabled: { [weak self] in self?.setProcessHistoryEnabled($0) },
+                reloadHistory: { [weak self] in self?.reloadProcessHistory() }
             ))
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 510),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
@@ -1824,6 +1895,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             } else { before = nil }
             let outcome = ProbeRunner.run("/usr/bin/nettop", ["-P", "-L", "1", "-J", "bytes_in,bytes_out"], timeout: 5)
             let sampledAt = ProcessInfo.processInfo.systemUptime
+            let sampledDate = Date()
             let counters: [ProcessCounter]?
             if let before, case .success(let raw) = outcome,
                case .success(let after) = ProbeRunner.run("/bin/ps", ["-ax", "-o", "pid=,lstart="], timeout: 2) {
@@ -1839,6 +1911,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 guard self.workflowPowerGuard.generation == generation else { return }
                 if collectSession && self.processObservationVisible && self.processObservationToken == token {
                     self.processUsage.ingest(counters, uptime: sampledAt)
+                    self.recordProcessHistory(counters, date: sampledDate, uptime: sampledAt)
                 }
                 self.topAppConsumers = (observations ?? []).map { (name: $0.name, bytes: Double($0.bytes)) }
                 self.appProbeTimestamp = observations == nil ? nil : ProcessInfo.processInfo.systemUptime
