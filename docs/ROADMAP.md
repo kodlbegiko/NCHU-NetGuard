@@ -98,6 +98,9 @@ Target layout only. Legacy src/ and scripts/ remain until compatibility and migr
 
 ## 5. User experience
 
+**Simple operation, powerful engine (操作簡單直觀，底層功能強大).** [UX constitution and acceptance gates](UX-PRINCIPLES.md) are mandatory for all user-facing changes. Default quick panel uses progressive disclosure; advanced controls remain discoverable. Safety, permission, data confidence and error states must not be hidden for visual simplicity.
+
+
 Menu bar compact status and native main window; six views: Overview (quota and confidence), Analytics (history), Connections (network quality), Applications (traffic and guard), Automation (rules/schedules), Diagnostics (logs/recovery). Support light/dark mode, keyboard navigation, VoiceOver, dynamic text, clear unknown/stale states. Present download/upload budgets separately, show local and provider data freshness, network scope and policy. No misleading success notifications or assurances of guaranteed routing.
 
 ## 6. Decision and recovery lifecycle
@@ -113,7 +116,7 @@ Initial configurable examples: 70% quota warning, 85% stronger warning, 95% crit
 | R4.0 Foundation | Security and portability fixes; package, contracts, ADR, threat model, fixtures, CI, migration scaffolding | P0 hazards eliminated or disabled by default; deterministic tests; legacy build retained; contract unlock gate satisfied |
 | R4.1 Traffic Intelligence | Multi-interface counters, persisted samples, quota reconciliation, history migration | Synthetic counter and time-edge fixtures pass; controlled traffic error target measured |
 | R4.2 Network Orchestration | Discovery, quality scoring, serialized switching, rollback and diagnostics | Dry-run/injected failure tests and real authorized dual-interface validation; no unintended route loss |
-| R4.3 Native Experience | SwiftUI menu bar, settings, charts, accessibility | UI and accessibility checks, feature parity, no false state labels |
+| R4.3 Native Experience | SwiftUI menu bar, settings, charts, accessibility | UX-01–UX-08 gates, accessibility checks, feature parity, no false state labels |
 | R4.4 Automation | Versioned policy, workflow/power guard, forecasts and anomaly alerts | Conflict and permission tests; guarded tasks never automatically terminated; forecast uncertainty surfaced |
 | R4.5 Observability | App attribution, history/export, diagnostics, performance | Attribution limits documented; benchmark and data retention checks |
 | R5.0 Stable | Integration, installer, recovery/uninstall, long-running validation, documentation | All applicable release gates and real-device validation pass; signing/distribution separate approval |
