@@ -241,3 +241,8 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 
 - Added fixture-only native SmokeTest delegate and script, make smoke, mandatory Foundation CI step and three mocked runner tests. Launches actual built executable with --netguard-smoke, verifies resource presence/status item/four hosted native views, checks basic layout and exits; no production delegate, real history, network probes, user actions or installation. macOS GUI session required. No claim of real-machine network or normal-startup verification; no third-party or paid service.
 - To run on a Mac in a logged-in GUI session: make smoke. To rerun without rebuilding: python3 scripts/smoke_test.py --app build/NCHUTraffic.app. Success requires exit zero and exact NETGUARD_SMOKE_OK marker. Failure, timeout or absent marker blocks verification. No automatic network mutation or release.
+
+## Forty-third iteration
+
+- Added HostProbeCheck.swift and --netguard-host-check / make host-check for read-only local compatibility evidence before production delegate initialization. Coarse outcomes only; no raw probe output or identity disclosure. Exit 0 is limited compatibility evidence, exit 2 is inconclusive, not acceptance. CI logs the check after native fixture smoke; hosted output is not a replacement for physical-device verification. No additional automated regression cases in this iteration.
+- Prior integrated CI 45643965729 completed successfully including Swift tests, Python/static checks, app build and bundle verification. Iterations 42–43 eligible for non-forced integration and fresh exact-HEAD verification. Fixture UI smoke and real-host check remain unverified on the new revision. No paid services or release.
