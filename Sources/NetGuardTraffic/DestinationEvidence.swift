@@ -34,7 +34,7 @@ public enum DestinationAddressKind: String, Codable, Sendable {
         if b[0] == 0x20 && b[1] == 0x01 &&
             ((b[2] & 0xfe == 0) || (b[2] == 0x0d && b[3] == 0xb8)) { return .specialUse }
         if b[0] == 0x20 && b[1] == 0x02 { return .specialUse }
-        if b[0] == 0x3f && b[1] & 0xf0 == 0xf0 { return .specialUse }
+        if b[0] == 0x3f && b[1] == 0xff && b[2] & 0xf0 == 0 { return .specialUse }
         return .publicCandidate
     }
 
@@ -82,10 +82,15 @@ public enum DestinationFlowProjection {
     public static func summarize(_ rows: [DestinationFlowDelta]) -> [DestinationAddressKind: DestinationByteTotals]? {
         guard !rows.isEmpty, rows.count <= 4096 else { return nil }
         var seen = Set<String>()
+        var aggregate: UInt64 = 0
         var totals: [DestinationAddressKind: DestinationByteTotals] = [:]
         for row in rows {
             guard !row.flowID.isEmpty, row.flowID.utf8.count <= 256,
                   seen.insert(row.flowID).inserted else { return nil }
+            let (rowTotal, rowOverflow) = row.received.addingReportingOverflow(row.sent)
+            let (combined, aggregateOverflow) = aggregate.addingReportingOverflow(rowTotal)
+            guard !rowOverflow, !aggregateOverflow else { return nil }
+            aggregate = combined
             let kind = DestinationAddressKind.classify(row.remoteAddress)
             let (rx, a) = (totals[kind]?.received ?? 0).addingReportingOverflow(row.received)
             let (tx, b) = (totals[kind]?.sent ?? 0).addingReportingOverflow(row.sent)
