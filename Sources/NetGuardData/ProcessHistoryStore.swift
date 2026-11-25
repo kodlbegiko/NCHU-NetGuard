@@ -50,7 +50,7 @@ public struct ProcessHistoryDay: Equatable, Sendable {
 
 /// Separate local, opt-in process-label history. One serial caller, atomic daily
 /// file replacement, bounded file size. No PID, IP, executable path or quota data.
-public struct ProcessHistoryStore {
+public struct ProcessHistoryStore: Sendable {
     public let directory: URL
     private let maxBytes = 2 * 1024 * 1024
     public init(directory: URL) { self.directory = directory }
@@ -66,6 +66,60 @@ public struct ProcessHistoryStore {
         _ = try HistoryDay(day: day, total: 0, download: nil, upload: nil)
         return directory.appendingPathComponent(day + ".json")
     }
+    /// Only regular files with validated calendar-day names are managed.
+    /// Foreign files, symlinks and subdirectories are never deletion targets.
+    public func storedDays() throws -> [String] {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: directory.path) else { return [] }
+        let attributes = try fm.attributesOfItem(atPath: directory.path)
+        guard attributes[.type] as? FileAttributeType == .typeDirectory else {
+            throw HistoryStoreError.invalidRecord
+        }
+        let files = try fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        return try files.compactMap { file -> String? in
+            guard file.pathExtension == "json" else { return nil }
+            let day = file.deletingPathExtension().lastPathComponent
+            guard (try? url(day)) != nil else { return nil }
+            let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            guard values.isRegularFile == true, values.isSymbolicLink != true else { return nil }
+            return day
+        }.sorted(by: >)
+    }
+
+    /// Keep the current Taipei calendar day and the preceding days. Future
+    /// records are preserved on clock rollback; unrelated files are untouched.
+    @discardableResult
+    public func prune(keepingDays: Int, now: Date = Date()) throws -> Int {
+        guard [7, 30, 90].contains(keepingDays), now.timeIntervalSince1970.isFinite else {
+            throw HistoryStoreError.invalidRecord
+        }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Taipei")!
+        guard let cutoff = calendar.date(byAdding: .day, value: 1 - keepingDays, to: now)
+        else { throw HistoryStoreError.invalidRecord }
+        let earliest = Self.hour(at: cutoff).day
+        let expired = try storedDays().filter { $0 < earliest }
+        for day in expired { try remove(day: day) }
+        return expired.count
+    }
+
+    public func remove(day: String) throws {
+        let file = try url(day)
+        guard try storedDays().contains(day) else { return }
+        let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        guard values.isRegularFile == true, values.isSymbolicLink != true else {
+            throw HistoryStoreError.invalidRecord
+        }
+        try FileManager.default.removeItem(at: file)
+    }
+
+    @discardableResult
+    public func removeAllHistory() throws -> Int {
+        let days = try storedDays()
+        for day in days { try remove(day: day) }
+        return days.count
+    }
+
     public func read(day: String) throws -> ProcessHistoryDay {
         let path = try url(day)
         guard FileManager.default.fileExists(atPath: path.path) else {
