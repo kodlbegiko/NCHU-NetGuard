@@ -44,3 +44,7 @@ Next: review exact branch CI, audit all trust boundaries, verify recovery journa
 - Bound reads in connection/event/bundle archive; validate decoded connection session directly; add overflow and oversized regression cases.
 - Reject non-regular recovery journal path, including symlinks, before read. This is not race-free O_NOFOLLOW, nor cross-process locking/durability; those gates remain open.
 - Existing Foundation CI extended to allow pushes on closure candidate branches, all gating steps unchanged. PR creation and non-forced ref update remain blocked by connector errors. No exact-HEAD result yet.
+
+## Closure batch 4 (candidate)
+- Machine-readable v1 contract registry for eight models, semantic boundaries and required/optional field sets; automated fixture/registry/validator agreement check. Consumer review and owner approval pending.
+- Module graph guard now verifies literal SwiftPM target dependency lists against ownership manifest and checks for dependency cycles. Actual native target migration remains open.

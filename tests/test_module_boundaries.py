@@ -42,3 +42,28 @@ class ModuleBoundaryTests(unittest.TestCase):
             self.assertIn(f'.target(name: "{target}"', package)
             if target != "NetGuardCore":
                 self.assertIn(f'.testTarget(name: "{target}Tests", dependencies: ["{target}"])', package)
+
+    def test_package_dependency_graph_matches_manifest(self):
+        manifest = json.loads((ROOT / "docs/module-ownership.json").read_text())
+        package = (ROOT / "Package.swift").read_text()
+        # Targets in the current manifest use explicit literal dependency arrays.
+        declarations = re.findall(r'\.target\(name:\s*"([^"]+)"(?:,\s*dependencies:\s*\[([^\]]*)\])?', package)
+        graph = {name: re.findall(r'"([^"]+)"', deps) for name, deps in declarations}
+        self.assertEqual(len(declarations), len(graph), "duplicate target declarations")
+        self.assertEqual(set(graph), set(manifest["targets"]))
+        for name, dependencies in graph.items():
+            self.assertEqual(len(dependencies), len(set(dependencies)))
+            self.assertEqual(set(dependencies), set(manifest["targets"][name]))
+        visiting, visited = set(), set()
+        def visit(node):
+            self.assertNotIn(node, visiting, "module dependency cycle")
+            if node in visited:
+                return
+            visiting.add(node)
+            for dependency in graph[node]:
+                self.assertIn(dependency, graph)
+                visit(dependency)
+            visiting.remove(node)
+            visited.add(node)
+        for name in graph:
+            visit(name)
