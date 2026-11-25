@@ -18,3 +18,10 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 - Added seven recovery tests; these are simulated effects, not macOS network mutations.
 - Added strict daily-state migration decoder and three tests, integrated into the legacy app. Invalid or future-dated data blocks writes and is preserved; previous-day raw state is archived first. UI exposes persistence errors.
 - Contract review, public API initialization/validation, durable journal, ownership semantics and real-device checks are not complete. Full parallel unlock remains blocked. No paid services or external release.
+
+## Fourth iteration
+
+- Added validated atomic JSON recovery journal and simulated compare-and-swap adapter, with five new tests. Single local writer only; fsync durability and multi-process locking are not established. No real network adapter is enabled.
+- Recovery rejects malformed journal entries before interpreting their state.
+- Applied simple-first UX in the legacy WebView: compact adaptive popover, primary information first, collapsed advanced section, keyboard focus styles, reduced motion, placeholder/unknown status, hidden unavailable quick actions. No claim of native SwiftUI completion or UX acceptance testing.
+- Contract freeze, full version validation of other shared models, provider policy verification, and real-device recovery remain open. CI evidence must correspond to exact HEAD.
