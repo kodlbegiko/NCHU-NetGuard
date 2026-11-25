@@ -146,5 +146,16 @@ class FoundationTests(unittest.TestCase):
         self.assertNotIn("/Users/", (ROOT / "src/main.swift").read_text())
         self.assertIn("scripts/traffic_monitor.py", (ROOT / "Makefile").read_text())
 
+
+class LoginItemSafetyTests(unittest.TestCase):
+    def test_legacy_login_item_is_not_rewritten_and_disabled_menu_is_explicit(self):
+        swift = (ROOT / "src/main.swift").read_text()
+        self.assertIn("SMAppService.mainApp.register()", swift)
+        self.assertIn("SMAppService.mainApp.unregister()", swift)
+        self.assertNotIn("plistContent.write", swift)
+        self.assertNotIn("http://140.120.4.13/apply.php", swift)
+        for selector in ("handleToggleWifiFailover", "handleToggleSplitRouting", "handleToggleMidnightSchedule"):
+            self.assertNotIn("action: #selector(" + selector + ")", swift)
+
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,7 @@ import IOKit
 import SystemConfiguration
 import Network
 import UserNotifications
+import ServiceManagement
 
 // MARK: - 歷史紀錄模型與管理器
 struct DayTrafficRecord {
@@ -2896,41 +2897,47 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         }
     }
 
+    private var legacyLaunchAgentPresent: Bool {
+        FileManager.default.fileExists(atPath: FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents/tw.edu.nchu.dorm.traffic.plist").path)
+    }
+
     func isLaunchAtLoginEnabled() -> Bool {
-        let launchAgentPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/LaunchAgents/tw.edu.nchu.dorm.traffic.plist").path
-        return FileManager.default.fileExists(atPath: launchAgentPath)
+        SMAppService.mainApp.status == .enabled
+    }
+
+    private func loginItemTitle() -> String {
+        if legacyLaunchAgentPresent { return "偵測到舊版登入項目（請在系統設定檢查）" }
+        switch SMAppService.mainApp.status {
+        case .enabled: return "停用登入時啟動"
+        case .notRegistered: return "啟用登入時啟動"
+        case .requiresApproval: return "登入項目等待系統核准"
+        case .notFound: return "登入項目不可用"
+        @unknown default: return "登入項目狀態未知"
+        }
     }
 
     func toggleLaunchAtLogin() {
-        let launchAgentPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/LaunchAgents/tw.edu.nchu.dorm.traffic.plist").path
-        
-        if isLaunchAtLoginEnabled() {
-            try? FileManager.default.removeItem(atPath: launchAgentPath)
-        } else {
-            guard let appPath = Bundle.main.executableURL?.path else { return }
-            try? FileManager.default.createDirectory(at: URL(fileURLWithPath: launchAgentPath).deletingLastPathComponent(), withIntermediateDirectories: true)
-            let escapedAppPath = appPath.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
-            let plistContent = """
-            <?xml version="1.0" encoding="UTF-8"?>
-            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-            <plist version="1.0">
-            <dict>
-                <key>Label</key>
-                <string>tw.edu.nchu.dorm.traffic</string>
-                <key>ProgramArguments</key>
-                <array>
-                    <string>\(escapedAppPath)</string>
-                </array>
-                <key>RunAtLoad</key>
-                <true/>
-                <key>ProcessType</key>
-                <string>Interactive</string>
-            </dict>
-            </plist>
-            """
-            try? plistContent.write(toFile: launchAgentPath, atomically: true, encoding: .utf8)
+        // Explicit user menu action only. Never alter a legacy plist or
+        // silently create a second login item beside an existing one.
+        if legacyLaunchAgentPresent {
+            sendSystemNotification(title: "登入項目需確認", body: "偵測到舊版登入項目；請先在 macOS 登入項目設定確認，未修改任何檔案。", isCritical: false)
+            return
+        }
+        do {
+            switch SMAppService.mainApp.status {
+            case .enabled: try SMAppService.mainApp.unregister()
+            case .notRegistered: try SMAppService.mainApp.register()
+            case .requiresApproval:
+                SMAppService.openSystemSettingsLoginItems()
+                return
+            default:
+                sendSystemNotification(title: "登入項目不可用", body: "請在 macOS 系統設定檢查狀態。", isCritical: false)
+                return
+            }
+            sendSystemNotification(title: "登入項目", body: loginItemTitle(), isCritical: false)
+        } catch {
+            sendSystemNotification(title: "登入項目變更未確認", body: "系統未完成要求；請在 macOS 系統設定核對。", isCritical: false)
         }
     }
 
@@ -2976,7 +2983,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         menu.addItem(netModeParent)
         menu.addItem(NSMenuItem.separator())
         
-        let autoLaunchItem = NSMenuItem(title: "🚀 開機自動啟動", action: #selector(handleToggleAutoLaunch), keyEquivalent: "")
+        let autoLaunchItem = NSMenuItem(title: loginItemTitle(), action: #selector(handleToggleAutoLaunch), keyEquivalent: "")
         autoLaunchItem.target = self
         autoLaunchItem.state = isLaunchAtLoginEnabled() ? .on : .off
         menu.addItem(autoLaunchItem)
@@ -2986,51 +2993,51 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         alertToggleItem.state = isAlertEnabled ? .on : .off
         menu.addItem(alertToggleItem)
         
-        let lidGuardToggleItem = NSMenuItem(title: "🛡️ 盒蓋/睡眠防偷跑守護 (暫停串流與同步)", action: #selector(handleToggleLidGuard), keyEquivalent: "")
+        let lidGuardToggleItem = NSMenuItem(title: "盒蓋／睡眠背景傳輸提醒", action: #selector(handleToggleLidGuard), keyEquivalent: "")
         lidGuardToggleItem.target = self
         lidGuardToggleItem.state = isLidGuardEnabled ? .on : .off
         menu.addItem(lidGuardToggleItem)
         
-        let idleGuardToggleItem = NSMenuItem(title: "🚶 離座閒置防偷跑守護 (10分鐘無操作暫停)", action: #selector(handleToggleIdleGuard), keyEquivalent: "")
+        let idleGuardToggleItem = NSMenuItem(title: "離座背景傳輸提醒（10 分鐘）", action: #selector(handleToggleIdleGuard), keyEquivalent: "")
         idleGuardToggleItem.target = self
         idleGuardToggleItem.state = isIdleGuardEnabled ? .on : .off
         menu.addItem(idleGuardToggleItem)
         
-        let failoverItem = NSMenuItem(title: "🔀 宿網耗盡自動切換 Wi-Fi (免拔線避難)", action: #selector(handleToggleWifiFailover), keyEquivalent: "")
+        let failoverItem = NSMenuItem(title: "自動換網（尚未開放）", action: nil, keyEquivalent: "")
         failoverItem.target = self
         failoverItem.state = isAutoWifiFailoverEnabled ? .on : .off
         menu.addItem(failoverItem)
         
-        let splitItem = NSMenuItem(title: "🔀 興大校內/外雙軌智慧分流", action: #selector(handleToggleSplitRouting), keyEquivalent: "")
+        let splitItem = NSMenuItem(title: "智慧分流（尚未開放）", action: nil, keyEquivalent: "")
         splitItem.target = self
         splitItem.state = isSplitRoutingEnabled ? .on : .off
         menu.addItem(splitItem)
         
-        let midnightItem = NSMenuItem(title: "🌙 00:00 換日大檔排程 (00:05 重置啟動)", action: #selector(handleToggleMidnightSchedule), keyEquivalent: "")
+        let midnightItem = NSMenuItem(title: "換日自動排程（尚未開放）", action: nil, keyEquivalent: "")
         midnightItem.target = self
         midnightItem.state = isMidnightScheduleEnabled ? .on : .off
         menu.addItem(midnightItem)
         
-        let p2pShieldItem = NSMenuItem(title: "🛡️ 興大宿網 P2P 違規攔截盾 (自動防禦)", action: #selector(handleToggleP2PShield), keyEquivalent: "")
+        let p2pShieldItem = NSMenuItem(title: "P2P 風險提示（不會終止程序）", action: #selector(handleToggleP2PShield), keyEquivalent: "")
         p2pShieldItem.target = self
         p2pShieldItem.state = isP2PShieldAutoKillEnabled ? .on : .off
         menu.addItem(p2pShieldItem)
         
-        let blocklistItem = NSMenuItem(title: "🔍 興大計中黑名單即時診斷", action: #selector(handleCheckBlocklistNow), keyEquivalent: "")
+        let blocklistItem = NSMenuItem(title: "校方鎖卡狀態（需官方核對）", action: #selector(handleCheckBlocklistNow), keyEquivalent: "")
         blocklistItem.target = self
         menu.addItem(blocklistItem)
         
         if isWiredTemporarilyDisabled {
-            let restoreItem = NSMenuItem(title: "🔌 立即恢復有線宿網 (目前處於 Wi-Fi 避難)", action: #selector(handleRestoreWired), keyEquivalent: "")
+            let restoreItem = NSMenuItem(title: "有線復原（尚未開放）", action: nil, keyEquivalent: "")
             restoreItem.target = self
             menu.addItem(restoreItem)
         } else if isDormNetwork {
-            let switchWifiItem = NSMenuItem(title: "🔀 立即切換為校園 Wi-Fi (免拔線避難)", action: #selector(handleManualSwitchToWifi), keyEquivalent: "")
+            let switchWifiItem = NSMenuItem(title: "手動換網（尚未開放）", action: nil, keyEquivalent: "")
             switchWifiItem.target = self
             menu.addItem(switchWifiItem)
         }
         
-        let panicTitle = pausedPIDs.isEmpty ? "⚡ 一鍵急救省流 (立即暫停串流與同步)" : "▶️ 解除省流 (恢復背景串流與同步)"
+        let panicTitle = pausedPIDs.isEmpty ? "背景流量檢查提醒" : "背景流量檢查提醒"
         let panicItem = NSMenuItem(title: panicTitle, action: #selector(handlePanicFreeze), keyEquivalent: "p")
         panicItem.target = self
         menu.addItem(panicItem)
@@ -3048,7 +3055,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         m2.target = self; m2.state = (displayMode == 2) ? .on : .off
         modeMenu.addItem(m2)
         
-        let m3 = NSMenuItem(title: "狀態安全燈 + 容量 (例如: 🟢 10.7G)", action: #selector(setMode3), keyEquivalent: "")
+        let m3 = NSMenuItem(title: "本機估計等級＋容量", action: #selector(setMode3), keyEquivalent: "")
         m3.target = self; m3.state = (displayMode == 3) ? .on : .off
         modeMenu.addItem(m3)
         
@@ -3193,9 +3200,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
     }
 
     @objc func openIPMS() {
-        if let url = URL(string: "http://140.120.4.13/apply.php") {
-            NSWorkspace.shared.open(url)
-        }
+        sendSystemNotification(title: "官方申請網址未確認", body: "舊版 HTTP 位址未驗證；請由學校計中官方網站尋找申請入口。", isCritical: false)
     }
 
     @objc func quitApp() {
