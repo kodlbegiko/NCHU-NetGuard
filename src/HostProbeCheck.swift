@@ -80,7 +80,13 @@ enum HostProbeCheck {
         _ = accumulator.ingest(first.0, uptime: first.1)
         Thread.sleep(forTimeInterval: 1)
         let second = snapshot()
-        guard let totals = accumulator.ingest(second.0, uptime: second.1) else {
+        let result = accumulator.ingest(second.0, uptime: second.1)
+        if let coverage = accumulator.coverage {
+            print("prior_rows=\(coverage.priorRows) current_rows=\(coverage.currentRows) matched_rows=\(coverage.matchedRows)")
+            print("new_rows=\(coverage.newRows) disappeared_rows=\(coverage.disappearedRows) reset_rows=\(coverage.resetRows)")
+            print("matched_current_rows_fraction=\(coverage.matchedFraction) elapsed_seconds=\(coverage.elapsedSeconds)")
+        }
+        guard let totals = result else {
             print("NETGUARD_TCP_FLOW_CHECK_INCONCLUSIVE")
             return 2
         }
