@@ -6,6 +6,7 @@ import NetGuardWorkflow
 import NetGuardRecovery
 import NetGuardProvider
 import NetGuardTraffic
+import NetGuardData
 
 public typealias NetworkQualityState = NetGuardObservation.NetworkQualityState
 public typealias NetworkQualityWindow = NetGuardObservation.NetworkQualityWindow
@@ -34,4 +35,19 @@ public typealias ScopedInterfaceSample = NetGuardTraffic.ScopedInterfaceSample
 public typealias ScopedTrafficDelta = NetGuardTraffic.ScopedTrafficDelta
 public typealias ScopedCounterAccumulator = NetGuardTraffic.ScopedCounterAccumulator
 public typealias InterfaceScopeProjection = NetGuardTraffic.InterfaceScopeProjection
+public typealias HistoryStoreError = NetGuardData.HistoryStoreError
+public typealias HistoryDay = NetGuardData.HistoryDay
+public typealias LegacyHistoryMigration = NetGuardData.LegacyHistoryMigration
+public typealias ScopedHistoryDay = NetGuardData.ScopedHistoryDay
+public typealias HistoryStore = NetGuardData.HistoryStore
+public typealias HistoryPeriodDay = NetGuardData.HistoryPeriodDay
+public typealias HistoryPeriod = NetGuardData.HistoryPeriod
+public typealias HistoryAnalytics = NetGuardData.HistoryAnalytics
+public typealias HistoryChartKind = NetGuardData.HistoryChartKind
+public typealias HistoryChartPoint = NetGuardData.HistoryChartPoint
+public typealias UsageMigrationError = NetGuardData.UsageMigrationError
+public typealias DailyUsageState = NetGuardData.DailyUsageState
+public typealias UsageMigration = NetGuardData.UsageMigration
+public typealias HistoryBackupSummary = NetGuardData.HistoryBackupSummary
+public typealias HistoryBackupInspector = NetGuardData.HistoryBackupInspector
 #endif
