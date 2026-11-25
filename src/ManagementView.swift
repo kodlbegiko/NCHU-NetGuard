@@ -58,6 +58,8 @@ struct ManagementView: View {
                     VStack(alignment: .leading, spacing: 14) {
                         if tab == 0 {
                             Text(snapshot.connectionStatus).font(.subheadline)
+                            Text(snapshot.routeStatus).font(.caption)
+                            Text("預設路由與位址存在不代表網際網路可達；雙協定使用同一份實體網卡帳本。").font(.caption2).foregroundStyle(.secondary)
                             Text(snapshot.latencyStatus).font(.caption).foregroundStyle(.secondary)
                             Text(snapshot.tunnelStatus).font(.caption).foregroundStyle(.secondary)
                             Picker("查看網卡", selection: $selectedInterface) {
@@ -81,6 +83,7 @@ struct ManagementView: View {
                                     VStack(alignment: .leading) {
                                         Text(item.name).font(.system(.body, design: .monospaced))
                                         Text(item.scopeLabel).font(.caption).foregroundStyle(.secondary)
+                                        Text(item.addressEvidence?.description ?? "位址族尚未量測").font(.caption2).foregroundStyle(.secondary)
                                         if let rate = item.rate {
                                             Text(String(format: "↓ %.2f · ↑ %.2f MiB/s", rate.download / 1_048_576, rate.upload / 1_048_576))
                                                 .font(.caption.monospacedDigit())
