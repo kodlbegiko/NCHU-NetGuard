@@ -90,3 +90,6 @@ Next: review exact branch CI, audit all trust boundaries, verify recovery journa
 
 ## Full roadmap integration increment 2
 - Persist exact verified restored configuration in recovery journal and require equality at crash recovery. Older rolledBack records remain readable, but fail closed without restoration evidence. New rollback writes require the evidence, and subsequent revision changes cannot masquerade as the original rollback. Regression coverage and additive journal ADR included; exact candidate CI pending. Real adapter remains disabled.
+
+## Full roadmap integration increment 3
+- Introduce same-boundary directional reconciliation for independently route-classified flow deltas, with explicit LAN/Internet/unknown buckets, duplicate/overflow rejection and unmatched byte remainder. Socket payload and physical wire totals remain separate; no address-only inference. Added deterministic tests. This is an adapter-facing pure projection, NOT validated live Internet-only accounting, VPN deduplication, or provider billing. No live adapter activated.

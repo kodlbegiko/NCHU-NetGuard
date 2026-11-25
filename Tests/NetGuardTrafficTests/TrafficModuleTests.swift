@@ -33,6 +33,33 @@ final class TrafficModuleTests: XCTestCase {
         XCTAssertFalse(ledger.add(scope: .unknown, received: 1, sent: 0))
         XCTAssertEqual(ledger.aggregate.received, DailyTrafficLedger.maximumTotal - 1)
     }
+    func testFlowPartitionReconcilesOnlyComparableDirectionalTotals() throws {
+        let rows = [
+            RouteClassifiedDelta(identity: "a", route: .localNetwork, bytes: .init(received: 10, sent: 20)),
+            RouteClassifiedDelta(identity: "b", route: .internet, bytes: .init(received: 30, sent: 40))
+        ]
+        let partial = try XCTUnwrap(FlowPartitionProjection.summarize(rows, boundary: .socketPayload))
+        XCTAssertFalse(partial.reconciled)
+        let complete = try XCTUnwrap(FlowPartitionProjection.summarize(rows, boundary: .socketPayload,
+            comparableTotal: .init(received: 40, sent: 60)))
+        XCTAssertTrue(complete.reconciled)
+        let gap = try XCTUnwrap(FlowPartitionProjection.summarize(rows, boundary: .socketPayload,
+            comparableTotal: .init(received: 50, sent: 60)))
+        XCTAssertEqual(gap.unclassified, .init(received: 10, sent: 0))
+        XCTAssertFalse(gap.reconciled)
+        XCTAssertNil(FlowPartitionProjection.summarize(rows, boundary: .socketPayload,
+            comparableTotal: .init(received: 39, sent: 61)))
+        XCTAssertNil(FlowPartitionProjection.summarize(rows + [rows[0]], boundary: .physicalWire))
+    }
+    func testFlowPartitionUnknownAndOverflowFailClosed() throws {
+        let row = RouteClassifiedDelta(identity: "x", route: .unknown, bytes: .init(received: 0, sent: 0))
+        let result = try XCTUnwrap(FlowPartitionProjection.summarize([row], boundary: .physicalWire,
+            comparableTotal: .init()))
+        XCTAssertFalse(result.reconciled)
+        XCTAssertNil(FlowPartitionProjection.summarize([
+            .init(identity: "x", route: .internet, bytes: .init(received: UInt64.max, sent: 1))
+        ], boundary: .socketPayload))
+    }
     func testScopeProjectionRejectsAmbiguousIdentity() {
         let counters = InterfaceCounters(interfaceID: "en0", received: 1, sent: 2)
         XCTAssertEqual(InterfaceScopeProjection.scopes([
