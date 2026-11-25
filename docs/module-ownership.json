@@ -24,7 +24,8 @@
     "ManagementSnapshot.swift": 0,
     "AutomationSnapshot.swift": 0,
     "HistoryBackupInspector.swift": 7,
-    "ModuleCompatibility.swift": 0
+    "ModuleCompatibility.swift": 0,
+    "ObservationSchedule.swift": 2
   },
   "shared_paths": {
     "src/main.swift": 0,
@@ -84,6 +85,7 @@
     "ManagementSnapshot.swift": "NetGuardCore",
     "AutomationSnapshot.swift": "NetGuardCore",
     "HistoryBackupInspector.swift": "NetGuardData",
-    "ModuleCompatibility.swift": "NetGuardCore"
+    "ModuleCompatibility.swift": "NetGuardCore",
+    "ObservationSchedule.swift": "NetGuardObservation"
   }
 }
