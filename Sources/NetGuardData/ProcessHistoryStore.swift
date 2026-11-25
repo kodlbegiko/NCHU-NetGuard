@@ -9,18 +9,23 @@ import Glibc
 /// No blocking on another writer; callers must report/retry a busy write.
 package enum HistoryFileAccess {
     package static func withWriteLock<T>(directory: URL, _ body: () throws -> T) throws -> T {
+        try withDirectoryLock(directory: directory, name: ".netguard-history.lock") { _ in try body() }
+    }
+
+    private static func withDirectoryLock<T>(directory: URL, name: String,
+                                             _ body: (Int32) throws -> T) throws -> T {
         guard directory.isFileURL else { throw HistoryStoreError.invalidRecord }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let parent = open(directory.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         guard parent >= 0 else { throw HistoryStoreError.invalidRecord }
         defer { _ = close(parent) }
-        let fd = openat(parent, ".netguard-history.lock", O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK, mode_t(0o600))
+        let fd = openat(parent, name, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK, mode_t(0o600))
         guard fd >= 0 else { throw HistoryStoreError.invalidRecord }
         defer { _ = close(fd) }
         try validate(fd)
         guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { throw HistoryStoreError.database("history writer busy") }
         defer { _ = flock(fd, LOCK_UN) }
-        return try body()
+        return try body(parent)
     }
 
     static func validate(_ fd: Int32) throws {
@@ -36,7 +41,12 @@ package enum HistoryFileAccess {
             throw HistoryStoreError.invalidRecord
         }
         defer { _ = close(parent) }
-        let fd = openat(parent, url.lastPathComponent, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+        return try read(parent: parent, name: url.lastPathComponent, limit: limit)
+    }
+
+    private static func read(parent: Int32, name: String, limit: Int) throws -> Data? {
+        guard (1...4_194_304).contains(limit) else { throw HistoryStoreError.invalidRecord }
+        let fd = openat(parent, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
         if fd < 0 {
             if errno == ENOENT { return nil }
             throw HistoryStoreError.invalidRecord
@@ -52,6 +62,37 @@ package enum HistoryFileAccess {
         }
         guard data.count <= limit else { throw HistoryStoreError.invalidRecord }
         return data
+    }
+
+    /// Atomic compare-and-replace for a single local state file. Cooperation
+    /// is required; this does not defend against arbitrary same-user writers.
+    /// The temp inode is private from creation. A sync failure after rename
+    /// is ambiguous; the caller must stop writing, not blindly retry.
+    package static func replaceIfUnchanged(_ url: URL, expected: Data?, data: Data, limit: Int) throws {
+        guard url.isFileURL, (1...4_194_304).contains(limit), data.count <= limit,
+              expected.map({ $0.count <= limit }) ?? true,
+              !url.lastPathComponent.isEmpty, url.lastPathComponent != ".", url.lastPathComponent != ".."
+        else { throw HistoryStoreError.invalidRecord }
+        let name = url.lastPathComponent
+        try withDirectoryLock(directory: url.deletingLastPathComponent(), name: name + ".lock") { parent in
+            guard try read(parent: parent, name: name, limit: limit) == expected
+            else { throw HistoryStoreError.database("state changed by another writer") }
+            let temp = ".netguard-state-" + UUID().uuidString
+            let fd = openat(parent, temp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, mode_t(0o600))
+            guard fd >= 0 else { throw HistoryStoreError.database("state temporary file") }
+            defer { _ = unlinkat(parent, temp, 0) }
+            let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+            defer { try? handle.close() }
+            try handle.write(contentsOf: data)
+            guard fsync(fd) == 0 else { throw HistoryStoreError.database("state sync") }
+            try handle.close()
+            guard renameat(parent, temp, parent, name) == 0 else {
+                throw HistoryStoreError.database("state replace")
+            }
+            guard fsync(parent) == 0 else {
+                throw HistoryStoreError.database("state durability unknown")
+            }
+        }
     }
 }
 

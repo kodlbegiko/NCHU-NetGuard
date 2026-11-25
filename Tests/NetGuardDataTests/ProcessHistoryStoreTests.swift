@@ -18,6 +18,23 @@ final class ProcessHistoryStoreTests: XCTestCase {
         try ProcessHistoryBucket(session: session, hour: hour, intervals: intervals,
             rows: [ProcessHistoryRow(name: "Fixture", download: download, upload: upload)], limited: false)
     }
+    func testCompareAndReplaceRejectsStaleWriterAndSymlink() throws {
+        try withStore { store in
+            let file = store.directory.appendingPathComponent("state.json")
+            let first = Data("first".utf8), second = Data("second".utf8)
+            try HistoryFileAccess.replaceIfUnchanged(file, expected: nil, data: first, limit: 100)
+            XCTAssertThrowsError(try HistoryFileAccess.replaceIfUnchanged(file, expected: nil, data: second, limit: 100))
+            try HistoryFileAccess.replaceIfUnchanged(file, expected: first, data: second, limit: 100)
+            XCTAssertThrowsError(try HistoryFileAccess.replaceIfUnchanged(file, expected: first, data: first, limit: 100))
+            XCTAssertEqual(try HistoryFileAccess.read(file, limit: 100), second)
+            let mode = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber
+            XCTAssertEqual(mode?.intValue, 0o600)
+            let link = store.directory.appendingPathComponent("link.json")
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: file)
+            XCTAssertThrowsError(try HistoryFileAccess.replaceIfUnchanged(link, expected: second, data: first, limit: 100))
+            XCTAssertEqual(try HistoryFileAccess.read(file, limit: 100), second)
+        }
+    }
     func testCooperatingWriterLockPreservesHistory() throws {
         try withStore { store in
             let day = "2026-11-25"

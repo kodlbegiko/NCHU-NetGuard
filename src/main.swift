@@ -1928,6 +1928,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
 
     var persistenceStatus = "尚未載入"
     var persistenceBlocked = false
+    private var expectedDailyStateBytes: Data?
 
     func loadPersistedState() {
         let today = getTodayString()
@@ -1937,6 +1938,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                 persistenceStatus = "新紀錄"
                 return
             }
+            expectedDailyStateBytes = data
             let usage = try UsageMigration.decode(data)
             guard usage.date <= today else { throw UsageMigrationError.invalidDate }
             let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
@@ -1983,7 +1985,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                 // Preserve the complete original file before replacing a prior day.
                 let backup = url.deletingLastPathComponent().appendingPathComponent(
                     ".nchu_traffic_archive-" + usage.date + "-" + UUID().uuidString + ".json")
-                try FileManager.default.copyItem(at: url, to: backup)
+                try HistoryFileAccess.replaceIfUnchanged(backup, expected: nil, data: data, limit: 1_048_576)
                 let dl = Double(usage.dormIn) + Double(usage.wifiIn) +
                     Double(usage.externalIn) + Double(usage.unattributedIn)
                 let ul = Double(usage.dormOut) + Double(usage.wifiOut) +
@@ -2003,10 +2005,11 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         }
     }
 
-    func savePersistedState(allowFinalizingPriorDay: Bool = false) {
+    @discardableResult
+    func savePersistedState(allowFinalizingPriorDay: Bool = false) -> Bool {
         let today = getTodayString()
         guard !persistenceBlocked, !clockHeld,
-              currentDateString == today || (allowFinalizingPriorDay && currentDateString < today) else { return }
+              currentDateString == today || (allowFinalizingPriorDay && currentDateString < today) else { return false }
         let dict: [String: Any] = [
             "schema_version": 1,
             "date": currentDateString,
@@ -2043,13 +2046,18 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             "is_dorm": isDormNetwork,
             "is_campus_wifi": isCampusWifi
         ]
-        if let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted]) {
-            do {
-                try data.write(to: URL(fileURLWithPath: stateFilePath), options: .atomic)
-                persistenceStatus = "本機紀錄已儲存"
-            } catch {
-                persistenceStatus = "本機紀錄寫入失敗"
-            }
+        do {
+            let data = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])
+            try HistoryFileAccess.replaceIfUnchanged(URL(fileURLWithPath: stateFilePath),
+                expected: expectedDailyStateBytes, data: data, limit: 1_048_576)
+            expectedDailyStateBytes = data
+            persistenceStatus = "本機紀錄已儲存"
+            return true
+        } catch {
+            persistenceBlocked = true
+            scopedHistoryEligible = false
+            persistenceStatus = "本機紀錄寫入失敗或衝突；已停止寫入"
+            return false
         }
     }
 
@@ -2425,15 +2433,17 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                 let totalUl = dormTodayOutBytes + wifiTodayOutBytes + extTodayOutBytes + unattributedOutBytes
                 if totalDl + totalUl > 0 || measuredSampleCount > 0 {
                     if accountingOverflow || !TrafficHistoryManager.shared.recordDay(date: currentDateString, dl: totalDl, ul: totalUl, preserveExisting: true, scopes: scopedHistoryRows()) {
-                        savePersistedState(allowFinalizingPriorDay: true)
-                        if persistenceStatus != "本機紀錄已儲存" { persistenceBlocked = true }
-                        // Preserve the existing daily file when history cannot be saved.
+                        if !savePersistedState(allowFinalizingPriorDay: true) { persistenceBlocked = true }
+                        // Archive the exact bytes we successfully wrote, not an
+                        // independently replaceable pathname.
                         let url = URL(fileURLWithPath: stateFilePath)
                         do {
-                            guard FileManager.default.fileExists(atPath: url.path) else {
+                            guard !persistenceBlocked, let bytes = expectedDailyStateBytes else {
                                 throw HistoryStoreError.database("missing daily backup")
                             }
-                            try FileManager.default.copyItem(at: url, to: url.deletingLastPathComponent().appendingPathComponent(".nchu_traffic_archive-" + currentDateString + "-" + UUID().uuidString + ".json"))
+                            try HistoryFileAccess.replaceIfUnchanged(
+                                url.deletingLastPathComponent().appendingPathComponent(".nchu_traffic_archive-" + currentDateString + "-" + UUID().uuidString + ".json"),
+                                expected: nil, data: bytes, limit: 1_048_576)
                         } catch { persistenceBlocked = true }
                     }
                 }
@@ -2663,8 +2673,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                  tier: assessment.tier, enabled: isAlertEnabled) else { return }
         // Reserve the attempt before dispatch. A crash may omit delivery, but
         // a successful state write prevents duplicate attempts after restart.
-        savePersistedState()
-        guard persistenceStatus == "本機紀錄已儲存" else {
+        guard savePersistedState() else {
             alertLedgerBlockedDay = currentDateString
             return
         }
