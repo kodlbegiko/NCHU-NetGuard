@@ -17,6 +17,7 @@ public struct DailyUsageState: Codable, Equatable, Sendable {
     public let unattributedIn: UInt64
     public let unattributedOut: UInt64
     public let sampleGapCount: UInt64
+    public let measuredSampleCount: UInt64
 }
 
 /// Decode legacy daily usage without reclassifying traffic or importing raw
@@ -65,6 +66,6 @@ public enum UsageMigration {
             wifiIn: number("wifi_in"), wifiOut: number("wifi_out"),
             externalIn: number("ext_in"), externalOut: number("ext_out"),
             unattributedIn: number("unattributed_in"), unattributedOut: number("unattributed_out"),
-            sampleGapCount: number("sample_gap_count"))
+            sampleGapCount: number("sample_gap_count"), measuredSampleCount: number("measured_sample_count"))
     }
 }
