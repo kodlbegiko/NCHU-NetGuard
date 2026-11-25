@@ -159,7 +159,7 @@ public struct RecoveryTransaction: Sendable {
     /// journal permits rollback only if the current revision and settings match.
     public mutating func recover(_ entry: RecoveryJournalEntry,
                                  observed: OwnedNetworkConfiguration) -> RecoveryEffect {
-        guard step == .idle, entry.schemaVersion == 1 else { return terminal(.safeMode) }
+        guard step == .idle, (try? entry.validate()) != nil else { return terminal(.safeMode) }
         journal = entry
         switch entry.phase {
         case .prepared:
