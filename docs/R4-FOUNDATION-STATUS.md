@@ -231,3 +231,8 @@ Scope attribution is estimated, based on interface type, addresses and an explic
 
 - Integrated CI 45642942716 failed on ConnectionBudgetPeriod.swift:39 (throwing anchor call missing try). Fixed and fast-forwarded the repair only to integration SHA d3c9a622691081dec999d52914c69e64dbb8aff3; repair run 45643262817 is pending final verification.
 - Added HistoryBundle.swift: four saved history categories, SHA-256 inventory and versioned manifest, validated staging, non-overwriting publication and read-only preflight. Native settings create/inspect directory. Optional history writes paused within this process during backup; skipped process intervals are not fabricated. Three regression tests. No active-store restoration, simultaneous snapshot, settings/current-day backup, encryption/signatures or cross-process locking. Candidate remains on feat/r4-history-bundle until repair and exact candidate validation. No paid services or release.
+
+## Forty-first iteration
+
+- Added HistoryBundle.recoverCopy, pinned manifest and payload verification, isolated staging and non-overwriting publication. Native settings expose the isolated recovery workflow. Two tests for source preservation, existing/nested destinations and corrupted input rejection. No live-store replacement, merge, active-store rollback, crash-proof cleanup or signed provenance. No new permissions or network mutation.
+- Repair CI 45643262817 completed successfully, including app build and bundle checks. Iterations 40–41 are eligible for fast-forward integration and new exact-HEAD CI. No paid services or release.
