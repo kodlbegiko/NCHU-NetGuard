@@ -2,13 +2,19 @@
 
 [![macOS](https://img.shields.io/badge/Platform-macOS%2014.0%2B-black?style=flat&logo=apple)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Language-Swift%205.9%2B-orange?style=flat&logo=swift)](https://swift.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: CC0-1.0](https://img.shields.io/badge/License-CC0--1.0-blue.svg)](LICENSE)
 
 專為**中興大學（NCHU）宿舍網路**（特別是二村等每日限額 11GB 配額環境）設計的 macOS 原生常駐狀態列管理與網路防護工具。
 
 提供**精準流量監控**、**雙網卡智慧雙軌分流（Split Tunneling）**、**計中黑名單/超流自動預警**、**P2P 違規進程攔截**，以及**闔蓋/閒置智慧流量防護（Lid & Idle Guard）**。
 
 ---
+
+## 開發藍圖 (Roadmap)
+
+[R4.0–R6.0 完整升級藍圖](docs/ROADMAP.md)：安全修復、多網卡流量引擎、原生介面、網路復原、智慧自動化、契約管理與測試驗收。這些是規劃目標，尚未代表實作完成。現階段優先執行 R4.0 Foundation。
+
+> 本工具為獨立開源專案，非中興大學官方產品。所有網路操作須符合校方及網路服務提供者規範。
 
 ## ✨ 核心特色 (Key Features)
 
@@ -19,7 +25,7 @@
 
 ### 2. ⚡ 雙網卡智慧雙軌分流 (Split Tunneling)
 - **校內高速流量**：中興大學校內網段（`140.120.*`）自動綁定千兆有線網路（Ethernet）。
-- **校外對外流量**：自動分流走 Wi-Fi / 個人熱點，徹底打破 11GB 每日流量上限，享受外網不斷網、校內極速傳輸。
+- **校外對外流量**：依使用者授權及適用網路規範選擇 Wi-Fi / 個人熱點；實際分流及連線持續性仍須驗證。
 
 ### 3. 🛡️ 違規防禦與計中黑名單預警 (NCHU Security)
 - **P2P 主動防禦**：背景掃描常見 P2P / BT 下載工具（如 qBittorrent、Transmission、Thunder 等），主動提示與防護，防止被計中鎖卡斷網。
@@ -47,7 +53,8 @@ NCHU-NetGuard/
 │   ├── traffic_monitor.py      # CLI 終端機流量查詢工具
 │   └── check_traffic.sh        # 便捷啟動腳本
 ├── Makefile                    # 一鍵編譯與打包腳本
-├── LICENSE                     # MIT 開源授權條款
+├── docs/ROADMAP.md             # R4.0–R6.0 升級藍圖
+├── LICENSE                     # CC0-1.0 授權條款
 └── README.md
 ```
 
@@ -70,13 +77,13 @@ make
 編譯完成後，應用程式將生成於：
 `build/NCHUTraffic.app`
 
-若要直接安裝至個人應用程式目錄並啟動：
+目前 Makefile 尚未提供 install 目標；可先手動啟動編譯產物。自動安裝與解除安裝列入 R4.0 藍圖。
 ```bash
-make install
+open build/NCHUTraffic.app
 ```
 
 ---
 
 ## 📜 開源協議 (License)
 
-本專案採用 [MIT License](LICENSE) 條款開源。歡迎中興大學校友與開發者提交 PR 或回報 Issue！
+本儲存庫既有授權為 [CC0 1.0 Universal](LICENSE)（SPDX: CC0-1.0）。完整條文參見 [Creative Commons 官方法律文本](https://creativecommons.org/publicdomain/zero/1.0/legalcode.en)。歡迎中興大學校友與開發者提交 PR 或回報 Issue！
