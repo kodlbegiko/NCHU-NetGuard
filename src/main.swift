@@ -985,6 +985,57 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         inspectTopAppConsumers()
     }
 
+    func createHistoryBackup() {
+        guard !settingsModel.backupBusy else { return }
+        _ = TrafficHistoryManager.shared.loadHistory()
+        let panel = NSSavePanel()
+        panel.title = "建立歷史資料備份"
+        panel.nameFieldStringValue = "NetGuard-history-" + getTodayString() + "-" + String(UUID().uuidString.prefix(8)) + ".sqlite"
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        let source = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/NCHU-NetGuard/history.sqlite")
+        settingsModel.backupBusy = true
+        settingsModel.backupStatus = "正在建立並驗證歷史快照"
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let message: String
+            do {
+                try HistoryStore.backup(from: source, to: destination)
+                message = "歷史備份已建立並通過預檢"
+            } catch {
+                message = "備份失敗；未覆寫現有檔案"
+            }
+            DispatchQueue.main.async {
+                self?.settingsModel.backupBusy = false
+                self?.settingsModel.backupStatus = message
+            }
+        }
+    }
+
+    func inspectHistoryBackup() {
+        guard !settingsModel.backupBusy else { return }
+        let panel = NSOpenPanel()
+        panel.title = "唯讀檢查歷史備份"
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        settingsModel.backupBusy = true
+        settingsModel.backupStatus = "正在唯讀檢查"
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let message: String
+            do {
+                let result = try HistoryBackupInspector.inspect(url)
+                message = "預檢通過：V\(result.schemaVersion)，\(result.recordedDays) 日，\(result.classifiedRows) 筆分類紀錄。未匯入。"
+            } catch {
+                message = "備份預檢失敗；目前資料庫未變更"
+            }
+            DispatchQueue.main.async {
+                self?.settingsModel.backupBusy = false
+                self?.settingsModel.backupStatus = message
+            }
+        }
+    }
+
     func syncSettingsModel() {
         if settingsModel.alertsEnabled != isAlertEnabled { settingsModel.alertsEnabled = isAlertEnabled }
         if settingsModel.focusEnabled != workflowPowerGuard.focusEnabled { settingsModel.focusEnabled = workflowPowerGuard.focusEnabled }
@@ -1024,9 +1075,11 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 self.savePersistedState()
                 self.updateStatusBar()
                 self.syncSettingsModel()
-            }
+            },
+            createBackup: { [weak self] in self?.createHistoryBackup() },
+            inspectBackup: { [weak self] in self?.inspectHistoryBackup() }
         ))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 460),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 540),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
         window.title = "NetGuard · 設定"
