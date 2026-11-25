@@ -29,4 +29,12 @@ final class ManagementSnapshotTests: XCTestCase {
         XCTAssertFalse(result.interfaces.contains(where: \.isDefault))
         XCTAssertEqual(result.findings.first, .connectionUnknown)
     }
+
+    func testCurrentProcessSearchAndOrdering() {
+        let rows: [ProcessSampleRow] = [.init(name: "Safari", bytes: 20), .init(name: "Codex", bytes: 50), .init(name: "Safari Helper", bytes: 5)]
+        XCTAssertEqual(ProcessSamplePresentation.visible(rows, query: " SAFARI ", order: .ascendingBytes).map(\.name), ["Safari Helper", "Safari"])
+        XCTAssertEqual(ProcessSamplePresentation.visible(rows, query: "", order: .descendingBytes).map(\.name), ["Codex", "Safari", "Safari Helper"])
+        XCTAssertEqual(ProcessSamplePresentation.visible(rows, query: "absent", order: .name), [])
+    }
+
 }
