@@ -15,6 +15,14 @@ public struct HistoryDay: Codable, Equatable, Sendable {
     public let download: UInt64?
     public let upload: UInt64?
 
+    private enum CodingKeys: String, CodingKey { case day, total, download, upload }
+    public init(from decoder: Decoder) throws {
+        let v = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(day: v.decode(String.self, forKey: .day), total: v.decode(UInt64.self, forKey: .total),
+                      download: v.decodeIfPresent(UInt64.self, forKey: .download),
+                      upload: v.decodeIfPresent(UInt64.self, forKey: .upload))
+    }
+
     public init(day: String, total: UInt64, download: UInt64?, upload: UInt64?) throws {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
@@ -39,7 +47,9 @@ public struct HistoryDay: Codable, Equatable, Sendable {
 /// Legacy total-only records retain an unknown directional breakdown.
 public enum LegacyHistoryMigration {
     public static func decode(_ data: Data) throws -> [HistoryDay] {
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard data.count <= 4 * 1024 * 1024,
+              let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object.count <= 36_600
         else { throw HistoryStoreError.invalidLegacy }
         func bytes(_ value: Any?) throws -> UInt64 {
             guard let n = value as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(),

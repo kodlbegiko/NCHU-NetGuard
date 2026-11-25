@@ -34,7 +34,7 @@ public struct SavedConnectionSession: Codable, Equatable, Sendable, Identifiable
     }
 }
 
-/// Bounded, manually populated archive. Single serial caller required.
+/// Bounded, manually populated archive. Cooperating writers are serialized.
 /// No automatic grouping, pruning, network matching or quota integration.
 public struct ConnectionHistoryStore: Sendable {
     public let directory: URL
@@ -43,24 +43,7 @@ public struct ConnectionHistoryStore: Sendable {
     public init(directory: URL) { self.directory = directory }
 
     public func read() throws -> [SavedConnectionSession] {
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: directory.path) else { return [] }
-        guard try fm.attributesOfItem(atPath: directory.path)[.type] as? FileAttributeType == .typeDirectory else {
-            throw HistoryStoreError.invalidRecord
-        }
-        guard fm.fileExists(atPath: file.path) else { return [] }
-        let attrs = try fm.attributesOfItem(atPath: file.path)
-        guard attrs[.type] as? FileAttributeType == .typeRegular,
-              let size = attrs[.size] as? NSNumber, size.intValue <= maxBytes else { throw HistoryStoreError.invalidRecord }
-        let handle = try FileHandle(forReadingFrom: file)
-        defer { try? handle.close() }
-        var data = Data()
-        while data.count <= maxBytes {
-            let chunk = try handle.read(upToCount: min(65_536, maxBytes + 1 - data.count)) ?? Data()
-            if chunk.isEmpty { break }
-            data.append(chunk)
-        }
-        guard data.count <= maxBytes else { throw HistoryStoreError.invalidRecord }
+        guard let data = try HistoryFileAccess.read(file, limit: maxBytes) else { return [] }
         let rows = try JSONDecoder().decode([SavedConnectionSession].self, from: data)
         guard rows.count <= 1000, Set(rows.map(\.id)).count == rows.count else { throw HistoryStoreError.invalidRecord }
         return try rows.map {
@@ -70,6 +53,10 @@ public struct ConnectionHistoryStore: Sendable {
     }
 
     public func save(_ row: SavedConnectionSession) throws {
+        try HistoryFileAccess.withWriteLock(directory: directory) { try saveLocked(row) }
+    }
+
+    private func saveLocked(_ row: SavedConnectionSession) throws {
         _ = try SavedConnectionSession(id: row.id, label: row.label, savedAt: row.savedAt,
             received: row.received, sent: row.sent, limitBytes: row.limitBytes, intervals: row.intervals)
         var rows = try read()
@@ -83,9 +70,12 @@ public struct ConnectionHistoryStore: Sendable {
     }
 
     public func remove(id: UUID) throws {
-        let rows = try read()
-        guard rows.contains(where: { $0.id == id }) else { return }
-        try write(rows.filter { $0.id != id })
+        guard FileManager.default.fileExists(atPath: directory.path) else { return }
+        try HistoryFileAccess.withWriteLock(directory: directory) {
+            let rows = try read()
+            guard rows.contains(where: { $0.id == id }) else { return }
+            try write(rows.filter { $0.id != id })
+        }
     }
 
     private func write(_ rows: [SavedConnectionSession]) throws {

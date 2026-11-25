@@ -14,8 +14,7 @@ public struct AgentHistoryStore: Sendable {
 
     public func save(day: String, bucket: ProcessHistoryBucket) throws {
         try validate([bucket])
-        try validate(store.read(day: day).buckets)
-        try store.save(day: day, bucket: bucket)
+        try store.save(day: day, bucket: bucket, allowedLabels: Self.allowedLabels)
     }
 
     public func storedDays() throws -> [String] { try store.storedDays() }

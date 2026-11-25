@@ -1,4 +1,59 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
+
+/// Cooperating writers use a stable lock file, never the replaced data inode.
+/// No blocking on another writer; callers must report/retry a busy write.
+enum HistoryFileAccess {
+    static func withWriteLock<T>(directory: URL, _ body: () throws -> T) throws -> T {
+        guard directory.isFileURL else { throw HistoryStoreError.invalidRecord }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let parent = open(directory.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard parent >= 0 else { throw HistoryStoreError.invalidRecord }
+        defer { _ = close(parent) }
+        let fd = openat(parent, ".netguard-history.lock", O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK, mode_t(0o600))
+        guard fd >= 0 else { throw HistoryStoreError.invalidRecord }
+        defer { _ = close(fd) }
+        try validate(fd)
+        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { throw HistoryStoreError.database("history writer busy") }
+        defer { _ = flock(fd, LOCK_UN) }
+        return try body()
+    }
+
+    static func validate(_ fd: Int32) throws {
+        var info = stat()
+        guard fstat(fd, &info) == 0, (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+              info.st_nlink == 1, info.st_uid == geteuid() else { throw HistoryStoreError.invalidRecord }
+    }
+
+    static func read(_ url: URL, limit: Int) throws -> Data? {
+        let parent = open(url.deletingLastPathComponent().path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        if parent < 0 {
+            if errno == ENOENT { return nil }
+            throw HistoryStoreError.invalidRecord
+        }
+        defer { _ = close(parent) }
+        let fd = openat(parent, url.lastPathComponent, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+        if fd < 0 {
+            if errno == ENOENT { return nil }
+            throw HistoryStoreError.invalidRecord
+        }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        defer { try? handle.close() }
+        try validate(fd)
+        var data = Data()
+        while data.count <= limit {
+            let chunk = try handle.read(upToCount: min(65_536, limit + 1 - data.count)) ?? Data()
+            if chunk.isEmpty { break }
+            data.append(chunk)
+        }
+        guard data.count <= limit else { throw HistoryStoreError.invalidRecord }
+        return data
+    }
+}
 
 public struct ProcessHistoryRow: Codable, Equatable, Sendable, Identifiable {
     public let name: String
@@ -55,7 +110,7 @@ public struct ProcessHistoryDay: Equatable, Sendable {
     }
 }
 
-/// Separate local, opt-in process-label history. One serial caller, atomic daily
+/// Separate local, opt-in process-label history. Cooperating writer lock, atomic daily
 /// file replacement, bounded file size. No PID, IP, executable path or quota data.
 public struct ProcessHistoryStore: Sendable {
     public let directory: URL
@@ -111,6 +166,12 @@ public struct ProcessHistoryStore: Sendable {
     }
 
     public func remove(day: String) throws {
+        _ = try url(day)
+        guard FileManager.default.fileExists(atPath: directory.path) else { return }
+        try HistoryFileAccess.withWriteLock(directory: directory) { try removeLocked(day: day) }
+    }
+
+    private func removeLocked(day: String) throws {
         let file = try url(day)
         guard try storedDays().contains(day) else { return }
         let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
@@ -122,28 +183,19 @@ public struct ProcessHistoryStore: Sendable {
 
     @discardableResult
     public func removeAllHistory() throws -> Int {
-        let days = try storedDays()
-        for day in days { try remove(day: day) }
-        return days.count
+        guard FileManager.default.fileExists(atPath: directory.path) else { return 0 }
+        return try HistoryFileAccess.withWriteLock(directory: directory) {
+            let days = try storedDays()
+            for day in days { try removeLocked(day: day) }
+            return days.count
+        }
     }
 
     public func read(day: String) throws -> ProcessHistoryDay {
         let path = try url(day)
-        guard FileManager.default.fileExists(atPath: path.path) else {
+        guard let data = try HistoryFileAccess.read(path, limit: maxBytes) else {
             return .init(day: day, buckets: [])
         }
-        let attrs = try FileManager.default.attributesOfItem(atPath: path.path)
-        guard attrs[.type] as? FileAttributeType == .typeRegular,
-              let size = attrs[.size] as? NSNumber, size.intValue <= maxBytes else { throw HistoryStoreError.invalidRecord }
-        let handle = try FileHandle(forReadingFrom: path)
-        defer { try? handle.close() }
-        var data = Data()
-        while data.count <= maxBytes {
-            let chunk = try handle.read(upToCount: min(65_536, maxBytes + 1 - data.count)) ?? Data()
-            if chunk.isEmpty { break }
-            data.append(chunk)
-        }
-        guard data.count <= maxBytes else { throw HistoryStoreError.invalidRecord }
         let decoded = try JSONDecoder().decode([ProcessHistoryBucket].self, from: data)
         guard decoded.count <= 512, Set(decoded.map(\.id)).count == decoded.count else { throw HistoryStoreError.invalidRecord }
         let checked = try decoded.map { try ProcessHistoryBucket(session: $0.session, hour: $0.hour, intervals: $0.intervals, rows: $0.rows, limited: $0.limited) }
@@ -154,9 +206,24 @@ public struct ProcessHistoryStore: Sendable {
     /// A cumulative snapshot replaces the same session/hour only if monotonic.
     /// Replaying an identical snapshot is idempotent; distinct sessions coexist.
     public func save(day: String, bucket: ProcessHistoryBucket) throws {
+        try save(day: day, bucket: bucket, allowedLabels: nil)
+    }
+
+    func save(day: String, bucket: ProcessHistoryBucket, allowedLabels: Set<String>?) throws {
+        try HistoryFileAccess.withWriteLock(directory: directory) {
+            try saveLocked(day: day, bucket: bucket, allowedLabels: allowedLabels)
+        }
+    }
+
+    private func saveLocked(day: String, bucket: ProcessHistoryBucket, allowedLabels: Set<String>?) throws {
         let bucket = try ProcessHistoryBucket(session: bucket.session, hour: bucket.hour, intervals: bucket.intervals, rows: bucket.rows, limited: bucket.limited)
         let path = try url(day)
         var records = try read(day: day).buckets
+        if let allowedLabels {
+            guard (records + [bucket]).allSatisfy({ $0.rows.allSatisfy { allowedLabels.contains($0.name) } }) else {
+                throw HistoryStoreError.invalidRecord
+            }
+        }
         if let index = records.firstIndex(where: { $0.id == bucket.id }) {
             let prior = records[index]
             let newer = Dictionary(uniqueKeysWithValues: bucket.rows.map { ($0.name, $0) })

@@ -1,6 +1,11 @@
 import Foundation
 import XCTest
 import NetGuardData
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 final class ProcessHistoryStoreTests: XCTestCase {
     private func withStore(_ body: (ProcessHistoryStore) throws -> Void) throws {
@@ -12,6 +17,19 @@ final class ProcessHistoryStoreTests: XCTestCase {
                         download: UInt64 = 10, upload: UInt64 = 5) throws -> ProcessHistoryBucket {
         try ProcessHistoryBucket(session: session, hour: hour, intervals: intervals,
             rows: [ProcessHistoryRow(name: "Fixture", download: download, upload: upload)], limited: false)
+    }
+    func testCooperatingWriterLockPreservesHistory() throws {
+        try withStore { store in
+            let day = "2026-11-25"
+            try store.save(day: day, bucket: bucket(UUID()))
+            let fd = open(store.directory.appendingPathComponent(".netguard-history.lock").path, O_RDWR | O_NOFOLLOW)
+            XCTAssertGreaterThanOrEqual(fd, 0)
+            guard fd >= 0 else { return }
+            defer { _ = flock(fd, LOCK_UN); _ = close(fd) }
+            XCTAssertEqual(flock(fd, LOCK_EX | LOCK_NB), 0)
+            XCTAssertThrowsError(try store.save(day: day, bucket: bucket(UUID())))
+            XCTAssertEqual(try store.read(day: day).buckets.count, 1)
+        }
     }
     func testIdempotentSnapshotsAndRestartIsolation() throws {
         try withStore { store in

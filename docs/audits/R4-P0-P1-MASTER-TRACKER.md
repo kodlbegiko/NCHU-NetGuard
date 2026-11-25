@@ -71,3 +71,6 @@ Next: review exact branch CI, audit all trust boundaries, verify recovery journa
 
 ## Closure batch 11 (candidate)
 - Python CLI trust boundaries: fixed absolute read-only command paths, bounded direct-child stdout/time and no shell, regular no-follow local JSON read with byte ceiling and shape check, reject HTTP redirects before contact, keep standard TLS. Explicit binary unit labels and accurate snapshot wording. Regression coverage for timeout/output ceiling, redirect rejection and local file shape/symlink. Exact CI pending; child descendants and provider policy/device reconciliation remain separate.
+
+## Closure batch 12 (candidate)
+- Serialize cooperating process/agent/connection history read-modify-write transactions with stable, no-follow nonblocking lock; reject symlinks/special/hardlinked/foreign-owned data files via descriptor-relative read. Agent allowlist validation now inside write lock. Regression tests busy-lock preservation. Validate HistoryDay direct Codable decoding and cap legacy migration bytes/record count. This does not guarantee an atomic multi-store backup or protect against all non-cooperating directory renames. Exact CI required.
