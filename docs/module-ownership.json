@@ -48,13 +48,17 @@
       "NetGuardWorkflow",
       "NetGuardRecovery",
       "NetGuardProvider",
-      "NetGuardTraffic"
+      "NetGuardTraffic",
+      "NetGuardData"
     ],
     "NetGuardObservation": [],
     "NetGuardWorkflow": [],
     "NetGuardRecovery": [],
     "NetGuardProvider": [],
-    "NetGuardTraffic": []
+    "NetGuardTraffic": [],
+    "NetGuardData": [
+      "NetGuardTraffic"
+    ]
   },
   "source_targets": {
     "TrafficAccounting.swift": "NetGuardTraffic",
@@ -71,15 +75,15 @@
     "PolicyEngine.swift": "NetGuardCore",
     "PredictionEngine.swift": "NetGuardCore",
     "WorkflowPowerGuard.swift": "NetGuardWorkflow",
-    "HistoryStore.swift": "NetGuardCore",
+    "HistoryStore.swift": "NetGuardData",
     "ProviderObservation.swift": "NetGuardProvider",
-    "UsageMigration.swift": "NetGuardCore",
+    "UsageMigration.swift": "NetGuardData",
     "QuickPanelState.swift": "NetGuardCore",
-    "HistoryAnalytics.swift": "NetGuardCore",
-    "HistoryChartProjection.swift": "NetGuardCore",
+    "HistoryAnalytics.swift": "NetGuardData",
+    "HistoryChartProjection.swift": "NetGuardData",
     "ManagementSnapshot.swift": "NetGuardCore",
     "AutomationSnapshot.swift": "NetGuardCore",
-    "HistoryBackupInspector.swift": "NetGuardCore",
+    "HistoryBackupInspector.swift": "NetGuardData",
     "ModuleCompatibility.swift": "NetGuardCore"
   }
 }
