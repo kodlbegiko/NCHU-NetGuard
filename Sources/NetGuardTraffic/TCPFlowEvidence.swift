@@ -1,19 +1,26 @@
 import Foundation
 import Darwin
 
-/// Experimental TCP-only, hierarchical nettop CSV adapter. The tuple is
+/// Experimental hierarchical nettop CSV adapter (TCP or UDP, separately). The tuple is
 /// heuristic socket identity, not an OS-issued socket generation identifier.
+public enum FlowTransport: String, Sendable {
+    case tcp, udp
+}
+
 public struct TCPFlowCounter: Equatable, Sendable {
     public let identity: String
     public let remote: String
+    public let transport: FlowTransport
+    public let interface: String
     public let received: UInt64
     public let sent: UInt64
 }
 
 public enum TCPFlowParser {
-    /// Initial supported layout: numeric IPv4 / bracketed IPv6 TCP endpoints and Established
-    /// state only. Process summary rows never contribute bytes.
-    public static func parse(_ output: String, before: [Int: String], after: [Int: String]) -> [TCPFlowCounter]? {
+    /// Numeric IPv4 / bracketed IPv6 endpoints. TCP Established only;
+    /// UDP explicit peer endpoints and recognized state fields only.
+    /// Process summary rows never contribute bytes; UDP is not proof of QUIC.
+    public static func parse(_ output: String, before: [Int: String], after: [Int: String], transport: FlowTransport = .tcp) -> [TCPFlowCounter]? {
         guard output.utf8.count <= 1_048_576, !before.isEmpty, !after.isEmpty else { return nil }
         var columns: [String: Int]?
         var owner: (Int, String, String)?
@@ -33,7 +40,9 @@ public enum TCPFlowParser {
             }
             guard let columns else { continue }
             let label = fields[0]
-            if !label.hasPrefix("tcp4 ") && !label.hasPrefix("tcp6 ") {
+            let v4Prefix = transport.rawValue + "4 "
+            let v6Prefix = transport.rawValue + "6 "
+            if !label.hasPrefix(v4Prefix) && !label.hasPrefix(v6Prefix) {
                 owner = nil
                 guard !label.contains("<->"), let dot = label.lastIndex(of: "."),
                       let pid = Int(label[label.index(after: dot)...]), pid > 0,
@@ -44,8 +53,11 @@ public enum TCPFlowParser {
                 owner = (pid, start, name)
                 continue
             }
-            guard let owner,
-                  fields[columns["state"]!] == "Established",
+            let state = fields[columns["state"]!]
+            // UDP has no TCP-style handshake. Require explicit endpoints;
+            // only initial known fixture states are accepted.
+            let acceptedState = transport == .tcp ? state == "Established" : (state.isEmpty || state == "Connected")
+            guard let owner, acceptedState,
                   let rx = UInt64(fields[columns["bytes_in"]!]),
                   let tx = UInt64(fields[columns["bytes_out"]!]) else { continue }
             let iface = fields[columns["interface"]!]
@@ -53,9 +65,9 @@ public enum TCPFlowParser {
                 (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0)
             }) else { continue }
             let ends = String(label.dropFirst(5)).components(separatedBy: "<->")
-            guard ends.count == 2, let local = endpoint(ends[0], ipv6: label.hasPrefix("tcp6 ")), let remote = endpoint(ends[1], ipv6: label.hasPrefix("tcp6 ")) else { continue }
+            guard ends.count == 2, let local = endpoint(ends[0], ipv6: label.hasPrefix(v6Prefix)), let remote = endpoint(ends[1], ipv6: label.hasPrefix(v6Prefix)) else { continue }
             let identity = "\(owner.0)|\(owner.1.utf8.count):\(owner.1)|\(owner.2.utf8.count):\(owner.2)|\(iface)|\(label.prefix(4))|[\(local.0)]:\(local.1)|[\(remote.0)]:\(remote.1)"
-            let row = TCPFlowCounter(identity: identity, remote: remote.0, received: rx, sent: tx)
+            let row = TCPFlowCounter(identity: identity, remote: remote.0, transport: transport, interface: iface, received: rx, sent: tx)
             if rows.updateValue(row, forKey: identity) != nil { ambiguous.insert(identity) }
             guard rows.count <= 4096 else { return nil }
         }
@@ -116,13 +128,15 @@ public struct TCPFlowAccumulator: Sendable {
     public mutating func reset() { previous = [:]; last = nil; coverage = nil }
     public mutating func ingest(_ rows: [TCPFlowCounter]?, uptime: TimeInterval) -> [DestinationAddressKind: DestinationByteTotals]? {
         guard let rows, !rows.isEmpty, rows.count <= 4096, uptime.isFinite, uptime >= 0,
+              let transport = rows.first?.transport, rows.allSatisfy({ $0.transport == transport }),
               Set(rows.map(\.identity)).count == rows.count else { reset(); return nil }
         coverage = nil
         let current = Dictionary(uniqueKeysWithValues: rows.map { ($0.identity, $0) })
         defer { previous = current; last = uptime }
-        guard let last, uptime > last, uptime - last <= 15 else { return nil }
+        guard let last, uptime > last, uptime - last <= 15,
+              previous.values.allSatisfy({ $0.transport == transport }) else { return nil }
         let deltas: [DestinationFlowDelta] = rows.enumerated().compactMap { index, row in
-            guard let old = previous[row.identity], old.remote == row.remote,
+            guard let old = previous[row.identity], old.remote == row.remote, old.interface == row.interface,
                   row.received >= old.received, row.sent >= old.sent else { return nil }
             return .init(flowID: String(index), remoteAddress: row.remote,
                          received: row.received - old.received, sent: row.sent - old.sent)
