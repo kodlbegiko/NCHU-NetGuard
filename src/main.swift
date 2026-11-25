@@ -783,6 +783,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         
         currentDateString = getTodayString()
         loadDisplayPreferences()
+        if let data = UserDefaults.standard.data(forKey: "NetGuard.eventRules"),
+           let rules = TrafficEventRules.validatedDecode(data) {
+            trafficEventDetector.configure(rules)
+        }
         detectActiveNetworkSync()
         loadPersistedState()
         initHardwareCounters()
@@ -1245,7 +1249,18 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func configureTrafficEvents(_ rules: TrafficEventRules) {
+        guard let data = try? JSONEncoder().encode(rules),
+              let validated = TrafficEventRules.validatedDecode(data) else { return }
+        trafficEventDetector.configure(validated)
+        UserDefaults.standard.set(data, forKey: "NetGuard.eventRules")
+        syncManagementModel()
+    }
+
     func syncManagementModel() {
+        if managementModel.eventRules != trafficEventDetector.rules {
+            managementModel.eventRules = trafficEventDetector.rules
+        }
         let session = connectionSession.reading()
         if managementModel.connectionSession != session { managementModel.connectionSession = session }
         if session?.stopped == true {
@@ -1329,6 +1344,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 setProcessBackground: { [weak self] in self?.setProcessBackgroundEnabled($0) },
                 reloadHistory: { [weak self] in self?.reloadProcessHistory() },
                 testDNS: { [weak self] in self?.testDNS() },
+                configureTrafficEvents: { [weak self] rules in self?.configureTrafficEvents(rules) },
                 clearTrafficEvents: { [weak self] in
                     self?.trafficEventDetector.clear()
                     self?.syncManagementModel()
