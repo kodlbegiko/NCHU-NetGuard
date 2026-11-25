@@ -276,6 +276,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var observedTunnelCandidates: [String] = []
     var observedInterfaceRates: [String: ObservedInterfaceRate] = [:]
     var throughputWindow = ThroughputWindow()
+    var trafficEventDetector = TrafficEventDetector()
     var lastPingUptime: TimeInterval?
     var appProbeInFlight = false
     var appProbeTimestamp: TimeInterval?
@@ -710,6 +711,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         networkQuality.reset()
         resetQualityEvidence()
         throughputWindow.reset()
+        trafficEventDetector.resetContinuity()
         lastPingUptime = nil
         appProbeTimestamp = nil
         topAppConsumers = []
@@ -850,6 +852,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 self.networkQuality.reset()
                 self.resetQualityEvidence()
                 self.throughputWindow.reset()
+                self.trafficEventDetector.resetContinuity()
                 self.lastPingUptime = nil
                 self.pingLatencyMs = -1
                 self.providerObservation = nil
@@ -1283,7 +1286,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             agentUsage: agentUsage.report(), processBackgroundEnabled: processBackgroundEnabled,
             processObservationStatus: processObservationStatus,
             routeEvidence: workflowPowerGuard.allowsSampling ? dualStackEvidence : nil, evidenceUptime: now,
-            addressEvidence: workflowPowerGuard.allowsSampling && rateFresh ? observedAddressEvidence : [:])
+            addressEvidence: workflowPowerGuard.allowsSampling && rateFresh ? observedAddressEvidence : [:],
+            trafficEvents: trafficEventDetector.recent())
         if managementModel.snapshot != snapshot { managementModel.snapshot = snapshot }
         let ledgerStatus: String
         if alertLedgerBlockedDay == currentDateString {
@@ -1325,6 +1329,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 setProcessBackground: { [weak self] in self?.setProcessBackgroundEnabled($0) },
                 reloadHistory: { [weak self] in self?.reloadProcessHistory() },
                 testDNS: { [weak self] in self?.testDNS() },
+                clearTrafficEvents: { [weak self] in
+                    self?.trafficEventDetector.clear()
+                    self?.syncManagementModel()
+                },
                 startConnectionSession: { [weak self] label, text in self?.startConnectionSession(label: label, text: text) },
                 stopConnectionSession: { [weak self] in self?.stopConnectionSession() },
                 saveConnectionArchive: { [weak self] in self?.saveConnectionArchive() },
@@ -2015,6 +2023,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             networkQuality.reset()
             resetQualityEvidence()
             throughputWindow.reset()
+            trafficEventDetector.resetContinuity()
             lastPingUptime = nil
             pingLatencyMs = -1
             providerObservation = nil
@@ -2166,6 +2175,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         predictionIdentity = []
         scopedAccumulator.reset()
         throughputWindow.reset()
+        trafficEventDetector.resetContinuity()
         activeSpeedMeasured = false
         observedInterfaceRates = [:]
         let samples = readScopedInterfaces()
@@ -2361,6 +2371,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             predictionIdentity = []
             lastSampleUptime = nil
             throughputWindow.reset()
+            trafficEventDetector.resetContinuity()
             providerObservation = nil
             alertTierSent = 0
             if isWiredTemporarilyDisabled {
@@ -2469,10 +2480,14 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
         let activeSamples = samples.filter { $0.counters.interfaceID == activeInterface }
         if activeSpeedMeasured, isConnected, activeSamples.count == 1, let sample = activeSamples.first {
-            throughputWindow.ingest(identity: activeInterface + "|" + sample.identity + "|" + sample.scope.rawValue,
-                                    uptime: uptime, download: currentDownSpeed, upload: currentUpSpeed)
+            let identity = activeInterface + "|" + sample.identity + "|" + sample.scope.rawValue
+            throughputWindow.ingest(identity: identity, uptime: uptime,
+                download: currentDownSpeed, upload: currentUpSpeed)
+            trafficEventDetector.ingest(identity: identity, uptime: uptime, date: Date(),
+                download: currentDownSpeed, upload: currentUpSpeed)
         } else {
             throughputWindow.reset()
+            trafficEventDetector.ingest(identity: nil, uptime: uptime, date: Date(), download: nil, upload: nil)
         }
         scheduleObservations(at: uptime)
         updateForecast(samples: samples, deltas: deltas, elapsed: elapsed)
