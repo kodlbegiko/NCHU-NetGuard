@@ -1487,6 +1487,36 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         }
     }
 
+    func recoverHistoryBundleCopy() {
+        guard !settingsModel.backupBusy else { return }
+        let sourcePanel = NSOpenPanel()
+        sourcePanel.title = "選擇要復原的歷史備份目錄"
+        sourcePanel.canChooseDirectories = true
+        sourcePanel.canChooseFiles = false
+        sourcePanel.allowsMultipleSelection = false
+        guard sourcePanel.runModal() == .OK, let source = sourcePanel.url else { return }
+        let destinationPanel = NSSavePanel()
+        destinationPanel.title = "將備份復原至全新目錄"
+        destinationPanel.nameFieldStringValue = "NetGuard-recovered-" + String(UUID().uuidString.prefix(8))
+        destinationPanel.canCreateDirectories = true
+        guard destinationPanel.runModal() == .OK, let destination = destinationPanel.url else { return }
+        settingsModel.backupBusy = true
+        settingsModel.backupStatus = "正在驗證並建立隔離復原副本"
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let status: String
+            do {
+                let summary = try HistoryBundle.recoverCopy(from: source, to: destination)
+                status = "隔離復原完成：" + Self.bundleSummary(summary) + "；未取代使用中的資料"
+            } catch {
+                status = "隔離復原失敗；未發布復原副本或覆寫既有目的地"
+            }
+            DispatchQueue.main.async {
+                self?.settingsModel.backupBusy = false
+                self?.settingsModel.backupStatus = status
+            }
+        }
+    }
+
     func createHistoryBackup() {
         guard !settingsModel.backupBusy else { return }
         _ = TrafficHistoryManager.shared.loadHistory()
@@ -1644,7 +1674,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             createBackup: { [weak self] in self?.createHistoryBackup() },
             inspectBackup: { [weak self] in self?.inspectHistoryBackup() },
             createBundle: { [weak self] in self?.createHistoryBundle() },
-            inspectBundle: { [weak self] in self?.inspectHistoryBundle() }
+            inspectBundle: { [weak self] in self?.inspectHistoryBundle() },
+            recoverBundle: { [weak self] in self?.recoverHistoryBundleCopy() }
         ))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 540),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
