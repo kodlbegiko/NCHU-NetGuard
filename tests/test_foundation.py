@@ -138,6 +138,39 @@ class FoundationTests(unittest.TestCase):
                 db.unlink()
                 self.assertEqual(monitor.load_history(), {"2026-11-24": 999})
 
+    def test_cli_rejects_ambiguous_routes_and_wrong_address_family(self):
+        bad = ["interface: en0\ninterface: en1", "interface: en0\ninterface: en0",
+               "notinterface: en0", "interface: en0\nflags: <UP,REJECT>",
+               "interface: en0\nflags: <UP,BLACKHOLE>", "interface: en0;bad"]
+        for output in bad:
+            with self.subTest(output=output), patch.object(monitor, "run_probe", return_value=output) as probe, patch.object(monitor, "get_top100_data") as provider:
+                self.assertEqual(monitor.query_traffic()["status"], "network_unknown")
+                probe.assert_called_once_with(["/sbin/route", "-n", "get", "-inet", "default"], timeout=3, max_bytes=65536)
+                provider.assert_not_called()
+        for address in ("::1", "fe80::1%en0", "0.0.0.0", "127.0.0.1", "169.254.1.2", "224.0.0.1", "140.120.01.2"):
+            with self.subTest(address=address), patch.object(monitor, "run_probe", side_effect=["interface: en0", address]), patch.object(monitor, "get_top100_data") as provider:
+                self.assertEqual(monitor.query_traffic()["status"], "network_unknown")
+                provider.assert_not_called()
+
+    def test_legacy_history_validation_is_all_or_nothing(self):
+        valid = {"2026-11-23": 0, "2026-11-24": {"total": 15, "dl": 10, "ul": 5}}
+        self.assertEqual(monitor.validated_legacy_history(valid), valid)
+        for day, row in [("2026-02-30", 1), ("2026-11-25\x1b[2J", 1),
+                         ("2026-11-25", True), ("2026-11-25", monitor.MAX_EXACT_BYTES+1),
+                         ("2026-11-25", {"total": 10, "dl": 10}),
+                         ("2026-11-25", {"total": 10, "dl": 8, "ul": 3})]:
+            self.assertEqual(monitor.validated_legacy_history({**valid, day: row}), {})
+
+    def test_app_snapshot_rejects_controls_duplicate_pids_and_overflow(self):
+        raw = ",bytes_in,bytes_out,\nSafe.42,60000,100,\nSafe.43,70000,100,\n"
+        self.assertEqual(monitor.parse_top_apps(raw), [("Safe", 130200)])
+        for row in ("Bad\x1b[2J.1,100000,0,\n", "Bad\u202e.2,100000,0,\n",
+                    "Bad.3,²,100000,\n", "Bad.4,18446744073709551615,1,\n",
+                    "Bad.5,100000,0,extra\n", "Bad.6,100000,0,\nOther.6,100000,0,\n"):
+            self.assertEqual(monitor.parse_top_apps(raw+row), [("Safe", 130200)])
+        self.assertEqual(monitor.parse_top_apps(raw+"Safe.42,99999,0,\n"), [("Safe", 70100)])
+        self.assertEqual(monitor.parse_top_apps("Big.7,18446744073709551615,0,\nBig.8,1,0,\n"), [])
+
     def test_cli_rejects_ambiguous_json_and_nonfinite_constants(self):
         import tempfile
         with tempfile.TemporaryDirectory() as root:

@@ -25,6 +25,7 @@ from datetime import datetime, timezone, timedelta
 from html.parser import HTMLParser
 from urllib.parse import urlparse
 import ipaddress
+import unicodedata
 
 STATE_FILE = os.path.expanduser("~/.nchu_traffic_state.json")
 HISTORY_FILE = os.path.expanduser("~/.nchu_traffic_history.json")
@@ -89,13 +90,49 @@ def read_json_object(path):
     except (OSError, ValueError, RecursionError):
         return None
 
+def valid_history_day(day):
+    if not isinstance(day, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", day):
+        return False
+    try:
+        datetime.strptime(day, "%Y-%m-%d")
+        return True
+    except ValueError:
+        return False
+
+def validated_legacy_history(raw):
+    """Reject a corrupt legacy document rather than exposing raw keys or counts."""
+    if not isinstance(raw, dict) or len(raw) > 36_600:
+        return {}
+    def valid_count(value):
+        return type(value) is int and 0 <= value <= MAX_EXACT_BYTES
+    result = {}
+    for day, row in raw.items():
+        if not valid_history_day(day):
+            return {}
+        if isinstance(row, dict):
+            total = row.get("total")
+            if not valid_count(total) or ("dl" in row) != ("ul" in row):
+                return {}
+            if "dl" in row:
+                dl, ul = row["dl"], row["ul"]
+                if not valid_count(dl) or not valid_count(ul) or dl + ul != total:
+                    return {}
+                result[day] = {"total": total, "dl": dl, "ul": ul}
+            else:
+                result[day] = {"total": total}
+        elif valid_count(row):
+            result[day] = row
+        else:
+            return {}
+    return {day: result[day] for day in sorted(result, reverse=True)[:366]}
+
 def load_history():
     """Use finalized SQLite history; never create or alter the active store."""
     path = Path(HISTORY_DB)
     try:
         info = path.lstat()
     except FileNotFoundError:
-        return read_json_object(HISTORY_FILE) or {}
+        return validated_legacy_history(read_json_object(HISTORY_FILE))
     except OSError:
         return {}
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid() or info.st_size > 64 * 1024 * 1024:
@@ -118,9 +155,8 @@ def load_history():
         rows = connection.execute("SELECT day,total,download,upload FROM history_days ORDER BY day DESC LIMIT 366")
         history = {}
         for day, total, dl, ul in rows:
-            if not isinstance(day, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+            if not valid_history_day(day):
                 return {}
-            datetime.strptime(day, "%Y-%m-%d")
             if day in history or type(total) is not int or not 0 <= total <= MAX_EXACT_BYTES:
                 return {}
             if (dl is None) != (ul is None) or (dl is not None and
@@ -169,27 +205,59 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
 
+def parse_top_apps(output):
+    """Bounded, process-lifetime snapshot. No raw control or bidi characters."""
+    if not isinstance(output, str) or len(output.encode("utf-8", errors="replace")) > MAX_PROBE_BYTES:
+        return []
+    limit = 2**64 - 1
+    by_pid = {}
+    ambiguous = set()
+    for line in output.split("\n"):
+        parts = line.rstrip("\r").split(",")
+        if len(parts) == 4 and parts[-1] == "":
+            parts.pop()
+        if len(parts) != 3:
+            continue
+        match = re.fullmatch(r"(.+)\.([1-9][0-9]{0,9})", parts[0].strip(" \t"))
+        if not match:
+            continue
+        name, pid = match.groups()
+        if int(pid) > 2**31 - 1 or len(name.encode("utf-8", errors="replace")) > 128 or any(
+                unicodedata.category(c).startswith("C") or unicodedata.category(c) in ("Zl", "Zp") for c in name):
+            continue
+        if pid in by_pid or pid in ambiguous:
+            ambiguous.add(pid)
+            by_pid.pop(pid, None)
+            continue
+        if not all(re.fullmatch(r"[0-9]{1,20}", x) for x in parts[1:]):
+            ambiguous.add(pid)
+            continue
+        rx, tx = map(int, parts[1:])
+        if rx > limit or tx > limit or rx + tx > limit:
+            ambiguous.add(pid)
+            continue
+        by_pid[pid] = (name, rx + tx)
+        if len(by_pid) + len(ambiguous) > 4096:
+            return []
+    totals = {}
+    overflow = set()
+    for name, count in by_pid.values():
+        if name in overflow:
+            continue
+        value = totals.get(name, 0) + count
+        if value > limit:
+            overflow.add(name)
+            totals.pop(name, None)
+        else:
+            totals[name] = value
+    return sorted(((name, total) for name, total in totals.items() if total > 50 * 1024),
+                  key=lambda row: (-row[1], row[0]))[:5]
+
 def get_top_apps():
     try:
-        out = run_probe(["/usr/bin/nettop", "-P", "-L", "1", "-J", "bytes_in,bytes_out"], timeout=5)
-        app_map = {}
-        for line in out.splitlines():
-            parts = line.strip().split(',')
-            if len(parts) >= 3 and parts[1].isdigit() and parts[2].isdigit():
-                raw_name = parts[0]
-                name = re.sub(r'\.\d+$', '', raw_name)
-                if name.startswith("Google Chrome"):
-                    name = "Google Chrome"
-                elif name.startswith("Antigravity"):
-                    name = "Antigravity IDE"
-                b_in = int(parts[1])
-                b_out = int(parts[2])
-                total = b_in + b_out
-                if total > 50 * 1024:
-                    app_map[name] = app_map.get(name, 0) + total
-        sorted_apps = sorted(app_map.items(), key=lambda x: x[1], reverse=True)[:5]
-        return sorted_apps
-    except Exception:
+        out = run_probe(["/usr/bin/nettop", "-P", "-L", "1", "-J", "bytes_in,bytes_out"], timeout=10)
+        return parse_top_apps(out)
+    except (OSError, ValueError, subprocess.SubprocessError):
         return []
 
 class RankingParser(HTMLParser):
@@ -331,30 +399,43 @@ def print_progress_bar(used, total, length=30):
     
     return f"{c}[{bar}] {pct:5.1f}%{reset}"
 
+def default_ipv4_interface(output):
+    """Accept exactly one bounded numeric default-route interface observation."""
+    if not isinstance(output, str) or len(output.encode("utf-8", errors="replace")) > 65536:
+        return None
+    names = []
+    for line in output.splitlines():
+        key, sep, value = line.strip().partition(":")
+        if not sep:
+            continue
+        if key.strip() == "interface":
+            names.append(value.strip())
+        if key.strip() == "flags" and set(re.split(r"[,<>\s]+", value)) & {"REJECT", "BLACKHOLE"}:
+            return None
+    if len(names) != 1 or not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,31}", names[0]):
+        return None
+    return names[0]
+
 def query_traffic(scope=None):
-    iface = ""
-    ip = ""
+    def unknown_network():
+        return {"schema_version": 1, "status": "network_unknown",
+                "top100": {"status": "unavailable", "in_top1000": None}}
     try:
-        route_out = run_probe(["/sbin/route", "get", "default"], timeout=3)
-        for line in route_out.splitlines():
-            if "interface:" in line:
-                iface = line.split(":")[1].strip()
-                break
-        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,31}", iface):
-            raise ValueError("No default interface")
-        ip_out = run_probe(["/usr/sbin/ipconfig", "getifaddr", iface], timeout=3).strip()
-        if ip_out:
-            ip = ip_out
-    except Exception:
-        pass
+        route_out = run_probe(["/sbin/route", "-n", "get", "-inet", "default"], timeout=3, max_bytes=65536)
+        iface = default_ipv4_interface(route_out)
+        if iface is None:
+            return unknown_network()
+        ip_out = run_probe(["/usr/sbin/ipconfig", "getifaddr", iface], timeout=3, max_bytes=4096).strip()
+        address = ipaddress.IPv4Address(ip_out)
+        if (str(address) != ip_out or address.is_unspecified or address.is_loopback or
+                address.is_multicast or address.is_link_local or address.is_reserved):
+            return unknown_network()
+        ip = str(address)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return unknown_network()
 
     state = load_state()
-    if not ip:
-        return {"schema_version": 1, "status": "network_unknown", "top100": {"status": "unavailable", "in_top1000": None}}
-    try:
-        campus_candidate = ipaddress.ip_address(ip) in ipaddress.ip_network("140.120.0.0/16")
-    except ValueError:
-        return {"schema_version": 1, "status": "network_unknown", "top100": {"status": "unavailable", "in_top1000": None}}
+    campus_candidate = address in ipaddress.ip_network("140.120.0.0/16")
     # A campus address alone does not distinguish campus Wi-Fi from a dorm.
     top100 = get_top100_data(ip) if campus_candidate else {"in_top1000": None, "status": "not_applicable"}
     unknown = {"schema_version": 1, "status": "local_usage_unknown", "date": get_today_string(),
@@ -458,7 +539,7 @@ def display_report(scope=None):
         for d in sorted(history.keys())[-3:]:
             rec = history[d]
             total_b = rec.get("total") if isinstance(rec, dict) else rec
-            if type(total_b) is not int or not 0 <= total_b <= 2**64 - 1:
+            if type(total_b) is not int or not 0 <= total_b <= MAX_EXACT_BYTES:
                 continue
             print(f"    • {d}: {format_bytes(total_b)}")
         print("\033[1;36m------------------------------------------------------------\033[0m")
