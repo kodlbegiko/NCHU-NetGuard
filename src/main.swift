@@ -594,7 +594,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         appProbeTimestamp = nil
         topAppConsumers = []
         breakProcessContinuity()
-        sampleGapCount += 1
+        sampleGapCount = min(sampleGapCount + 1, Int(DailyTrafficLedger.maximumTotal))
         savePersistedState()
         scopedAccumulator.reset()
         predictionEngine.reset()
@@ -726,6 +726,11 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                 self.clearManualScope()
                 self.sampledScopes.removeAll()
                 self.scopedAccumulator.reset()
+                self.lastSampleUptime = nil
+                self.observedInterfaceRates = [:]
+                self.currentDownSpeed = 0
+                self.currentUpSpeed = 0
+                self.predictionEngine.reset()
                 self.connectionSession.stop()
                 self.lastConnectionSamples = []
                 self.dualStackEvidence = nil
@@ -2141,6 +2146,12 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             clearManualScope()
             sampledScopes.removeAll()
             scopedAccumulator.reset()
+            lastSampleUptime = nil
+            activeSpeedMeasured = false
+            observedInterfaceRates = [:]
+            currentDownSpeed = 0
+            currentUpSpeed = 0
+            predictionEngine.reset()
             connectionSession.stop()
             lastConnectionSamples = []
             networkQuality.reset()
@@ -2572,7 +2583,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         activeSpeedMeasured = false
         observedInterfaceRates = [:]
         if samples.isEmpty || deltas.values.contains(where: { $0.delta.quality != .measured }) {
-            sampleGapCount += 1
+            sampleGapCount = min(sampleGapCount + 1, Int(DailyTrafficLedger.maximumTotal))
         }
         if deltas.values.contains(where: { $0.delta.quality == .measured }) {
             measuredSampleCount = min(measuredSampleCount + 1, 9_007_199_254_740_991)
@@ -2703,7 +2714,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                                                  totalRemaining: UInt64(max(0, totalQuotaBytes - dl - ul)))
         }
         return LocalForecastPresentation.describe(assessment: assessment, forecast: forecast,
-                                                  hasGaps: sampleGapCount > 0)
+                                                  hasGaps: sampleGapCount > 0,
+                                                  hasUnattributedTraffic: unattributedInBytes > 0 || unattributedOutBytes > 0)
     }
 
     func checkAndSendSmartAlerts() {
@@ -3223,7 +3235,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         // Reset sampling continuity, never erase observed bytes or imply a
         // provider quota reset.
         initHardwareCounters()
-        sampleGapCount += 1
+        sampleGapCount = min(sampleGapCount + 1, Int(DailyTrafficLedger.maximumTotal))
         savePersistedState()
         updateStatusBar()
         pushDataToWebUI()

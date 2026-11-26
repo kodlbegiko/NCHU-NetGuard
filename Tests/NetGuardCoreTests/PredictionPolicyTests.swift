@@ -77,6 +77,22 @@ final class PredictionPolicyTests: XCTestCase {
         XCTAssertTrue(LocalForecastPresentation.describe(assessment: assessment,
             forecast: .init(earliestSeconds: .nan, latestSeconds: 10, limitingBudget: .download), hasGaps: false).message.contains("暫無可靠速率推估"))
     }
+    func testForecastSeparatesUnobservedAndUnattributedTraffic() throws {
+        let assessment = try XCTUnwrap(LocalQuotaPolicy.assess(received: 80, sent: 10,
+            receiveLimit: 100, sendLimit: 100, totalLimit: 200))
+        let forecast = QuotaForecast(earliestSeconds: 30, latestSeconds: 50, limitingBudget: .download)
+        let unattributed = LocalForecastPresentation.describe(assessment: assessment,
+            forecast: forecast, hasGaps: false, hasUnattributedTraffic: true)
+        XCTAssertTrue(unattributed.message.contains("未歸類流量不計入"))
+        XCTAssertFalse(unattributed.message.contains("未觀測流量不計入"))
+        let both = LocalForecastPresentation.describe(assessment: assessment,
+            forecast: nil, hasGaps: true, hasUnattributedTraffic: true)
+        XCTAssertTrue(both.message.contains("未歸類流量不計入"))
+        XCTAssertTrue(both.message.contains("未觀測流量不計入"))
+        let normal = LocalForecastPresentation.describe(assessment: assessment,
+            forecast: forecast, hasGaps: false)
+        XCTAssertFalse(normal.message.contains("不計入"))
+    }
     func testPolicyConsidersUploadAndTotal() throws {
         let assessment = try XCTUnwrap(LocalQuotaPolicy.assess(received: 0, sent: 380, receiveLimit: 700, sendLimit: 400, totalLimit: 1100))
         XCTAssertEqual(assessment.tier, .critical)

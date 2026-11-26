@@ -422,6 +422,8 @@ def display_report(scope=None):
         return
     if data.get("status") == "local_usage_unknown":
         print("本機用量或網路歸屬未知；不估算校方剩餘配額。")
+        if scope is None:
+            print("如要查詢本機帳本，請指定 --scope dorm、campus_wifi 或 external。")
         ranking = data.get("top100", {})
         if ranking.get("status") == "listed":
             print(f"校方榜單第 {ranking['rank']} 名（單位與統計時間未驗證）")

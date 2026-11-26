@@ -164,7 +164,7 @@ public enum QuotaBacktest {
 /// daily coverage, provider billing, or a statistical confidence interval.
 public enum LocalForecastPresentation {
     public static func describe(assessment: LocalQuotaAssessment?, forecast: QuotaForecast?,
-                                hasGaps: Bool) -> (message: String, level: String) {
+                                hasGaps: Bool, hasUnattributedTraffic: Bool = false) -> (message: String, level: String) {
         guard let assessment, assessment.usageRatio.isFinite, assessment.usageRatio >= 0
         else { return ("配額未確認，暫不預測", "unknown") }
         func label(_ budget: LimitingBudget) -> String {
@@ -175,7 +175,8 @@ public enum LocalForecastPresentation {
             }
         }
         let level = assessment.tier >= .high ? "danger" : (assessment.tier == .warning ? "warning" : "unknown")
-        let coverage = hasGaps ? "；未觀測流量不計入" : ""
+        let coverage = (hasGaps ? "；未觀測流量不計入" : "") +
+            (hasUnattributedTraffic ? "；未歸類流量不計入" : "")
         let status = "本機估計：\(label(assessment.limitingBudget))已用 \(Int(min(assessment.usageRatio * 100, 999)))%"
         guard let f = forecast, f.earliestSeconds.isFinite, f.latestSeconds.isFinite,
               f.earliestSeconds >= 0, f.earliestSeconds <= f.latestSeconds,
