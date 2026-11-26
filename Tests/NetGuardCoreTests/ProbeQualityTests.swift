@@ -15,6 +15,14 @@ final class ProbeQualityTests: XCTestCase {
         XCTAssertEqual(ProbeRunner.run("/usr/bin/yes", [], timeout: 2, maxBytes: 32_768), .outputLimit)
         XCTAssertEqual(ProbeRunner.run("/usr/bin/false", [], acceptedExitCodes: [1]), .success(""))
     }
+    func testBoundedOptionalDiagnosticCapture() {
+        // Fixed test-only shell fixture; production route arguments remain allowlisted.
+        let args = ["-c", "printf 'not in table' >&2"]
+        XCTAssertEqual(ProbeRunner.run("/bin/sh", args), .success(""))
+        XCTAssertEqual(ProbeRunner.run("/bin/sh", args, mergeStandardError: true), .success("not in table"))
+        XCTAssertEqual(ProbeRunner.run("/bin/sh", args, maxBytes: 3, mergeStandardError: true), .outputLimit)
+        XCTAssertFalse(ProbeRunner.isApproved("/bin/sh", args))
+    }
     func testProductionProbeArgumentPolicy() {
         XCTAssertTrue(ProbeRunner.isApproved("/sbin/route", ["-n", "get", "-inet", "192.0.2.1"]))
         XCTAssertTrue(ProbeRunner.isApproved("/sbin/route", ["-n", "get", "-inet6", "2001:db8::1"]))

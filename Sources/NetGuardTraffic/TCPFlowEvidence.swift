@@ -32,7 +32,7 @@ public struct FlowParseDiagnostics: Equatable, Sendable {
 
 public enum TCPFlowParser {
     /// Numeric IPv4 / bracketed IPv6 endpoints. TCP Established only;
-    /// UDP explicit peer endpoints and recognized state fields only.
+    /// UDP explicit peer endpoints; state may be omitted by nettop, but when present must be recognized.
     /// Process summary rows never contribute bytes; UDP is not proof of QUIC.
     public static func parse(_ output: String, before: [Int: String], after: [Int: String], transport: FlowTransport = .tcp) -> [TCPFlowCounter]? {
         var diagnostics = FlowParseDiagnostics()
@@ -53,15 +53,21 @@ public enum TCPFlowParser {
             var fields = line.split(separator: ",", omittingEmptySubsequences: false)
                 .map { $0.trimmingCharacters(in: .whitespaces) }
             if fields.last == "" { fields.removeLast() }
-            guard fields.count == 5 else { diagnostics.malformedRows += 1; owner = nil; continue }
-            if Set(fields.dropFirst()) == Set(["bytes_in", "bytes_out", "interface", "state"]) {
+            let names = Set(fields.dropFirst())
+            let required: Set<String> = ["bytes_in", "bytes_out", "interface"]
+            let withState = required.union(["state"])
+            let headerCandidate = fields.first == "" &&
+                ((names == withState && fields.count == 5) ||
+                 (transport == .udp && names == required && fields.count == 4))
+            if headerCandidate {
                 // A second header would represent a different observation.
                 guard columns == nil else { diagnostics.status = "repeatedHeader"; return nil }
                 columns = Dictionary(uniqueKeysWithValues: fields.dropFirst().enumerated().map { ($0.element, $0.offset + 1) })
                 owner = nil
                 continue
             }
-            guard let columns else { continue }
+            guard let columns else { diagnostics.malformedRows += 1; continue }
+            guard fields.count == columns.count + 1 else { diagnostics.malformedRows += 1; owner = nil; continue }
             let label = fields[0]
             let v4Prefix = transport.rawValue + "4 "
             let v6Prefix = transport.rawValue + "6 "
@@ -77,10 +83,11 @@ public enum TCPFlowParser {
                 continue
             }
             diagnostics.candidateRows += 1
-            let state = fields[columns["state"]!]
-            // UDP has no TCP-style handshake. Require explicit endpoints;
-            // only initial known fixture states are accepted.
-            let acceptedState = transport == .tcp ? state == "Established" : (state.isEmpty || state == "Connected")
+            let state = columns["state"].map { fields[$0] }
+            // A missing UDP state column is not a TCP handshake claim.
+            // Explicit endpoints and stable owner evidence remain mandatory.
+            let acceptedState = transport == .tcp ? state == "Established" :
+                (state == nil || state == "" || state == "Connected")
             guard let owner else { diagnostics.ownerRejected += 1; continue }
             guard acceptedState else { diagnostics.stateRejected += 1; continue }
             guard let rx = UInt64(fields[columns["bytes_in"]!]),

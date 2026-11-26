@@ -44,6 +44,17 @@ final class DualStackEvidenceTests: XCTestCase {
         XCTAssertEqual(DefaultRouteParser.inspect("interface : en0\nflags: <UP,GATEWAY>").interfaceName, "en0")
     }
 
+    func testExactAbsentDefaultRouteDiagnosticIsNotMalformedOrReachable() {
+        for text in ["not in table", "route: not in table", "route: writing to routing socket: not in table\n"] {
+            XCTAssertEqual(DefaultRouteParser.inspect(text).status, .noDefaultRoute)
+            XCTAssertNil(DefaultRouteParser.interfaceName(text))
+        }
+        XCTAssertEqual(DefaultRouteParser.inspect("").status, .emptyOutput)
+        XCTAssertEqual(DefaultRouteParser.inspect("route: permission denied").status, .missingInterface)
+        XCTAssertNotEqual(DefaultRouteParser.inspect("interface: en0\nroute: not in table").status, .parsed)
+        XCTAssertNotEqual(DefaultRouteParser.inspect("unrecognized not in table").status, .noDefaultRoute)
+    }
+
     func testRouteCandidatesRequireStableEvidenceAndMatchingInterface() {
         let direct = RoutePathParser.inspect("interface: en0\nflags: <UP,HOST,DONE>\n")
         let gateway = RoutePathParser.inspect("interface: en0\nflags: <UP,GATEWAY,DONE>\ngateway: 192.0.2.1\n")

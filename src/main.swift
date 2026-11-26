@@ -2407,7 +2407,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                 let parsed = AgentAttribution.parseTree(raw)
                 before = parsed.isEmpty ? nil : parsed
             } else { before = nil }
-            let outcome = ProbeRunner.runApproved("/usr/bin/nettop", ["-P", "-L", "1", "-J", "bytes_in,bytes_out"], timeout: 5)
+            let outcome = ProbeRunner.runApproved("/usr/bin/nettop", ["-P", "-L", "1", "-J", "bytes_in,bytes_out"], timeout: 10)
             let sampledAt = ProcessInfo.processInfo.systemUptime
             let sampledDate = Date()
             let counters: [ProcessCounter]?

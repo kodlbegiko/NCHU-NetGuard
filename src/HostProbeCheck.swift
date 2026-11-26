@@ -49,12 +49,12 @@ enum InterfaceMIBReader {
 /// No network requests, raw command output, PIDs, paths, addresses or names.
 enum HostProbeCheck {
     enum Result: String {
-        case compatible, unavailable, incompatible, insufficient
+        case compatible, absent, unavailable, incompatible, insufficient
     }
 
     static func run() -> Int32 {
         let before = tree()
-        let nettop = ProbeRunner.runApproved("/usr/bin/nettop", ["-P", "-L", "1", "-J", "bytes_in,bytes_out"], timeout: 5)
+        let nettop = ProbeRunner.runApproved("/usr/bin/nettop", ["-P", "-L", "1", "-J", "bytes_in,bytes_out"], timeout: 10)
         let after = tree()
         let selfPID = Int(ProcessInfo.processInfo.processIdentifier)
         let ps: Result
@@ -86,7 +86,8 @@ enum HostProbeCheck {
         // A missing route is not a parser failure, and a zero-row snapshot
         // is not affirmative process-counter compatibility.
         guard interfaceCounters, ps == .compatible, counters == .compatible,
-              v4 != .incompatible, v6 != .incompatible,
+              v4 == .compatible || v4 == .absent,
+              v6 == .compatible || v6 == .absent,
               v4 == .compatible || v6 == .compatible else {
             print("NETGUARD_HOST_CHECK_INCONCLUSIVE")
             return 2
@@ -102,13 +103,17 @@ enum HostProbeCheck {
     }
 
     private static func route(ipv6: Bool) -> Result {
-        guard case .success(let raw) = ProbeRunner.runApproved("/sbin/route",
-            ["-n", "get", ipv6 ? "-inet6" : "-inet", "default"], timeout: 2, maxBytes: 65536)
+        guard case .success(let raw) = ProbeRunner.runDefaultRoute(ipv6: ipv6)
         else { return .unavailable }
         let result = DefaultRouteParser.inspect(raw)
         let family = ipv6 ? "ipv6" : "ipv4"
         print("\(family)_route_parse_status=\(result.status.rawValue)")
-        return result.status == .parsed ? .compatible : .incompatible
+        switch result.status {
+        case .parsed: return .compatible
+        case .noDefaultRoute: return .absent
+        case .emptyOutput: return .insufficient
+        default: return .incompatible
+        }
     }
 
     struct FlowCheckReading: Sendable {

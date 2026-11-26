@@ -1,7 +1,7 @@
 import Foundation
 
 public enum DefaultRouteParseStatus: String, Equatable, Sendable {
-    case parsed, emptyOutput, missingInterface, ambiguousInterface, invalidInterface, outputLimit, invalidRouteFlags
+    case parsed, noDefaultRoute, emptyOutput, missingInterface, ambiguousInterface, invalidInterface, outputLimit, invalidRouteFlags
 }
 public struct DefaultRouteParseResult: Equatable, Sendable {
     public let status: DefaultRouteParseStatus
@@ -13,7 +13,18 @@ public enum DefaultRouteParser {
             .init(status: status, interfaceName: nil)
         }
         guard output.utf8.count <= 65_536 else { return failure(.outputLimit) }
-        guard !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return failure(.emptyOutput) }
+        let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedOutput.isEmpty else { return failure(.emptyOutput) }
+        // Only an exact diagnostic from the bounded, C-locale default-route
+        // query establishes absence. Empty output alone remains unknown.
+        if ["not in table", "route: not in table",
+            "route: writing to routing socket: not in table"].contains(trimmedOutput) {
+            return failure(.noDefaultRoute)
+        }
+        // Do not accept a contradictory route plus a no-route diagnostic.
+        if trimmedOutput.split(whereSeparator: \.isNewline).contains(where: {
+            $0.trimmingCharacters(in: .whitespaces).hasSuffix("not in table")
+        }) { return failure(.missingInterface) }
         var values: [String] = []
         for line in output.split(whereSeparator: \.isNewline) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)

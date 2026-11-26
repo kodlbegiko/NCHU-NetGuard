@@ -96,6 +96,28 @@ final class TCPFlowEvidenceTests: XCTestCase {
         XCTAssertEqual(TCPFlowParser.parse(text.replacingOccurrences(of: "en0,,", with: "en0,Listen,"), before: starts, after: starts, transport: .udp)?.count, 0)
     }
 
+    func testUDPHeaderWithoutStateOnMacOS27() throws {
+        let h = ",interface,bytes_in,bytes_out,\n"
+        let parent = "Fixture.42,,1000,2000,\n"
+        let udp = "  udp4 192.0.2.1:50000<->198.51.100.1:443,en0,100,50,\n"
+        var detail = FlowParseDiagnostics()
+        let rows = try XCTUnwrap(TCPFlowParser.parse(h + parent + udp, before: starts, after: starts,
+                                                    transport: .udp, diagnostics: &detail))
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows.first?.received, 100)
+        XCTAssertEqual(rows.first?.sent, 50)
+        XCTAssertEqual(detail.status, "parsed")
+        XCTAssertNil(parse(h + parent + udp))
+        XCTAssertNil(TCPFlowParser.parse(h + parent + udp + h, before: starts, after: starts, transport: .udp))
+        XCTAssertEqual(TCPFlowParser.parse(h + parent + udp.replacingOccurrences(of: "198.51.100.1:443", with: "*:*"),
+                                          before: starts, after: starts, transport: .udp)?.count, 0)
+        XCTAssertEqual(TCPFlowParser.parse(h + parent + udp.replacingOccurrences(of: ",100,50,", with: ",bad,50,"),
+                                          before: starts, after: starts, transport: .udp)?.count, 0)
+        XCTAssertEqual(TCPFlowParser.parse(h + parent + udp, before: starts, after: [42: "changed"], transport: .udp)?.count, 0)
+        let duplicate = ",interface,bytes_in,bytes_in,\n"
+        XCTAssertNil(TCPFlowParser.parse(duplicate + parent + udp, before: starts, after: starts, transport: .udp))
+    }
+
     func testUDP6DeltasAndTransportBoundary() throws {
         let udp = "udp6 [fd00::1]:50000<->[2606:4700::1111]:443,100,50,utun2,Connected,\n"
         let first = try XCTUnwrap(TCPFlowParser.parse(header + parent + udp, before: starts, after: starts, transport: .udp))

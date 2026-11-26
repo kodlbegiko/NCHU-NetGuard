@@ -71,8 +71,18 @@ package enum ProbeRunner {
                    timeout: timeout, maxBytes: maxBytes, acceptedExitCodes: acceptedExitCodes)
     }
 
+    /// Only the fixed default-route query retains stderr. This is bounded by
+    /// the same output cap; unrelated probes keep discarding diagnostics.
+    package static func runDefaultRoute(ipv6: Bool) -> ProbeOutcome {
+        let arguments = ["-n", "get", ipv6 ? "-inet6" : "-inet", "default"]
+        guard isApproved("/sbin/route", arguments) else { return .failed }
+        return run("/sbin/route", arguments, timeout: 2, maxBytes: 65_536,
+                   mergeStandardError: true)
+    }
+
     package static func run(_ path: String, _ arguments: [String], timeout: TimeInterval = 5,
-                    maxBytes: Int = 1_048_576, acceptedExitCodes: Set<Int32> = [0]) -> ProbeOutcome {
+                    maxBytes: Int = 1_048_576, acceptedExitCodes: Set<Int32> = [0],
+                    mergeStandardError: Bool = false) -> ProbeOutcome {
         guard path.hasPrefix("/"), timeout.isFinite, timeout > 0, timeout <= 30,
               (1...4_194_304).contains(maxBytes) else { return .failed }
         let pipe = Pipe()
@@ -85,7 +95,7 @@ package enum ProbeRunner {
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = arguments
         process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
+        process.standardError = mergeStandardError ? pipe : FileHandle.nullDevice
         process.standardInput = FileHandle.nullDevice
         process.environment = ["LC_ALL": "C", "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
             "HOME": FileManager.default.homeDirectoryForCurrentUser.path]
