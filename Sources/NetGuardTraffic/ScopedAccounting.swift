@@ -186,3 +186,30 @@ public enum InterfaceScopeEvidence {
         return .unknown
     }
 }
+
+
+/// A local, in-memory user selection; never a provider identity or permission.
+/// Do not persist or transfer this selection to a different network identity.
+public struct ManualScopeSelection: Equatable, Sendable {
+    public let scope: NetworkScope
+    private let interfaceID: String
+    private let identity: String
+    private let generation: String
+
+    public init?(scope: NetworkScope, sample: ScopedInterfaceSample) {
+        guard scope != .unknown, sample.hasScopeIdentity,
+              !sample.counters.interfaceID.isEmpty,
+              let generation = sample.counterGeneration, !generation.isEmpty,
+              generation.utf8.count <= 128,
+              !generation.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else { return nil }
+        self.scope = scope
+        self.interfaceID = sample.counters.interfaceID
+        self.identity = sample.identity
+        self.generation = generation
+    }
+
+    public func matches(_ sample: ScopedInterfaceSample) -> Bool {
+        sample.hasScopeIdentity && sample.counters.interfaceID == interfaceID &&
+        sample.identity == identity && sample.counterGeneration == generation
+    }
+}

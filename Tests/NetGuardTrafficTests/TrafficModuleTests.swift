@@ -141,4 +141,23 @@ final class TrafficModuleTests: XCTestCase {
         }
     }
 
+
+    func testManualScopeSelectionNeverFollowsChangedIdentityOrGeneration() throws {
+        func sample(_ id: String = "en0", _ identity: String = "network-a",
+                    _ generation: String? = "1", _ bytes: UInt64 = 0) -> ScopedInterfaceSample {
+            .init(counters: .init(interfaceID: id, received: bytes, sent: bytes),
+                  scope: .unknown, identity: identity, counterGeneration: generation)
+        }
+        let selected = try XCTUnwrap(ManualScopeSelection(scope: .dorm, sample: sample()))
+        XCTAssertTrue(selected.matches(sample("en0", "network-a", "1", 500)))
+        XCTAssertFalse(selected.matches(sample("en1")))
+        XCTAssertFalse(selected.matches(sample("en0", "network-b")))
+        XCTAssertFalse(selected.matches(sample("en0", "network-a", "2")))
+        XCTAssertFalse(selected.matches(sample("en0", "network-a", nil)))
+        XCTAssertNil(ManualScopeSelection(scope: .unknown, sample: sample()))
+        XCTAssertNil(ManualScopeSelection(scope: .dorm, sample: sample("en0", "")))
+        XCTAssertNil(ManualScopeSelection(scope: .dorm, sample: sample("en0", "network-a", nil)))
+        XCTAssertNil(ManualScopeSelection(scope: .dorm, sample: sample("en0", "network-a", "\n")))
+    }
+
 }
