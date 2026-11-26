@@ -36,6 +36,35 @@ public struct ObservationSchedule: Sendable {
     }
 }
 
+/// A short-lived cache of physical interface kinds only. The caller must
+/// supply the fresh, unambiguous kernel name/index inventory every tick.
+/// No IP address, counter, scope, quota or route is cached here.
+public struct InterfaceMetadataCache: Sendable {
+    private var inventory: [String: UInt32] = [:]
+    private var kinds: [String: String] = [:]
+    private var observedAt: TimeInterval?
+    public init() {}
+    public mutating func invalidate() { self = Self() }
+
+    public mutating func resolve(inventory current: [String: UInt32], now: TimeInterval,
+                                 load: () -> [String: String]) -> [String: String] {
+        guard now.isFinite, now >= 0, !current.isEmpty, current.count <= 256,
+              current.values.allSatisfy({ $0 > 0 }) else {
+            invalidate()
+            return [:]
+        }
+        if current == inventory, let observedAt, now >= observedAt,
+           now - observedAt < 10, !kinds.isEmpty { return kinds }
+        invalidate()
+        let fresh = load().filter { current[$0.key] != nil }
+        guard !fresh.isEmpty else { return [:] }
+        inventory = current
+        kinds = fresh
+        observedAt = now
+        return fresh
+    }
+}
+
 /// An interface name is evidence of a possible tunnel, not proof of a VPN
 /// provider, encryption, routing coverage, or an active commercial VPN.
 public enum TunnelEvidence {

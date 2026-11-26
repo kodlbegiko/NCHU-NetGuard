@@ -11,6 +11,7 @@ import NetGuardData
 public typealias NetworkQualityState = NetGuardObservation.NetworkQualityState
 public typealias NetworkQualityWindow = NetGuardObservation.NetworkQualityWindow
 public typealias ObservationSchedule = NetGuardObservation.ObservationSchedule
+public typealias InterfaceMetadataCache = NetGuardObservation.InterfaceMetadataCache
 public typealias TunnelEvidence = NetGuardObservation.TunnelEvidence
 public typealias LatencySummary = NetGuardObservation.LatencySummary
 public typealias ThroughputPoint = NetGuardObservation.ThroughputPoint

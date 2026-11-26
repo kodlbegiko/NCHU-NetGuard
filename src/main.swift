@@ -587,6 +587,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
 
     @objc func systemWillSleep() {
         guard workflowPowerGuard.systemSleep() else { return }
+        interfaceMetadataCache.invalidate()
         clearManualScope()
         sampledScopes.removeAll()
         isConnected = false
@@ -743,6 +744,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.routeEventToken = UUID()
+                self.interfaceMetadataCache.invalidate()
                 self.clearManualScope()
                 self.sampledScopes.removeAll()
                 self.scopedAccumulator.reset()
@@ -2008,7 +2010,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                   self.workflowPowerGuard.allowsSampling else { return }
             self.detectActiveNetwork {
                 self.syncWithTop100Server()
-                self.measurePingLatency()
+                if self.processObservationVisible { self.measurePingLatency() }
                 self.inspectTopAppConsumers()
             }
         }
@@ -2238,29 +2240,41 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
 
     // Read physical Ethernet/Wi-Fi counters only. No VPN/loopback double counting.
     // Interface traffic includes link-local/LAN bytes, not authoritative campus quota.
+    private var interfaceMetadataCache = InterfaceMetadataCache()
+
     func readScopedInterfaces() -> [ScopedInterfaceSample] {
         observedTunnelCandidates = []
         observedAddressEvidence = [:]
-        let types: [String: String] = autoreleasepool {
-            let devices = SCNetworkInterfaceCopyAll() as NSArray
-            var result: [String: String] = [:]
-            for item in devices {
-                let interface = item as! SCNetworkInterface
-                if let name = SCNetworkInterfaceGetBSDName(interface) as String?,
-                   let kind = SCNetworkInterfaceGetInterfaceType(interface) as String?,
-                   kind == (kSCNetworkInterfaceTypeEthernet as String) ||
-                       kind == (kSCNetworkInterfaceTypeIEEE80211 as String) {
-                    result[name] = kind
-                }
-            }
-            return result
-        }
         var list: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&list) == 0, let first = list else {
+            interfaceMetadataCache.invalidate()
             clearManualScope()
             return []
         }
         defer { freeifaddrs(list) }
+        // Fresh kernel link inventory on every tick. Only the relatively
+        // expensive SystemConfiguration kind lookup is cached, never counters
+        // or addresses. Reject ambiguous or invalid link generations.
+        var inventory: [String: UInt32] = [:]
+        var ambiguous = Set<String>()
+        if let offset = MemoryLayout<sockaddr_dl>.offset(of: \.sdl_index) {
+            for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
+                let item = pointer.pointee
+                guard let address = item.ifa_addr, address.pointee.sa_family == UInt8(AF_LINK) else { continue }
+                let name = String(cString: item.ifa_name)
+                guard Int(address.pointee.sa_len) >= offset + MemoryLayout<UInt16>.size else {
+                    ambiguous.insert(name)
+                    continue
+                }
+                let index = UInt32(UnsafeRawPointer(address).loadUnaligned(fromByteOffset: offset, as: UInt16.self))
+                if index == 0 || inventory.updateValue(index, forKey: name) != nil { ambiguous.insert(name) }
+            }
+        }
+        for name in ambiguous { inventory.removeValue(forKey: name) }
+        let types = interfaceMetadataCache.resolve(inventory: inventory,
+            now: ProcessInfo.processInfo.systemUptime) {
+            Self.readPhysicalInterfaceKinds()
+        }
         var addresses: [String: [String]] = [:]
         var linkNames = Set<String>()
         var ambiguousLinks = Set<String>()
@@ -2309,7 +2323,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         observedTunnelCandidates = tunnels.sorted()
         observedAddressEvidence = familyEvidence
         let samples: [ScopedInterfaceSample] = linkNames.subtracting(ambiguousLinks).sorted().compactMap { name in
-            guard let reading = InterfaceMIBReader.read(name), let kind = types[name] else { return nil }
+            guard let reading = InterfaceMIBReader.read(name), let kind = types[name],
+                  inventory[name] == reading.index else { return nil }
             let ips = Set(addresses[name, default: []]).sorted()
             let identity = ips.isEmpty ? "" : kind + "|" + ips.joined(separator: ",")
             let candidate = ScopedInterfaceSample(counters: reading.counters, scope: .unknown,
@@ -2331,7 +2346,25 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         return samples
     }
 
+    private static func readPhysicalInterfaceKinds() -> [String: String] {
+        autoreleasepool {
+            let devices = SCNetworkInterfaceCopyAll() as NSArray
+            var result: [String: String] = [:]
+            for item in devices {
+                let interface = item as! SCNetworkInterface
+                if let name = SCNetworkInterfaceGetBSDName(interface) as String?,
+                   let kind = SCNetworkInterfaceGetInterfaceType(interface) as String?,
+                   kind == (kSCNetworkInterfaceTypeEthernet as String) ||
+                       kind == (kSCNetworkInterfaceTypeIEEE80211 as String) {
+                    result[name] = kind
+                }
+            }
+            return result
+        }
+    }
+
     func initHardwareCounters() {
+        interfaceMetadataCache.invalidate()
         predictionEngine.reset()
         predictionScope = .unknown
         predictionIdentity = []
@@ -2579,7 +2612,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         }
         
         // 離座閒置動態偵測 (防止人離開座位未盒蓋，而背景被串流或下載暗中掏空流量)
-        if isIdleGuardEnabled && !isLidCurrentlyClosed {
+        // The idle reading cannot affect either transition unless a reminder
+        // is active or its existing traffic/focus precondition is satisfied.
+        if isIdleGuardEnabled && !isLidCurrentlyClosed &&
+            (isUserCurrentlyIdle || (!workflowPowerGuard.focusEnabled && currentDownSpeed > 150 * 1024)) {
             let idleSecs = getSystemIdleSeconds()
             if idleSecs >= 600.0 && !isUserCurrentlyIdle { // 閒置超過 10 分鐘
                 if !workflowPowerGuard.focusEnabled && currentDownSpeed > 150 * 1024 {

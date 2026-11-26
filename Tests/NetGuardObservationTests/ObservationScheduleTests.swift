@@ -2,6 +2,34 @@ import XCTest
 import NetGuardObservation
 
 final class ObservationScheduleTests: XCTestCase {
+    func testInterfaceMetadataCacheRefreshesOnIdentityTimeAndInvalidation() {
+        var cache = InterfaceMetadataCache()
+        var loads = 0
+        var kinds = ["en0": "WiFi", "en9": "Ethernet"]
+        let inventory: [String: UInt32] = ["en0": 4, "utun0": 5]
+        func load() -> [String: String] { loads += 1; return kinds }
+        XCTAssertEqual(cache.resolve(inventory: inventory, now: 0, load: load), ["en0": "WiFi"])
+        XCTAssertEqual(cache.resolve(inventory: inventory, now: 9, load: load), ["en0": "WiFi"])
+        XCTAssertEqual(loads, 1)
+        kinds = ["en0": "Ethernet"]
+        XCTAssertEqual(cache.resolve(inventory: inventory, now: 10, load: load), kinds)
+        XCTAssertEqual(loads, 2)
+        XCTAssertEqual(cache.resolve(inventory: ["en0": 8], now: 11, load: load), kinds)
+        XCTAssertEqual(loads, 3)
+        XCTAssertEqual(cache.resolve(inventory: ["en0": 8], now: 9, load: load), kinds)
+        XCTAssertEqual(loads, 4)
+        cache.invalidate()
+        XCTAssertEqual(cache.resolve(inventory: inventory, now: 12, load: load), kinds)
+        XCTAssertEqual(loads, 5)
+        kinds = [:]
+        XCTAssertEqual(cache.resolve(inventory: inventory, now: 22, load: load), [:])
+        XCTAssertEqual(cache.resolve(inventory: inventory, now: 23, load: load), [:])
+        XCTAssertEqual(loads, 7)
+        XCTAssertEqual(cache.resolve(inventory: [:], now: 24, load: load), [:])
+        XCTAssertEqual(cache.resolve(inventory: ["en0": 0], now: 24, load: load), [:])
+        XCTAssertEqual(cache.resolve(inventory: inventory, now: .nan, load: load), [:])
+        XCTAssertEqual(loads, 7)
+    }
     func testEventCoalescingAndFallback() {
         var s = ObservationSchedule()
         XCTAssertTrue(s.takeRoute(now: 0, visible: false))

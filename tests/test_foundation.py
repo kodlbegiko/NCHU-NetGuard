@@ -222,7 +222,12 @@ class FoundationTests(unittest.TestCase):
         self.assertNotIn("Int(now) % 10", swift)
         self.assertIn("probeUptime - $0 >= 5", swift)
         self.assertIn("uptime - $0 >= 10", swift)
-        self.assertIn("let types: [String: String] = autoreleasepool", swift)
+        self.assertIn("interfaceMetadataCache.resolve(inventory: inventory", swift)
+        self.assertIn("inventory[name] == reading.index", swift)
+        self.assertIn("self.interfaceMetadataCache.invalidate()", swift)
+        self.assertIn("MemoryLayout<sockaddr_dl>.offset", swift)
+        self.assertIn("private static func readPhysicalInterfaceKinds()", swift)
+        self.assertIn("isUserCurrentlyIdle || (!workflowPowerGuard.focusEnabled", swift)
 
     def test_popover_creation_deferred_until_opening(self):
         swift = (ROOT / "src/main.swift").read_text()
