@@ -2950,6 +2950,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         menu.addItem(NSMenuItem.separator())
         
         let netModeMenu = NSMenu()
+        netModeMenu.autoenablesItems = false
         let canSelectScope = manualScopeCandidate() != nil
         let nAuto = NSMenuItem(title: "自動偵測 (目前: \(networkTypeName))", action: #selector(setNetModeAuto), keyEquivalent: "")
         nAuto.target = self; nAuto.state = (networkModeOverride == 0) ? .on : .off

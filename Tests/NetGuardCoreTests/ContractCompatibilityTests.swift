@@ -71,4 +71,13 @@ final class ContractCompatibilityTests: XCTestCase {
                         redactedReason: "fixture", outcome: "observed", errorCode: nil).validate()
     }
 
+    func testCoreScopeFacadeExportsNewTrafficHelpers() throws {
+        XCTAssertEqual(InterfaceScopeEvidence.resolve(ipv4: ["140.120.1.2"],
+            hasUsableIPv6: false, isWiFi: false), .unknown)
+        let sample = ScopedInterfaceSample(counters: .init(interfaceID: "en0",
+            received: 0, sent: 0), scope: .unknown, identity: "fixture", counterGeneration: "1")
+        let selection = try XCTUnwrap(ManualScopeSelection(scope: .dorm, sample: sample))
+        XCTAssertTrue(selection.matches(sample))
+    }
+
 }
