@@ -194,9 +194,18 @@ class FoundationTests(unittest.TestCase):
                 self.assertEqual(monitor.load_history(), {})
 
     def test_json_cli(self):
-        output = subprocess.check_output([sys.executable, str(ROOT / "scripts/traffic_monitor.py"), "--json"], text=True, timeout=20)
-        result = json.loads(output)
+        import contextlib
+        import io
+        output = io.StringIO()
+        with patch.object(sys, "argv", ["traffic_monitor.py", "--json"]), \
+             patch.object(monitor, "run_probe", side_effect=OSError("offline fixture")), \
+             patch.object(monitor, "load_state", return_value=None), \
+             patch.object(monitor, "get_top100_data") as provider, contextlib.redirect_stdout(output):
+            monitor.main()
+        result = json.loads(output.getvalue())
         self.assertEqual(result["schema_version"], 1)
+        self.assertEqual(result["status"], "network_unknown")
+        provider.assert_not_called()
 
     def test_no_direct_app_process_launcher(self):
         for path in (ROOT / "src").glob("*.swift"):

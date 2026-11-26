@@ -44,6 +44,14 @@ make smoke-module
 
 已實作 `make install` 的基本使用者目錄複製目標，但尚未完成安全升級、解除安裝與回滾驗收；候選版本建議先建置，不自動安裝。
 
+## 本機完整驗收入口
+
+```bash
+make acceptance-local
+```
+
+執行核心測試、覆蓋率、雙建置、fixture smoke、唯讀主機相容性與 TCP/UDP 觀測，生成私有、忽略於 Git 的本機報告。效能、獨立流量比對與 168 小時觀測另外提供明確參數；需人工或授權的測試不自動執行。見 [本機驗收指南](docs/acceptance/LOCAL-TEST-GUIDE.md) 與 [驗收矩陣](docs/acceptance/ACCEPTANCE-MATRIX.md)。
+
 ## CLI 本機觀測
 
 ```bash

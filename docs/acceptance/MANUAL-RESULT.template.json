@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "kind": "manual_device_evidence",
+  "commit_sha": null,
+  "environment": {
+    "os_version": null,
+    "architecture": null,
+    "hardware_model": null
+  },
+  "gates": [
+    {
+      "id": "traffic_accuracy",
+      "outcome": "not_run",
+      "observed_at": null,
+      "evidence_sha256": [],
+      "note": ""
+    },
+    {
+      "id": "vpn_deduplication",
+      "outcome": "not_run",
+      "observed_at": null,
+      "evidence_sha256": [],
+      "note": ""
+    },
+    {
+      "id": "dual_stack",
+      "outcome": "not_run",
+      "observed_at": null,
+      "evidence_sha256": [],
+      "note": ""
+    },
+    {
+      "id": "network_switching",
+      "outcome": "not_run",
+      "observed_at": null,
+      "evidence_sha256": [],
+      "note": ""
+    },
+    {
+      "id": "sleep_wake",
+      "outcome": "not_run",
+      "observed_at": null,
+      "evidence_sha256": [],
+      "note": ""
+    },
+    {
+      "id": "workflow_identity",
+      "outcome": "not_run",
+      "observed_at": null,
+      "evidence_sha256": [],
+      "note": ""
+    },
+    {
+      "id": "provider_accounting",
+      "outcome": "not_run",
+      "observed_at": null,
+      "evidence_sha256": [],
+      "note": ""
+    },
+    {
+      "id": "security_review",
+      "outcome": "not_run",
+      "observed_at": null,
+      "evidence_sha256": [],
+      "note": ""
+    },
+    {
+      "id": "recovery",
+      "outcome": "not_run",
+      "observed_at": null,
+      "evidence_sha256": [],
+      "note": ""
+    },
+    {
+      "id": "performance_idle",
+      "outcome": "not_run",
+      "observed_at": null,
+      "evidence_sha256": [],
+      "note": ""
+    },
+    {
+      "id": "accessibility",
+      "outcome": "not_run",
+      "observed_at": null,
+      "evidence_sha256": [],
+      "note": ""
+    },
+    {
+      "id": "novice_ux",
+      "outcome": "not_run",
+      "observed_at": null,
+      "evidence_sha256": [],
+      "note": ""
+    },
+    {
+      "id": "lifecycle",
+      "outcome": "not_run",
+      "observed_at": null,
+      "evidence_sha256": [],
+      "note": ""
+    },
+    {
+      "id": "soak_168h",
+      "outcome": "not_run",
+      "observed_at": null,
+      "evidence_sha256": [],
+      "note": ""
+    },
+    {
+      "id": "extension",
+      "outcome": "not_run",
+      "observed_at": null,
+      "evidence_sha256": [],
+      "note": ""
+    }
+  ],
+  "review_status": "review_required"
+}

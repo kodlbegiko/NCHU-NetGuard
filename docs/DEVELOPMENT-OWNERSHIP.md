@@ -49,3 +49,5 @@ NetGuardData owns SQLite history, scoped aggregation persistence, backup and rea
 ## Native executable linkage candidate
 
 Package.swift declares NetGuardApp as an executable target depending on NetGuardCore, with legacy resources excluded from compilation and copied into the bundle by make build-module. All app sources import the integration module when SwiftPM compiles them. ProbeRunner is package-scoped, not public. Both legacy and modular app builds and fixture smoke must pass; main/default install stays on legacy build until exact evidence. Real-device acceptance, API consumer review and owner approval remain required.
+
+Agent 8 owns scripts/acceptance/, docs/acceptance/ and tests/test_local_acceptance.py; changes to Makefile remain serialized by Agent 0. Local result directories are private and never committed.

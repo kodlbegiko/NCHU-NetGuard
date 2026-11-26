@@ -1,4 +1,4 @@
-.PHONY: all build build-module smoke-module install test smoke host-check flow-check udp-check clean
+.PHONY: all build build-module smoke-module install test smoke host-check flow-check udp-check acceptance-local clean
 APP := build/NCHUTraffic.app
 INSTALL_DIR ?= $(HOME)/Applications
 
@@ -42,3 +42,6 @@ udp-check: build
 
 clean:
 	rm -rf build
+
+acceptance-local:
+	python3 scripts/acceptance/run_all.py
