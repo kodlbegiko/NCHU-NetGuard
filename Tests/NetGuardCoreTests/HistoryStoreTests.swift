@@ -131,6 +131,49 @@ final class HistoryStoreTests: XCTestCase {
             XCTAssertEqual(try store.recent().first?.total, 1)
         }
     }
+    func testDatabaseHardlinkAndSidecarAliasesAreRejected() throws {
+        try withURL { url in
+            do {
+                let store = try HistoryStore(url: url)
+                try store.upsert(HistoryDay(day: "2026-11-25", total: 1, download: nil, upload: nil))
+            }
+            let alias = url.deletingLastPathComponent().appendingPathComponent("hardlink.sqlite")
+            try FileManager.default.linkItem(at: url, to: alias)
+            XCTAssertThrowsError(try HistoryStore(url: alias))
+            XCTAssertThrowsError(try HistoryBackupInspector.inspect(alias))
+            XCTAssertThrowsError(try HistoryStore(url: url))
+            try FileManager.default.removeItem(at: alias)
+            let target = url.deletingLastPathComponent().appendingPathComponent("unrelated")
+            let sentinel = Data("must remain unchanged".utf8)
+            try sentinel.write(to: target)
+            for suffix in ["-journal", "-wal", "-shm"] {
+                let sidecar = URL(fileURLWithPath: url.path + suffix)
+                try FileManager.default.createSymbolicLink(at: sidecar, withDestinationURL: target)
+                XCTAssertThrowsError(try HistoryStore(url: url))
+                XCTAssertThrowsError(try HistoryBackupInspector.inspect(url))
+                XCTAssertEqual(try Data(contentsOf: target), sentinel)
+                try FileManager.default.removeItem(at: sidecar)
+            }
+            XCTAssertEqual(try HistoryStore(url: url).recent().first?.total, 1)
+        }
+    }
+
+    func testBackupInspectorRejectsExtraColumnEvenWhenRowsAreValid() throws {
+        try withURL { url in
+            var database: OpaquePointer?
+            XCTAssertEqual(sqlite3_open(url.path, &database), SQLITE_OK)
+            guard let database else { throw HistoryStoreError.database("fixture") }
+            let sql = "CREATE TABLE history_days(day TEXT PRIMARY KEY,total INTEGER,download INTEGER,upload INTEGER,extra TEXT); INSERT INTO history_days VALUES('2026-11-25',1,NULL,NULL,'foreign'); PRAGMA user_version=1;"
+            let status = sqlite3_exec(database, sql, nil, nil, nil)
+            sqlite3_close(database)
+            XCTAssertEqual(status, SQLITE_OK)
+            let bytes = try Data(contentsOf: url)
+            XCTAssertThrowsError(try HistoryBackupInspector.inspect(url))
+            XCTAssertThrowsError(try HistoryStore(url: url))
+            XCTAssertEqual(try Data(contentsOf: url), bytes)
+        }
+    }
+
     func testConcurrentInitializationUsesSingleMigration() throws {
         try withURL { url in
             let lock = NSLock()

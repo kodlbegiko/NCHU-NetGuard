@@ -71,6 +71,15 @@ public enum HistoryBackupInspector {
               try scalar("SELECT count(*) FROM sqlite_master WHERE type IN ('view','trigger')") == 0,
               try scalar("SELECT count(*) FROM sqlite_master WHERE type='table'") == expected
         else { throw HistoryStoreError.database("backup unexpected schema") }
+        guard try scalar("SELECT count(*) FROM pragma_table_list WHERE schema='main' AND name IN ('history_days','history_scopes') AND type='table'") == expected,
+              try scalar("SELECT count(*) FROM pragma_table_xinfo('history_days')") == 4,
+              try scalar("SELECT count(*) FROM pragma_table_info('history_days') WHERE (cid=0 AND name='day' AND type='TEXT' AND pk=1) OR (cid=1 AND name='total' AND type='INTEGER' AND pk=0) OR (cid=2 AND name='download' AND type='INTEGER' AND pk=0) OR (cid=3 AND name='upload' AND type='INTEGER' AND pk=0)") == 4
+        else { throw HistoryStoreError.database("backup unexpected columns") }
+        if version >= 2 {
+            guard try scalar("SELECT count(*) FROM pragma_table_xinfo('history_scopes')") == 4,
+                  try scalar("SELECT count(*) FROM pragma_table_info('history_scopes') WHERE (cid=0 AND name='day' AND type='TEXT' AND pk=1) OR (cid=1 AND name='scope' AND type='TEXT' AND pk=2) OR (cid=2 AND name='download' AND type='INTEGER' AND pk=0) OR (cid=3 AND name='upload' AND type='INTEGER' AND pk=0)") == 4
+            else { throw HistoryStoreError.database("backup unexpected scope columns") }
+        }
         let count = try scalar("SELECT count(*) FROM history_days")
         guard count <= 36_600 else { throw HistoryStoreError.invalidRecord }
         var days: [String: HistoryDay] = [:]

@@ -20,7 +20,22 @@ enum HistorySQLitePath {
               let parent = realpath(url.deletingLastPathComponent().path, nil)
         else { throw HistoryStoreError.database("invalid database path") }
         defer { free(parent) }
-        return String(cString: parent) + "/" + url.lastPathComponent
+        let path = String(cString: parent) + "/" + url.lastPathComponent
+        // SQLite NOFOLLOW is retained at open. Reject pre-existing aliases,
+        // nonregular files and foreign owners for the database and sidecars.
+        // This is a preflight, not a guarantee against a non-cooperating
+        // process racing a rename in the caller-owned directory.
+        for suffix in ["", "-journal", "-wal", "-shm"] {
+            var metadata = stat()
+            if lstat(path + suffix, &metadata) == 0 {
+                guard (metadata.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+                      metadata.st_nlink == 1, metadata.st_uid == geteuid()
+                else { throw HistoryStoreError.database("unsafe database file") }
+            } else if errno != ENOENT {
+                throw HistoryStoreError.database("database file preflight")
+            }
+        }
+        return path
     }
 }
 
