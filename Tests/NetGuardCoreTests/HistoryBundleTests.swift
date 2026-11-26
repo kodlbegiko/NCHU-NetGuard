@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import Darwin
 import NetGuardCore
 
 final class HistoryBundleTests: XCTestCase {
@@ -50,6 +51,33 @@ final class HistoryBundleTests: XCTestCase {
             try FileManager.default.removeItem(at: unexpected)
             try Data("[]".utf8).write(to: target.appendingPathComponent("event-history/events.json"))
             XCTAssertThrowsError(try HistoryBundle.inspect(target))
+        }
+    }
+
+    func testBundleRejectsHardlinksAndNonregularPayloads() throws {
+        try fixture { root, db, process, connections, events in
+            let backup = root.appendingPathComponent("backup")
+            let expected = try HistoryBundle.create(database: db, process: process,
+                connections: connections, events: events, destination: backup)
+            let manifest = backup.appendingPathComponent("manifest.json")
+            let alias = root.appendingPathComponent("manifest-alias")
+            try FileManager.default.linkItem(at: manifest, to: alias)
+            XCTAssertThrowsError(try HistoryBundle.inspect(backup))
+            try FileManager.default.removeItem(at: alias)
+            let payload = backup.appendingPathComponent("event-history/events.json")
+            let original = try Data(contentsOf: payload)
+            let saved = root.appendingPathComponent("payload")
+            try FileManager.default.moveItem(at: payload, to: saved)
+            try FileManager.default.createSymbolicLink(at: payload, withDestinationURL: saved)
+            XCTAssertThrowsError(try HistoryBundle.inspect(backup))
+            try FileManager.default.removeItem(at: payload)
+            XCTAssertEqual(mkfifo(payload.path, mode_t(0o600)), 0)
+            XCTAssertThrowsError(try HistoryBundle.inspect(backup))
+            XCTAssertThrowsError(try HistoryBundle.recoverCopy(from: backup, to: root.appendingPathComponent("copy")))
+            try FileManager.default.removeItem(at: payload)
+            try FileManager.default.moveItem(at: saved, to: payload)
+            XCTAssertEqual(try Data(contentsOf: payload), original)
+            XCTAssertEqual(try HistoryBundle.inspect(backup), expected)
         }
     }
 

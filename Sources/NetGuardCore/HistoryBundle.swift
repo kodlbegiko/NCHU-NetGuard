@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import Darwin
 
 public struct HistoryBundleSummary: Equatable, Sendable {
     public let version: Int
@@ -40,19 +41,38 @@ public enum HistoryBundle {
     }
 
     private static func read(_ url: URL, max: Int) throws -> Data {
-        let attrs = try fm.attributesOfItem(atPath: url.path)
-        guard attrs[.type] as? FileAttributeType == .typeRegular,
-              let size = attrs[.size] as? NSNumber,
-              size.int64Value >= 0, size.int64Value <= Int64(max) else { throw fail() }
-        let handle = try FileHandle(forReadingFrom: url)
+        guard url.isFileURL, (1...64 * 1024 * 1024).contains(max),
+              !url.lastPathComponent.isEmpty, url.lastPathComponent != ".", url.lastPathComponent != ".."
+        else { throw fail() }
+        // Open the parent and then the actual file, without following the
+        // final directory/file symlinks or blocking on a FIFO. This validates
+        // the opened inode rather than trusting a previous pathname stat.
+        let parent = open(url.deletingLastPathComponent().path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard parent >= 0 else { throw fail() }
+        defer { _ = close(parent) }
+        let fd = openat(parent, url.lastPathComponent, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+        guard fd >= 0 else { throw fail() }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         defer { try? handle.close() }
+        var initial = stat()
+        guard fstat(fd, &initial) == 0,
+              (initial.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+              initial.st_nlink == 1, initial.st_uid == geteuid(),
+              initial.st_size >= 0, initial.st_size <= Int64(max)
+        else { throw fail() }
         var data = Data()
         while data.count <= max {
             let chunk = try handle.read(upToCount: min(65_536, max + 1 - data.count)) ?? Data()
             if chunk.isEmpty { break }
             data.append(chunk)
         }
-        guard data.count <= max else { throw fail() }
+        var final = stat()
+        guard fstat(fd, &final) == 0, final.st_size == initial.st_size,
+              final.st_nlink == 1, final.st_uid == geteuid(),
+              final.st_mtimespec.tv_sec == initial.st_mtimespec.tv_sec,
+              final.st_mtimespec.tv_nsec == initial.st_mtimespec.tv_nsec,
+              data.count <= max, Int64(data.count) == initial.st_size
+        else { throw fail() }
         return data
     }
 
@@ -139,8 +159,9 @@ public enum HistoryBundle {
     /// from the fixed directory layout, then compared to the manifest.
     public static func inspect(_ root: URL) throws -> HistoryBundleSummary {
         try directory(root)
-        let manifest = try JSONDecoder().decode(HistoryBundleManifest.self,
-            from: read(root.appendingPathComponent("manifest.json"), max: 256 * 1024))
+        let manifestURL = root.appendingPathComponent("manifest.json")
+        let manifestData = try read(manifestURL, max: 256 * 1024)
+        let manifest = try JSONDecoder().decode(HistoryBundleManifest.self, from: manifestData)
         guard [1, 2].contains(manifest.version), manifest.createdAt.timeIntervalSince1970.isFinite,
               manifest.files.count <= (manifest.version == 1 ? 369 : 735),
               manifest.files == (try inventory(root, version: manifest.version, manifestPresent: true)) else { throw fail() }
@@ -157,6 +178,12 @@ public enum HistoryBundle {
         } else { agentDays = nil }
         let connections = try ConnectionHistoryStore(directory: root.appendingPathComponent("connection-history")).read()
         let events = try TrafficEventArchive(directory: root.appendingPathComponent("event-history")).read()
+        // Reject a changed inventory after semantic reads. A copied bundle
+        // is still independently verified before publication. No claim of
+        // adversarial snapshot isolation from a same-user directory writer.
+        guard try read(manifestURL, max: 256 * 1024) == manifestData,
+              manifest.files == (try inventory(root, version: manifest.version, manifestPresent: true))
+        else { throw fail() }
         return .init(version: manifest.version, database: database, agentDays: agentDays, processDays: days.count, connectionSessions: connections.count, events: events.count)
     }
 
