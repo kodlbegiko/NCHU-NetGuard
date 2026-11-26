@@ -212,6 +212,18 @@ class FoundationTests(unittest.TestCase):
             self.assertNotRegex(path.read_text(), r"\bProcess\s*\(")
         self.assertNotIn("140.120.251.126", (ROOT / "src/main.swift").read_text())
 
+    def test_idle_tick_keeps_accounting_cadence_and_gates_optional_scans(self):
+        swift = (ROOT / "src/main.swift").read_text()
+        self.assertIn("Timer.scheduledTimer(withTimeInterval: 1.0", swift)
+        self.assertIn("autoreleasepool { self?.tickRealtime() }", swift)
+        self.assertIn("guard processObservationAllowed, !appProbeInFlight", swift)
+        self.assertIn("guard isDormNetwork || processObservationVisible", swift)
+        self.assertNotIn("Int(now) % 5", swift)
+        self.assertNotIn("Int(now) % 10", swift)
+        self.assertIn("probeUptime - $0 >= 5", swift)
+        self.assertIn("uptime - $0 >= 10", swift)
+        self.assertIn("let types: [String: String] = autoreleasepool", swift)
+
     def test_popover_creation_deferred_until_opening(self):
         swift = (ROOT / "src/main.swift").read_text()
         setup = swift.split("func setupPopoverUI()", 1)[1].split("private func preparePopoverContent()", 1)[0]

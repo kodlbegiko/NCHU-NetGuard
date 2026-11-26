@@ -519,7 +519,18 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
     }
 
     // MARK: - 方向 2: 違規風險防禦與計中黑名單主動預警 (NCHU Security & Blacklist)
+    private var lastP2PScanUptime: TimeInterval?
+    private var lastPeriodicSaveUptime: TimeInterval?
+
     func checkP2PHazard() {
+        guard isDormNetwork || processObservationVisible else {
+            isP2PDetected = false
+            p2pAppName = ""
+            hasAlertedCurrentP2P = false
+            lastP2PScanUptime = nil
+            return
+        }
+        lastP2PScanUptime = ProcessInfo.processInfo.systemUptime
         let p2pKeywords = ["qbittorrent", "transmission", "bitcomet", "thunder", "xunlei", "folx", "deluge", "utorrent", "bittorrent", "webtorrent", "aria2c", "motrix", "biglybt"]
         var foundP2PName: String? = nil
         
@@ -677,8 +688,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         setupPopoverUI()
         startPathObservation()
         syncWithTop100Server()
-        measurePingLatency()
-        inspectTopAppConsumers()
+        // Optional process/latency probes start only when their visibility
+        // or explicit background-consent policy permits them.
         checkIpBlocklist()
         checkP2PHazard()
         
@@ -708,16 +719,19 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         )
         
         secondTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.tickRealtime()
+            autoreleasepool { self?.tickRealtime() }
         }
+        secondTimer?.tolerance = 0.1
         
         serverSyncTimer = Timer.scheduledTimer(withTimeInterval: 180.0, repeats: true) { [weak self] _ in
-            self?.syncWithTop100Server()
+            autoreleasepool { self?.syncWithTop100Server() }
         }
+        serverSyncTimer?.tolerance = 5
         
         blacklistCheckTimer = Timer.scheduledTimer(withTimeInterval: 300.0, repeats: true) { [weak self] _ in
-            self?.checkIpBlocklist()
+            autoreleasepool { self?.checkIpBlocklist() }
         }
+        blacklistCheckTimer?.tolerance = 10
         
 
     }
@@ -2227,17 +2241,19 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
     func readScopedInterfaces() -> [ScopedInterfaceSample] {
         observedTunnelCandidates = []
         observedAddressEvidence = [:]
-        let devices = SCNetworkInterfaceCopyAll() as NSArray
-        var types: [String: String] = [:]
-        for item in devices {
-            let interface = item as! SCNetworkInterface
-            if let name = SCNetworkInterfaceGetBSDName(interface) as String?,
-               let kind = SCNetworkInterfaceGetInterfaceType(interface) as String? {
-                if kind == (kSCNetworkInterfaceTypeEthernet as String) ||
-                    kind == (kSCNetworkInterfaceTypeIEEE80211 as String) {
-                    types[name] = kind
+        let types: [String: String] = autoreleasepool {
+            let devices = SCNetworkInterfaceCopyAll() as NSArray
+            var result: [String: String] = [:]
+            for item in devices {
+                let interface = item as! SCNetworkInterface
+                if let name = SCNetworkInterfaceGetBSDName(interface) as String?,
+                   let kind = SCNetworkInterfaceGetInterfaceType(interface) as String?,
+                   kind == (kSCNetworkInterfaceTypeEthernet as String) ||
+                       kind == (kSCNetworkInterfaceTypeIEEE80211 as String) {
+                    result[name] = kind
                 }
             }
+            return result
         }
         var list: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&list) == 0, let first = list else {
@@ -2413,7 +2429,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
     }
 
     func inspectTopAppConsumers() {
-        guard workflowPowerGuard.allowsOptionalProbes, !appProbeInFlight else { return }
+        guard processObservationAllowed, !appProbeInFlight else { return }
         appProbeInFlight = true
         let generation = workflowPowerGuard.generation
         let collectSession = processObservationAllowed
@@ -2550,7 +2566,6 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             }
         }
         
-        let now = Date().timeIntervalSince1970
         // 盒蓋動態偵測 (防止接外接螢幕或 displaysleep 0 時背景持續串流)
         if isLidGuardEnabled {
             let lidClosed = isLidClosed()
@@ -2579,8 +2594,14 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         
         // Path events and periodic fallback are handled by ObservationSchedule.
         
-        // 每 5 秒自動掃描 P2P 違規風險（宿網防鎖孔）
-        if Int(now) % 5 == 0 {
+        // A monotonic deadline is not tied to a particular wall-clock second.
+        // Outside the dorm/visible UI, there is no reason to scan every app.
+        let probeUptime = ProcessInfo.processInfo.systemUptime
+        if isDormNetwork || processObservationVisible {
+            if lastP2PScanUptime.map({ probeUptime < $0 || probeUptime - $0 >= 5 }) ?? true {
+                checkP2PHazard()
+            }
+        } else if lastP2PScanUptime != nil || isP2PDetected {
             checkP2PHazard()
         }
         
@@ -2644,8 +2665,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         scheduleObservations(at: uptime)
         updateForecast(samples: samples, deltas: deltas, elapsed: elapsed)
 
-        if Int(now) % 10 == 0 {
-            savePersistedState()
+        if lastPeriodicSaveUptime.map({ uptime < $0 || uptime - $0 >= 10 }) ?? true {
+            lastPeriodicSaveUptime = uptime
+            if !persistenceBlocked { savePersistedState() }
         }
         
         // 興大網路環境 (宿網或校園 Wi-Fi) 下啟用流量預警推播與急停防護

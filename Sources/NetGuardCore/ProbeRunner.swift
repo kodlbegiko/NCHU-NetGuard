@@ -83,6 +83,20 @@ package enum ProbeRunner {
     package static func run(_ path: String, _ arguments: [String], timeout: TimeInterval = 5,
                     maxBytes: Int = 1_048_576, acceptedExitCodes: Set<Int32> = [0],
                     mergeStandardError: Bool = false) -> ProbeOutcome {
+        #if canImport(Darwin)
+        return autoreleasepool {
+            runBounded(path, arguments, timeout: timeout, maxBytes: maxBytes,
+                       acceptedExitCodes: acceptedExitCodes, mergeStandardError: mergeStandardError)
+        }
+        #else
+        return runBounded(path, arguments, timeout: timeout, maxBytes: maxBytes,
+                          acceptedExitCodes: acceptedExitCodes, mergeStandardError: mergeStandardError)
+        #endif
+    }
+
+    private static func runBounded(_ path: String, _ arguments: [String], timeout: TimeInterval,
+                                   maxBytes: Int, acceptedExitCodes: Set<Int32>,
+                                   mergeStandardError: Bool) -> ProbeOutcome {
         guard path.hasPrefix("/"), timeout.isFinite, timeout > 0, timeout <= 30,
               (1...4_194_304).contains(maxBytes) else { return .failed }
         let pipe = Pipe()
@@ -126,8 +140,18 @@ package enum ProbeRunner {
                 else if errno == EINTR { continue }
                 else if errno != EAGAIN && errno != EWOULDBLOCK { return stop(.failed) }
             }
-            if eof && !process.isRunning { break }
-            Thread.sleep(forTimeInterval: 0.01)
+            if eof {
+                if !process.isRunning { break }
+                Thread.sleep(forTimeInterval: 0.01)
+            } else {
+                let remaining = timeout - (ProcessInfo.processInfo.systemUptime - start)
+                if remaining <= 0 { return stop(.timedOut) }
+                var descriptor = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+                let milliseconds = Int32(max(1, min(100, ceil(remaining * 1000))))
+                let ready = poll(&descriptor, 1, milliseconds)
+                if ready < 0 && errno != EINTR { return stop(.failed) }
+                if descriptor.revents & Int16(POLLNVAL) != 0 { return stop(.failed) }
+            }
         }
         guard process.terminationReason == .exit, acceptedExitCodes.contains(process.terminationStatus),
               let text = String(data: output, encoding: .utf8) else { return .failed }
