@@ -131,9 +131,22 @@ def run_step(out, id, argv, timeout, *, inconclusive_codes=(), marker=None):
                duration_seconds=round(time.monotonic() - start, 3),
                log="logs/" + path.name, log_sha256=hashlib.sha256(data).hexdigest())
 
-def automatic_exit(rows, clean):
+CORE_STEPS = ("preflight", "toolchain", "python_tests", "swift_tests", "coverage",
+              "legacy_build", "module_build", "legacy_smoke", "module_smoke")
+HOST_STEPS = ("host_compatibility", "tcp_observation", "udp_observation")
+
+def planned_steps(profile, performance=False, traffic=False):
+    if profile not in ("core", "host") or type(performance) is not bool or type(traffic) is not bool:
+        raise ValueError("invalid acceptance plan")
+    return (CORE_STEPS + (HOST_STEPS if profile == "host" else ())
+            + (("performance",) if performance else ())
+            + (("traffic_numeric",) if traffic else ()))
+
+def automatic_exit(rows, clean, expected=None):
     if any(x["status"] == "fail" for x in rows):
         return 1
+    if expected is not None and tuple(x["id"] for x in rows) != tuple(expected):
+        return 2
     if not clean or any(x["status"] in ("inconclusive", "blocked", "skipped") for x in rows):
         return 2
     return 0 if rows and all(x["status"] == "pass" for x in rows) else 2
@@ -185,7 +198,10 @@ def environment():
 
 def execute(args, out, sha, clean):
     rows = []
-    report = {"schema_version": 1, "kind": "local_automatic", "started_at": now(),
+    options = {"performance": args.pid is not None, "traffic": args.traffic_evidence is not None}
+    expected = planned_steps(args.profile, **options)
+    report = {"schema_version": 2, "kind": "local_automatic", "started_at": now(),
+              "options": options, "planned_steps": list(expected),
               "commit_sha": sha, "clean_at_start": clean, "clean_at_end": False,
               "same_revision_at_end": False, "environment": environment(),
               "profile": args.profile, "steps": rows,
@@ -280,6 +296,8 @@ def execute(args, out, sha, clean):
                     write_json(out / "summary.json", report)
     except KeyboardInterrupt:
         add(row("interruption", "inconclusive", "interrupted"))
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+        add(row("runner_error", "inconclusive", "orchestration_error"))
     finally:
         try:
             end, end_clean = revision()
@@ -288,7 +306,7 @@ def execute(args, out, sha, clean):
             pass
         report["finished_at"] = now()
         report["automatic_exit_code"] = automatic_exit(rows, clean and report["clean_at_end"]
-                                                       and report["same_revision_at_end"])
+                                                       and report["same_revision_at_end"], expected)
         write_json(out / "summary.json", report)
     return report["automatic_exit_code"]
 

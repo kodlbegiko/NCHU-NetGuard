@@ -1,4 +1,6 @@
+import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -9,6 +11,7 @@ sys.path.insert(0, str(ROOT / "scripts/acceptance"))
 import run_all as runner
 import soak_test as soak
 import record_manual as manual
+import verify_report as verifier
 
 class LocalAcceptanceTests(unittest.TestCase):
     def test_exit_never_treats_inconclusive_or_dirty_as_pass(self):
@@ -96,3 +99,65 @@ class LocalAcceptanceTests(unittest.TestCase):
         recovery.update(outcome="observed_pass", observed_at=gate["observed_at"], evidence_sha256=gate["evidence_sha256"])
         with self.assertRaises(ValueError):
             manual.validate(ledger)
+
+
+    def test_planned_steps_missing_duplicate_or_unrequested_cannot_pass(self):
+        expected = runner.planned_steps("host", True, True)
+        rows = [runner.row(id, "pass", "exit") for id in expected]
+        self.assertEqual(runner.automatic_exit(rows, True, expected), 0)
+        self.assertEqual(runner.automatic_exit(rows[:-1], True, expected), 2)
+        self.assertEqual(runner.automatic_exit(rows + rows[:1], True, expected), 2)
+        self.assertEqual(runner.automatic_exit(rows[::-1], True, expected), 2)
+
+    def test_report_verifier_checks_logs_plan_and_verdict(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d)
+            (out / "logs").mkdir(mode=0o700)
+            env = {"os":"Darwin","os_version":"15.0","architecture":"arm64",
+                   "python":"3.12","hardware_model":"Mac16,12"}
+            options = {"performance":False,"traffic":False}
+            plan = runner.planned_steps("core", **options)
+            rows = [runner.row("preflight", "pass", "clean_macos_checkout")]
+            for id in plan[1:]:
+                raw = (verifier.MARKERS.get(id, "ok") + "\n").encode()
+                if id == "coverage":
+                    raw = json.dumps({"executable_lines":100,"covered_lines":95,
+                        "complete_inventory":True,"meets_target":True}).encode()
+                path = out / "logs" / (id + ".log")
+                path.write_bytes(raw)
+                path.chmod(0o600)
+                rows.append(runner.row(id, "pass", "exit", log="logs/" + path.name,
+                    log_sha256=hashlib.sha256(raw).hexdigest(), exit_code=0, duration_seconds=1))
+            report = {"schema_version":2,"kind":"local_automatic","started_at":runner.now(),
+                "finished_at":runner.now(),"commit_sha":"a"*40,"clean_at_start":True,
+                "clean_at_end":True,"same_revision_at_end":True,"environment":env,
+                "profile":"core","options":options,"planned_steps":list(plan),"steps":rows,
+                "manual_gates":[{"id":id,"status":"blocked" if id in runner.BLOCKED_IDS else "review_required"}
+                    for id in runner.MANUAL_IDS],"full_device_acceptance":False,"automatic_exit_code":0}
+            runner.write_json(out / "environment.json", env)
+            runner.write_json(out / "summary.json", report)
+            self.assertEqual(verifier.verify(out, "a"*40)["automatic_exit_code"], 0)
+            with self.assertRaises(ValueError):
+                verifier.verify(out, "b"*40)
+            path = out / "logs" / "module_smoke.log"
+            original = path.read_bytes()
+            path.write_bytes(b"modified")
+            with self.assertRaises(ValueError):
+                verifier.verify(out)
+            path.write_bytes(original)
+            report["steps"] = rows[:-1]
+            runner.write_json(out / "summary.json", report)
+            with self.assertRaises(ValueError):
+                verifier.verify(out)
+            report["automatic_exit_code"] = 2
+            runner.write_json(out / "summary.json", report)
+            self.assertEqual(verifier.verify(out)["automatic_exit_code"], 2)
+            self.assertFalse(verifier.verify(out)["full_device_acceptance"])
+            report["steps"] = rows
+            report["automatic_exit_code"] = 0
+            runner.write_json(out / "summary.json", report)
+            target = out / "logs" / "other.log"
+            path.rename(target)
+            path.symlink_to(target)
+            with self.assertRaises(OSError):
+                verifier.verify(out)

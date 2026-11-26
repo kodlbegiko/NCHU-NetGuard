@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "NetGuard local automatic acceptance report v1",
+  "title": "NetGuard local automatic acceptance report v2",
   "type": "object",
   "required": [
     "schema_version",
@@ -15,11 +15,13 @@
     "steps",
     "manual_gates",
     "full_device_acceptance",
-    "automatic_exit_code"
+    "automatic_exit_code",
+    "options",
+    "planned_steps"
   ],
   "properties": {
     "schema_version": {
-      "const": 1
+      "const": 2
     },
     "kind": {
       "const": "local_automatic"
@@ -184,6 +186,46 @@
         1,
         2
       ]
+    },
+    "options": {
+      "type": "object",
+      "required": [
+        "performance",
+        "traffic"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "performance": {
+          "type": "boolean"
+        },
+        "traffic": {
+          "type": "boolean"
+        }
+      }
+    },
+    "planned_steps": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 14,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "preflight",
+          "toolchain",
+          "python_tests",
+          "swift_tests",
+          "coverage",
+          "legacy_build",
+          "module_build",
+          "legacy_smoke",
+          "module_smoke",
+          "host_compatibility",
+          "tcp_observation",
+          "udp_observation",
+          "performance",
+          "traffic_numeric"
+        ]
+      }
     }
   },
   "additionalProperties": false
