@@ -6,3 +6,7 @@
 - [CINC current lookup links](https://cc.nchu.edu.tw/p/406-1000-787%2Cr36.php?Lang=zh-tw): provider ranking and violation/disconnection lookup are separate.
 
 These sources support published limits and hourly update, not exact bytes-per-G, billing reset timestamp, per-dorm applicability, current provider HTML schema or host identity mapping. Other campus documents have reported different limits; scope-specific policy confirmation is still needed. Do not mark units verified, convert provider ranking into local totals, equate a campus IP with dorm membership, or infer a safe/block state from absence. Provider/device reconciliation remains open.
+
+## Reconciliation candidate
+
+NetGuardProvider now has an explicit comparison API requiring independently verified ephemeral identity and boundary tokens, matching measurement windows (not retrieval time), verified bytes, complete coverage, fresh evidence and both directional counters. Differences remain directional integer magnitudes, never a quota balance. A ranking string cannot create this evidence; actual NCHU adapter and official accounting remain unresolved. Invalidated failed requests retain exponential backoff and invalid calendar days cannot become fresh. Regression tests accompany the implementation; exact CI required.

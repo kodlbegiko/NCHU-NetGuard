@@ -28,6 +28,62 @@ final class ProviderModuleTests: XCTestCase {
         XCTAssertNil(gate.begin(at: 239))
         XCTAssertNotNil(gate.begin(at: 240))
     }
+    func testInvalidatedFailureStillBacksOff() throws {
+        var gate = ProviderPollGate()
+        let first = try XCTUnwrap(gate.begin(at: 0))
+        gate.invalidate()
+        XCTAssertFalse(gate.finish(first, usable: false))
+        XCTAssertNil(gate.begin(at: 119))
+        let second = try XCTUnwrap(gate.begin(at: 120))
+        gate.invalidate()
+        XCTAssertFalse(gate.finish(second, usable: true))
+        XCTAssertNil(gate.begin(at: 239))
+        XCTAssertNotNil(gate.begin(at: 240))
+    }
+    func testInvalidCalendarDayNeverFresh() throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-25T12:00:00Z"))
+        let observation = ProviderObservation(status: .listed, requestedDate: "2026-02-30",
+            retrievedAt: "2026-11-25T12:00:00Z", rank: 1, downloadDisplay: "1 GB",
+            uploadDisplay: "1 GB", totalDisplay: "2 GB", unitsVerified: false)
+        XCTAssertFalse(observation.isFresh(for: "2026-02-30", now: now))
+    }
+    func testReconciliationRequiresComparableEvidenceAndPreservesIntegerDifference() {
+        let start = Date(timeIntervalSince1970: 100), end = Date(timeIntervalSince1970: 200)
+        let now = Date(timeIntervalSince1970: 210)
+        let identity = UUID(), boundary = UUID()
+        func observation(_ origin: ComparableUsageObservation.Origin, identity: UUID?,
+                         boundary: UUID?, units: Bool = true, complete: Bool = true,
+                         endTime: Date? = nil, down: UInt64? = 0, up: UInt64? = 0) -> ComparableUsageObservation {
+            .init(origin: origin, verifiedIdentity: identity, verifiedBoundary: boundary,
+                  windowStart: start, windowEnd: endTime ?? end, retrievedAt: endTime ?? end,
+                  verifiedByteUnits: units, completeWindow: complete, received: down, sent: up)
+        }
+        let local = observation(.local, identity: identity, boundary: boundary, down: UInt64.max, up: 0)
+        let provider = observation(.provider, identity: identity, boundary: boundary, down: 0, up: 10)
+        if case .comparable(let dl, let ul) = ProviderReconciler.compare(local: local, provider: provider, now: now) {
+            XCTAssertEqual(dl.direction, .localHigher)
+            XCTAssertEqual(dl.bytes, UInt64.max)
+            XCTAssertEqual(ul.direction, .providerHigher)
+            XCTAssertEqual(ul.bytes, 10)
+        } else { XCTFail("expected comparable evidence") }
+        let cases: [(ComparableUsageObservation, ProviderComparisonFailure)] = [
+            (observation(.local, identity: identity, boundary: boundary), .invalidSources),
+            (observation(.provider, identity: nil, boundary: boundary), .identityUnverified),
+            (observation(.provider, identity: UUID(), boundary: boundary), .identityUnverified),
+            (observation(.provider, identity: identity, boundary: UUID()), .boundaryUnverified),
+            (observation(.provider, identity: identity, boundary: boundary, units: false), .unitsUnverified),
+            (observation(.provider, identity: identity, boundary: boundary, complete: false), .incompleteWindow),
+            (observation(.provider, identity: identity, boundary: boundary, endTime: now), .windowUnverified),
+            (observation(.provider, identity: identity, boundary: boundary, down: nil), .missingCounters)
+        ]
+        for (value, reason) in cases {
+            XCTAssertEqual(ProviderReconciler.compare(local: local, provider: value, now: now), .unavailable(reason))
+        }
+        XCTAssertEqual(ProviderReconciler.compare(local: local, provider: provider, now: now, maxAge: 5),
+                       .unavailable(.staleObservation))
+        XCTAssertEqual(ProviderReconciler.compare(local: local, provider: provider, now: now, maxAge: .nan),
+                       .unavailable(.staleObservation))
+    }
     func testInvalidRankingNeverCountsAsUsable() throws {
         let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-25T12:00:00Z"))
         for (rank, text, units) in [(0, "1 GB", false), (1, "1\nGB", false), (1, "1 GB", true), (1, String(repeating: "9", count: 100), false)] {
