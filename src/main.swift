@@ -2680,23 +2680,22 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
     }
 
     func forecastPresentation() -> (message: String, level: String) {
-        guard let assessment = localQuotaAssessment() else { return ("配額未確認，暫不預測", "unknown") }
-        let level = assessment.tier >= .high ? "danger" : (assessment.tier == .warning ? "warning" : "unknown")
-        let (_, dl, ul) = getEffectiveUsedBytes()
-        let label = budgetLabel(assessment.limitingBudget)
-        let status = "本機估計：\(label)已用 \(Int(min(assessment.usageRatio * 100, 999)))%"
-        guard !persistenceBlocked, sampleGapCount == 0,
-              predictionScope == sampledScopes[activeInterface],
-              let f = predictionEngine.forecast(receiveRemaining: UInt64(max(0, dlQuotaBytes - dl)),
+        let assessment = localQuotaAssessment()
+        let now = ProcessInfo.processInfo.systemUptime
+        // A baseline gap is unavoidable after launch. Forecast only the
+        // observed local counter, using a fresh, continuous recent window.
+        // Missing historical bytes remain explicitly excluded.
+        var forecast: QuotaForecast?
+        if assessment != nil, workflowPowerGuard.allowsSampling, activeSpeedMeasured,
+           let last = lastSampleUptime, now >= last, now - last <= 5,
+           predictionScope == sampledScopes[activeInterface] {
+            let (_, dl, ul) = getEffectiveUsedBytes()
+            forecast = predictionEngine.forecast(receiveRemaining: UInt64(max(0, dlQuotaBytes - dl)),
                                                  sendRemaining: UInt64(max(0, ulQuotaBytes - ul)),
                                                  totalRemaining: UInt64(max(0, totalQuotaBytes - dl - ul)))
-        else { return (status + "；暫無可靠耗盡預測", level) }
-        if f.latestSeconds == 0 {
-            return ("本機估計\(budgetLabel(f.limitingBudget))已達設定上限", "danger")
         }
-        let low = max(1, Int(floor(f.earliestSeconds / 60)))
-        let high = max(low, Int(ceil(f.latestSeconds / 60)))
-        return ("若近期速率持續，\(budgetLabel(f.limitingBudget))約 \(low)–\(high) 分鐘達設定上限（估計）", level)
+        return LocalForecastPresentation.describe(assessment: assessment, forecast: forecast,
+                                                  hasGaps: sampleGapCount > 0)
     }
 
     func checkAndSendSmartAlerts() {

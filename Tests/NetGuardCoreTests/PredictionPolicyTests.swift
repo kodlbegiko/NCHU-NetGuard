@@ -59,6 +59,24 @@ final class PredictionPolicyTests: XCTestCase {
         XCTAssertNil(QuotaBacktest.evaluate(samples: samples + [.init(seconds: .nan, received: 0, sent: 0)],
             receiveBudget: 1_000_000, sendBudget: 40_960, totalBudget: 2_000_000))
     }
+    func testLocalForecastExplicitlyLabelsGapsAndNeverClaimsBilling() throws {
+        let assessment = try XCTUnwrap(LocalQuotaPolicy.assess(received: 80, sent: 10,
+            receiveLimit: 100, sendLimit: 100, totalLimit: 200))
+        let result = LocalForecastPresentation.describe(assessment: assessment,
+            forecast: .init(earliestSeconds: 30, latestSeconds: 50, limitingBudget: .download), hasGaps: true)
+        XCTAssertTrue(result.message.contains("不到 1 分鐘"))
+        XCTAssertTrue(result.message.contains("未觀測流量不計入"))
+        XCTAssertTrue(result.message.contains("非校方結算"))
+        let unavailable = LocalForecastPresentation.describe(assessment: assessment,
+            forecast: nil, hasGaps: true)
+        XCTAssertTrue(unavailable.message.contains("暫無可靠速率推估"))
+        XCTAssertTrue(unavailable.message.contains("未觀測流量不計入"))
+        XCTAssertEqual(LocalForecastPresentation.describe(assessment: nil, forecast: nil, hasGaps: true).level, "unknown")
+        XCTAssertTrue(LocalForecastPresentation.describe(assessment: assessment,
+            forecast: .init(earliestSeconds: 0, latestSeconds: 0, limitingBudget: .upload), hasGaps: false).message.contains("達設定上限"))
+        XCTAssertTrue(LocalForecastPresentation.describe(assessment: assessment,
+            forecast: .init(earliestSeconds: .nan, latestSeconds: 10, limitingBudget: .download), hasGaps: false).message.contains("暫無可靠速率推估"))
+    }
     func testPolicyConsidersUploadAndTotal() throws {
         let assessment = try XCTUnwrap(LocalQuotaPolicy.assess(received: 0, sent: 380, receiveLimit: 700, sendLimit: 400, totalLimit: 1100))
         XCTAssertEqual(assessment.tier, .critical)

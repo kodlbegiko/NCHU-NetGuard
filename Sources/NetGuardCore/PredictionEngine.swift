@@ -158,3 +158,35 @@ public enum QuotaBacktest {
                      consistent: consistent, censored: censored)
     }
 }
+
+
+/// Present a conditional local-counter scenario without implying complete
+/// daily coverage, provider billing, or a statistical confidence interval.
+public enum LocalForecastPresentation {
+    public static func describe(assessment: LocalQuotaAssessment?, forecast: QuotaForecast?,
+                                hasGaps: Bool) -> (message: String, level: String) {
+        guard let assessment, assessment.usageRatio.isFinite, assessment.usageRatio >= 0
+        else { return ("配額未確認，暫不預測", "unknown") }
+        func label(_ budget: LimitingBudget) -> String {
+            switch budget {
+            case .download: return "下載"
+            case .upload: return "上傳"
+            case .total: return "總量"
+            }
+        }
+        let level = assessment.tier >= .high ? "danger" : (assessment.tier == .warning ? "warning" : "unknown")
+        let coverage = hasGaps ? "；未觀測流量不計入" : ""
+        let status = "本機估計：\(label(assessment.limitingBudget))已用 \(Int(min(assessment.usageRatio * 100, 999)))%"
+        guard let f = forecast, f.earliestSeconds.isFinite, f.latestSeconds.isFinite,
+              f.earliestSeconds >= 0, f.earliestSeconds <= f.latestSeconds,
+              f.latestSeconds <= 86_400
+        else { return (status + coverage + "；暫無可靠速率推估", level) }
+        if f.latestSeconds == 0 {
+            return ("本機已觀測\(label(f.limitingBudget))達設定上限" + coverage + "；非校方結算", "danger")
+        }
+        let low = Int(floor(f.earliestSeconds / 60))
+        let high = Int(ceil(f.latestSeconds / 60))
+        let duration = high == 1 && low == 0 ? "不到 1 分鐘" : "約 \(low)–\(high) 分鐘"
+        return ("若近期速率持續，本機\(label(f.limitingBudget))計數\(duration)達設定上限" + coverage + "；非校方結算", level)
+    }
+}
