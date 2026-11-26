@@ -138,6 +138,61 @@ class FoundationTests(unittest.TestCase):
                 db.unlink()
                 self.assertEqual(monitor.load_history(), {"2026-11-24": 999})
 
+    def test_cli_rejects_ambiguous_json_and_nonfinite_constants(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            path = pathlib.Path(root) / "state"
+            for raw in ('{"x":1,"x":2}', '{"x":{"a":1,"a":2}}', '{"x":NaN}', '{"x":Infinity}', '{"x":-Infinity}'):
+                with self.subTest(raw=raw):
+                    path.write_text(raw)
+                    self.assertIsNone(monitor.read_json_object(path))
+            path.write_text('{"a":1}')
+            self.assertEqual(monitor.read_json_object(path), {"a": 1})
+
+    def test_cli_rejects_corrupt_aggregate_and_unselected_scope(self):
+        valid = {"ext_in": 10, "ext_out": 5, "observed_scopes": ["external"],
+                 "scoped_history_eligible": True, "measured_sample_count": 1}
+        ceiling = monitor.MAX_EXACT_BYTES
+        bad = [{"dorm_in": ceiling}, {"unattributed_out": 2**64 - 1},
+               {"wifi_out": -1}, {"dorm_in": True}, {"today_in": ceiling + 1},
+               {"accounting_overflow": "false"}, {"accounting_overflow": True}]
+        for delta in bad:
+            with self.subTest(delta=delta), patch.object(monitor, "load_state", return_value={**valid, **delta}), patch.object(monitor, "run_probe", side_effect=["interface: en0", "192.0.2.1"]):
+                self.assertEqual(monitor.query_traffic("external")["status"], "local_usage_unknown")
+        with patch.object(monitor, "load_state", return_value=valid), patch.object(monitor, "run_probe", side_effect=["interface: en0", "192.0.2.1"]):
+            self.assertEqual(monitor.query_traffic()["status"], "local_usage_unknown")
+        with patch.object(monitor, "load_state", return_value=valid), patch.object(monitor, "run_probe", side_effect=["interface: en0", "192.0.2.1"]):
+            self.assertEqual(monitor.query_traffic("external")["used_total"], 15)
+        self.assertTrue(monitor.valid_daily_counters({"dorm_in": ceiling}))
+        self.assertFalse(monitor.valid_daily_counters({"dorm_in": ceiling, "ext_out": 1}))
+
+    def test_history_rejects_unsafe_sidecars_and_oversized_totals(self):
+        import sqlite3
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            db = pathlib.Path(root) / "history.sqlite"
+            target = pathlib.Path(root) / "target"
+            target.write_text("unchanged")
+            with sqlite3.connect(db) as conn:
+                conn.execute("PRAGMA user_version=2")
+                conn.execute("CREATE TABLE history_days(day TEXT, total INTEGER, download INTEGER, upload INTEGER)")
+                conn.execute("INSERT INTO history_days VALUES('2026-11-24',15,10,5)")
+            with patch.object(monitor, "HISTORY_DB", str(db)):
+                for suffix in ("-wal", "-shm", "-journal"):
+                    side = db.with_name(db.name + suffix)
+                    side.symlink_to(target)
+                    self.assertEqual(monitor.load_history(), {})
+                    side.unlink()
+                    side.hardlink_to(target)
+                    self.assertEqual(monitor.load_history(), {})
+                    side.unlink()
+                self.assertEqual(target.read_text(), "unchanged")
+                self.assertEqual(monitor.load_history()["2026-11-24"]["total"], 15)
+                with sqlite3.connect(db) as conn:
+                    conn.execute("UPDATE history_days SET total=?, download=?, upload=0",
+                                 (monitor.MAX_EXACT_BYTES + 1, monitor.MAX_EXACT_BYTES + 1))
+                self.assertEqual(monitor.load_history(), {})
+
     def test_json_cli(self):
         output = subprocess.check_output([sys.executable, str(ROOT / "scripts/traffic_monitor.py"), "--json"], text=True, timeout=20)
         result = json.loads(output)

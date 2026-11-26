@@ -35,6 +35,41 @@ def get_today_string():
 
 MAX_JSON_BYTES = 4 * 1024 * 1024
 MAX_PROBE_BYTES = 1024 * 1024
+MAX_EXACT_BYTES = 9_007_199_254_740_991
+
+def strict_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('duplicate JSON field')
+        result[key] = value
+    return result
+
+def reject_json_constant(_value):
+    raise ValueError('non-finite JSON constant')
+
+def valid_daily_counters(state):
+    overflow = state.get('accounting_overflow', False)
+    if type(overflow) is not bool or overflow:
+        return False
+    keys = ('dorm_in', 'dorm_out', 'wifi_in', 'wifi_out', 'ext_in', 'ext_out', 'unattributed_in', 'unattributed_out')
+    aliases = {'dorm_in': 'today_in', 'dorm_out': 'today_out'}
+    values = [state.get(key, state.get(aliases[key], 0) if key in aliases else 0) for key in keys]
+    return all(type(value) is int and 0 <= value <= MAX_EXACT_BYTES for value in values) and sum(values) <= MAX_EXACT_BYTES
+
+def safe_history_sidecars(path):
+    # Preflight only: SQLite opens by pathname, so this is not race-free
+    # protection against another process replacing a file after validation.
+    for suffix in ('-wal', '-shm', '-journal'):
+        try:
+            info = path.with_name(path.name + suffix).lstat()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return False
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid():
+            return False
+    return True
 
 def read_json_object(path):
     """No symlink, special-file or unbounded reads of local state."""
@@ -48,7 +83,8 @@ def read_json_object(path):
             raw = source.read(MAX_JSON_BYTES + 1)
             if len(raw) > MAX_JSON_BYTES:
                 return None
-        value = json.loads(raw)
+        value = json.loads(raw, object_pairs_hook=strict_json_object,
+                           parse_constant=reject_json_constant)
         return value if isinstance(value, dict) else None
     except (OSError, ValueError, RecursionError):
         return None
@@ -63,6 +99,8 @@ def load_history():
     except OSError:
         return {}
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid() or info.st_size > 64 * 1024 * 1024:
+        return {}
+    if not safe_history_sidecars(path):
         return {}
     connection = None
     try:
@@ -83,7 +121,7 @@ def load_history():
             if not isinstance(day, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
                 return {}
             datetime.strptime(day, "%Y-%m-%d")
-            if day in history or type(total) is not int or total < 0:
+            if day in history or type(total) is not int or not 0 <= total <= MAX_EXACT_BYTES:
                 return {}
             if (dl is None) != (ul is None) or (dl is not None and
                     (type(dl) is not int or type(ul) is not int or min(dl, ul) < 0 or dl + ul != total)):
@@ -321,11 +359,11 @@ def query_traffic(scope=None):
     top100 = get_top100_data(ip) if campus_candidate else {"in_top1000": None, "status": "not_applicable"}
     unknown = {"schema_version": 1, "status": "local_usage_unknown", "date": get_today_string(),
                "iface": iface, "ip": ip, "top100": top100}
-    if state is None or state.get("accounting_overflow") is True or (scope is None and campus_candidate):
+    if state is None or not valid_daily_counters(state) or scope is None:
         # Keep ranking observations available to the Swift caller independently
         # of local scope attribution. Do not guess a dorm quota from an IP.
         return unknown
-    selected = scope or "external"
+    selected = scope
     prefix = {"dorm": "dorm", "campus_wifi": "wifi", "external": "ext"}.get(selected)
     if prefix is None:
         return unknown
@@ -342,10 +380,10 @@ def query_traffic(scope=None):
         return unknown
     local_in = state.get(prefix + "_in")
     local_out = state.get(prefix + "_out")
-    if any(type(value) is not int or not 0 <= value <= 2**64 - 1 for value in (local_in, local_out)):
+    if any(type(value) is not int or not 0 <= value <= MAX_EXACT_BYTES for value in (local_in, local_out)):
         return unknown
     local_total = local_in + local_out
-    if local_total > 2**64 - 1:
+    if local_total > MAX_EXACT_BYTES:
         return unknown
     is_dorm = selected == "dorm"
     in_bytes, out_bytes, total_bytes = local_in, local_out, local_total
