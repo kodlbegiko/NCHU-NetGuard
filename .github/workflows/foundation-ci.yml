@@ -1,14 +1,14 @@
 name: Foundation CI
 on:
   pull_request:
-    branches: [main]
+    branches: [main, feat/r4-bundle-v2]
   push:
-    branches: [feat/r4-foundation, 'fix/r4-closure-*']
+    branches: [feat/r4-foundation, 'fix/r4-closure-*', '!fix/r4-closure-integration']
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: foundation-${{ github.ref }}
+  group: foundation-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
   foundation:

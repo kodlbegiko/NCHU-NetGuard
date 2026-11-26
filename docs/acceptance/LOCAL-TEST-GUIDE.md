@@ -43,4 +43,20 @@ python3 scripts/acceptance/soak_test.py --pid 12345
 第一行只做短試；第二行預設前景執行 168h，每 60 秒採樣。輸出 test-results/soak-*/summary.json、environment.json、samples.jsonl，僅保留統計值、不保存 PID 或程序路徑。關閉終端、程序結束、身分改變、時間倒退、超過允許採樣缺口等均不能判定通過；不嘗試自動重啟 App 或改變睡眠設定。即使完整觀測 168h，仍要審查執行檔身分、功能失效與 crash 記錄。
 
 ## 人工驗收
+
+可直接建立及記錄私有實機驗收工作階段，不必手動計算雜湊或編輯 JSON。先於乾淨 macOS checkout 執行：
+
+```bash
+python3 scripts/acceptance/manual_session.py init
+```
+
+將輸出的 test-results/manual-* 目錄代入下例，並使用自己事先去識別的實際觀察紀錄（不是樣板）：
+
+```bash
+python3 scripts/acceptance/manual_session.py record test-results/manual-實際目錄名稱 sleep_wake --outcome inconclusive --evidence /path/to/redacted-observation.txt
+python3 scripts/acceptance/manual_session.py verify test-results/manual-實際目錄名稱
+```
+
+工具會複製明確指定的檔案至私有 evidence/，以 SHA-256 命名，不保存來源檔名。每個 gate 僅記錄一次，重新測試請開新工作階段；禁止執行 blocked gate。verify 會實際檢查已引用檔案內容與雜湊，不代表驗證證據真實性。請勿輸入未去識別的資料，勿提交整個目錄。所有結果都仍需獨立審查。
+
 依 [驗收矩陣](ACCEPTANCE-MATRIX.md) 逐項在有權限且不影響重要工作之環境測試。複製 MANUAL-RESULT.template.json 到私有 test-results 目錄，填寫實際結果及去識別證據；使用 record_manual.py 驗證紀錄結構（例如：python3 scripts/acceptance/record_manual.py test-results/manual.json）。不可把樣板當作測試結果，也不可執行仍被禁用的真實復原、擴充、升級/解除安裝。正式核准需整合負責人審查。原始紀錄留本地，分享前只提供去識別摘要。

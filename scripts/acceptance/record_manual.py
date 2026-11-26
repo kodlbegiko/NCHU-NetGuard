@@ -6,12 +6,15 @@ import json
 import re
 from pathlib import Path
 from run_all import BLOCKED_IDS, MANUAL_IDS
+from verify_report import strict_json
 
 def validate(value):
     if not isinstance(value, dict) or type(value.get("schema_version")) is not int or value["schema_version"] != 1 or value.get("kind") != "manual_device_evidence":
         raise ValueError("schema")
     if not isinstance(value.get("commit_sha"), str) or not re.fullmatch(r"[0-9a-f]{40}", value["commit_sha"]):
         raise ValueError("commit")
+    if set(value) != {"schema_version", "kind", "commit_sha", "environment", "gates", "review_status"}:
+        raise ValueError("ledger shape")
     if value.get("review_status") != "review_required":
         raise ValueError("review status")
     environment = value.get("environment")
@@ -33,11 +36,15 @@ def validate(value):
         outcome = gate["outcome"]
         if outcome not in ("not_run", "blocked", "inconclusive", "observed_pass", "observed_fail"):
             raise ValueError("outcome")
-        if id in BLOCKED_IDS and outcome == "observed_pass":
-            raise ValueError("disabled capability cannot pass current matrix")
+        if id in BLOCKED_IDS and outcome not in ("blocked", "not_run"):
+            raise ValueError("disabled capability cannot be executed under current matrix")
         hashes = gate["evidence_sha256"]
         if not isinstance(hashes, list) or len(hashes) > 32 or any(not isinstance(h, str) or not re.fullmatch(r"[0-9a-f]{64}",h) for h in hashes):
             raise ValueError("evidence digest")
+        if len(set(hashes)) != len(hashes):
+            raise ValueError("duplicate digest")
+        if outcome in ("not_run", "blocked") and (hashes or gate["observed_at"] is not None):
+            raise ValueError("unexecuted gate cannot have observation evidence")
         note = gate["note"]
         if not isinstance(note, str) or len(note) > 2000:
             raise ValueError("note")
@@ -60,7 +67,7 @@ def main():
             raw = file.read(256 * 1024 + 1)
         if len(raw) > 256 * 1024:
             raise ValueError("too large")
-        result = validate(json.loads(raw))
+        result = validate(strict_json(raw))
     except (OSError, ValueError, KeyError, TypeError, RecursionError):
         print("Invalid manual evidence ledger; no acceptance granted.")
         return 2

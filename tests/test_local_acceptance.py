@@ -12,6 +12,7 @@ import run_all as runner
 import soak_test as soak
 import record_manual as manual
 import verify_report as verifier
+import manual_session as session
 
 class LocalAcceptanceTests(unittest.TestCase):
     def test_exit_never_treats_inconclusive_or_dirty_as_pass(self):
@@ -161,3 +162,29 @@ class LocalAcceptanceTests(unittest.TestCase):
             path.symlink_to(target)
             with self.assertRaises(OSError):
                 verifier.verify(out)
+
+
+    def test_manual_session_keeps_first_observation_and_checks_actual_files(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d)
+            env = {"os_version":"15.0","architecture":"arm64","hardware_model":"Mac16,12"}
+            session.create_session(out, "a"*40, env)
+            source = out / "fixture.txt"
+            source.write_text("synthetic redacted observation")
+            result = session.record(out, "a"*40, "sleep_wake", "observed_pass", [source])
+            self.assertEqual(result["verified_evidence_files"], 1)
+            self.assertFalse(result["full_device_acceptance"])
+            with self.assertRaises(ValueError):
+                session.record(out, "a"*40, "sleep_wake", "observed_fail", [source])
+            with self.assertRaises(ValueError):
+                session.record(out, "a"*40, "recovery", "observed_pass", [source])
+            with self.assertRaises(ValueError):
+                session.record(out, "b"*40, "dual_stack", "observed_pass", [source])
+            link = out / "link"
+            link.symlink_to(source)
+            with self.assertRaises(OSError):
+                session.record(out, "a"*40, "dual_stack", "inconclusive", [link])
+            digest = hashlib.sha256(source.read_bytes()).hexdigest()
+            (out / "evidence" / (digest + ".bin")).write_bytes(b"altered")
+            with self.assertRaises(ValueError):
+                session.verify_evidence(out, session.read_ledger(out))
