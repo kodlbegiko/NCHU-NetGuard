@@ -117,4 +117,28 @@ final class TrafficModuleTests: XCTestCase {
             .init(counters: counters, scope: .external, identity: "b")
         ])["en0"], .unknown)
     }
+
+    func testLocalScopeInferenceRequiresUnambiguousEvidence() {
+        let cases: [([String], Bool, Bool, NetworkScope?, NetworkScope)] = [
+            (["140.120.1.2"], false, false, nil, .unknown),
+            (["140.120.1.2"], false, true, nil, .campusWifi),
+            (["140.120.1.2", "172.20.10.3"], false, true, nil, .unknown),
+            (["140.120.1.2", "192.0.2.3"], false, true, nil, .unknown),
+            (["172.20.10.3"], false, true, nil, .external),
+            (["140.120.1.2", "169.254.1.1"], false, true, nil, .campusWifi),
+            (["140.120.999.2"], false, true, nil, .unknown),
+            (["140.120.1.2"], false, false, .dorm, .dorm),
+            (["169.254.1.1"], false, false, .dorm, .unknown),
+            (["127.0.0.1"], false, false, .dorm, .unknown),
+            ([], true, false, .dorm, .dorm),
+            ([], true, true, nil, .unknown),
+            ([], false, false, .external, .unknown),
+            (["140.120.1.2", "bad"], false, true, .dorm, .unknown)
+        ]
+        for (ips, v6, wifi, explicit, expected) in cases {
+            XCTAssertEqual(InterfaceScopeEvidence.resolve(ipv4: ips, hasUsableIPv6: v6,
+                isWiFi: wifi, explicit: explicit), expected, "IPv4 fixture: \(ips)")
+        }
+    }
+
 }

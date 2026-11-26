@@ -201,15 +201,11 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
     
     // 是否為興大校園無線網路 (NCHU Wi-Fi: 每日下載上限 10GB / 上傳 5GB / 總額 15GB，超量限速不斷網)
     var isCampusWifi: Bool {
-        if networkModeOverride == 2 { return true }
-        if networkModeOverride != 0 { return false }
         return sampledScopes[activeInterface] == .campusWifi
     }
     
     // Estimated wired dorm scope, not a verified provider classification or block status.
     var isDormNetwork: Bool {
-        if networkModeOverride == 1 { return true }
-        if networkModeOverride != 0 { return false }
         return sampledScopes[activeInterface] == .dorm
     }
     
@@ -245,11 +241,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
     
     var networkTypeName: String {
         if isCampusWifi {
-            return "興大校園 Wi-Fi (NCHU)"
+            return "興大校園 Wi-Fi（本機判定）"
         } else if isDormNetwork {
-            return "興大二村 宿網 (有線)"
-        } else if currentIP.hasPrefix("172.20.10.") {
-            return "iPhone 個人熱點"
+            return "興大宿網（手動選擇）"
         } else {
             return sampledScopes[activeInterface] == .external ? "外部網路（估計）" : "網路歸屬未確認"
         }
@@ -2206,6 +2200,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         var addresses: [String: [String]] = [:]
         var linkNames = Set<String>()
         var ambiguousLinks = Set<String>()
+        var usableIPv6Names = Set<String>()
         var tunnels = Set<String>()
         var familyEvidence: [String: InterfaceAddressEvidence] = [:]
         for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
@@ -2217,7 +2212,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             guard types[name] != nil, let address = item.ifa_addr else { continue }
             if address.pointee.sa_family == UInt8(AF_INET) || address.pointee.sa_family == UInt8(AF_INET6) {
                 var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-                if getnameinfo(address, socklen_t(address.pointee.sa_len), &host,
+                if (item.ifa_flags & UInt32(IFF_UP)) != 0,
+                   getnameinfo(address, socklen_t(address.pointee.sa_len), &host,
                                socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 {
                     let ip = String(cString: host)
                     addresses[name, default: []].append(ip)
@@ -2233,6 +2229,11 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                                 let bytes = withUnsafeBytes(of: &parsed) { Array($0) }
                                 let linkLocal = bytes.count >= 2 && bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80
                                 familyEvidence[name, default: InterfaceAddressEvidence()].observeIPv6(linkLocal: linkLocal)
+                                if bytes.count == 16, !linkLocal, bytes[0] != 0xff,
+                                   !bytes.allSatisfy({ $0 == 0 }),
+                                   !(bytes.dropLast().allSatisfy({ $0 == 0 }) && bytes.last == 1) {
+                                    usableIPv6Names.insert(name)
+                                }
                             }
                         }
                     }
@@ -2245,23 +2246,22 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         observedAddressEvidence = familyEvidence
         return linkNames.subtracting(ambiguousLinks).sorted().compactMap { name in
             guard let reading = InterfaceMIBReader.read(name), let kind = types[name] else { return nil }
-            let ips = addresses[name, default: []].sorted()
-            let campus = ips.contains { $0.hasPrefix("140.120.") }
-            let hotspot = ips.contains { $0.hasPrefix("172.20.10.") }
-            var scope: NetworkScope = .unknown
+            let ips = Set(addresses[name, default: []]).sorted()
             // Explicit overrides affect only the currently selected interface.
-            if name == activeInterface && networkModeOverride != 0 && !ips.isEmpty {
+            let explicit: NetworkScope?
+            if name == activeInterface && networkModeOverride != 0 {
                 switch networkModeOverride {
-                case 1: scope = .dorm
-                case 2: scope = .campusWifi
-                case 3: scope = .external
-                default: break
+                case 1: explicit = .dorm
+                case 2: explicit = .campusWifi
+                case 3: explicit = .external
+                default: explicit = .unknown
                 }
-            } else if campus {
-                scope = kind == (kSCNetworkInterfaceTypeIEEE80211 as String) ? .campusWifi : .dorm
-            } else if hotspot {
-                scope = .external
+            } else {
+                explicit = nil
             }
+            let scope = InterfaceScopeEvidence.resolve(ipv4: ips.filter { !$0.contains(":") },
+                hasUsableIPv6: usableIPv6Names.contains(name),
+                isWiFi: kind == (kSCNetworkInterfaceTypeIEEE80211 as String), explicit: explicit)
             return ScopedInterfaceSample(counters: reading.counters, scope: scope,
                 identity: ips.isEmpty ? "" : kind + "|" + ips.joined(separator: ","),
                 counterGeneration: String(reading.index))

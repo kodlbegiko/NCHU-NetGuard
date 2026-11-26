@@ -159,3 +159,30 @@ public struct DailyScopeCoverage: Equatable, Sendable {
         return result
     }
 }
+
+
+/// Conservative local scope inference, not provider identity or billing proof.
+/// A wired campus prefix is insufficient to identify a dormitory network.
+public enum InterfaceScopeEvidence {
+    public static func resolve(ipv4: [String], hasUsableIPv6: Bool, isWiFi: Bool,
+                               explicit: NetworkScope? = nil) -> NetworkScope {
+        var usable: [[UInt8]] = []
+        for address in ipv4 {
+            let parts = address.split(separator: ".", omittingEmptySubsequences: false)
+            let octets = parts.compactMap { part -> UInt8? in
+                guard let value = UInt8(part), String(value) == String(part) else { return nil }
+                return value
+            }
+            guard parts.count == 4, octets.count == 4 else { return .unknown }
+            guard octets[0] > 0, octets[0] != 127, octets[0] < 224,
+                  !(octets[0] == 169 && octets[1] == 254) else { continue }
+            usable.append(octets)
+        }
+        guard !usable.isEmpty || hasUsableIPv6 else { return .unknown }
+        if let explicit { return explicit }
+        guard !usable.isEmpty else { return .unknown }
+        if isWiFi && usable.allSatisfy({ $0[0] == 140 && $0[1] == 120 }) { return .campusWifi }
+        if usable.allSatisfy({ $0[0] == 172 && $0[1] == 20 && $0[2] == 10 }) { return .external }
+        return .unknown
+    }
+}
