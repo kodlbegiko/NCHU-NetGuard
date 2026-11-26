@@ -36,8 +36,11 @@ public enum HistoryBackupInspector {
             return ProcessInfo.processInfo.systemUptime >= opaque.assumingMemoryBound(to: Double.self).pointee ? 1 : 0
         }, UnsafeMutableRawPointer(context))
         defer { sqlite3_progress_handler(db, 0, nil, nil) }
-        guard sqlite3_exec(db, "PRAGMA query_only=ON; PRAGMA trusted_schema=OFF", nil, nil, nil) == SQLITE_OK
+        guard sqlite3_exec(db, "PRAGMA query_only=ON; PRAGMA trusted_schema=OFF; BEGIN DEFERRED", nil, nil, nil) == SQLITE_OK
         else { throw HistoryStoreError.database("backup read-only setup") }
+        // All schema, integrity and semantic checks see one read snapshot.
+        // This is not a simultaneous snapshot of the other history stores.
+        defer { _ = sqlite3_exec(db, "ROLLBACK", nil, nil, nil) }
         func query(_ sql: String, _ body: (OpaquePointer) throws -> Void) throws {
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement
@@ -87,8 +90,8 @@ public enum HistoryBackupInspector {
             while true {
                 let rc = sqlite3_step(stmt)
                 if rc == SQLITE_DONE { break }
-                guard rc == SQLITE_ROW, sqlite3_column_type(stmt,0) == SQLITE_TEXT,
-                      let text = sqlite3_column_text(stmt,0) else { throw HistoryStoreError.invalidRecord }
+                guard rc == SQLITE_ROW else { throw HistoryStoreError.invalidRecord }
+                let day = try HistorySQLiteText.read(stmt, 0, length: 10...10)
                 func value(_ col: Int32) throws -> UInt64? {
                     if sqlite3_column_type(stmt,col) == SQLITE_NULL { return nil }
                     guard sqlite3_column_type(stmt,col) == SQLITE_INTEGER,
@@ -96,7 +99,6 @@ public enum HistoryBackupInspector {
                     return n
                 }
                 guard let total = try value(1) else { throw HistoryStoreError.invalidRecord }
-                let day = String(cString: text)
                 let record = try HistoryDay(day: day, total: total, download: value(2), upload: value(3))
                 guard days.updateValue(record, forKey: day) == nil else { throw HistoryStoreError.invalidRecord }
             }
@@ -110,14 +112,12 @@ public enum HistoryBackupInspector {
                     let rc = sqlite3_step(stmt)
                     if rc == SQLITE_DONE { break }
                     guard rc == SQLITE_ROW, classified < count * 4,
-                          sqlite3_column_type(stmt,0) == SQLITE_TEXT, sqlite3_column_type(stmt,1) == SQLITE_TEXT,
-                          let dayText = sqlite3_column_text(stmt,0), let scopeText = sqlite3_column_text(stmt,1),
-                          let scope = NetworkScope(rawValue: String(cString: scopeText)),
+                          let scope = NetworkScope(rawValue: try HistorySQLiteText.read(stmt, 1, length: 1...10)),
                           sqlite3_column_type(stmt,2) == SQLITE_INTEGER, sqlite3_column_type(stmt,3) == SQLITE_INTEGER,
                           let dl = UInt64(exactly: sqlite3_column_int64(stmt,2)),
                           let ul = UInt64(exactly: sqlite3_column_int64(stmt,3))
                     else { throw HistoryStoreError.invalidRecord }
-                    let day = String(cString: dayText)
+                    let day = try HistorySQLiteText.read(stmt, 0, length: 10...10)
                     let (total, overflow) = dl.addingReportingOverflow(ul)
                     guard !overflow, days[day] != nil, version >= 3 || total > 0 else { throw HistoryStoreError.invalidRecord }
                     let row = try HistoryDay(day: day, total: total, download: dl, upload: ul)

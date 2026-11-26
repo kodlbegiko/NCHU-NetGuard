@@ -39,6 +39,27 @@ enum HistorySQLitePath {
     }
 }
 
+/// Decode bounded identity text by its actual SQLite byte length, not a
+/// NUL-terminated prefix. SQLite TEXT can contain embedded NUL or invalid
+/// UTF-8; neither is a valid date or scope identifier.
+enum HistorySQLiteText {
+    static func read(_ statement: OpaquePointer, _ column: Int32,
+                     length: ClosedRange<Int>) throws -> String {
+        guard sqlite3_column_type(statement, column) == SQLITE_TEXT,
+              let raw = sqlite3_column_text(statement, column) else {
+            throw HistoryStoreError.invalidRecord
+        }
+        let count = Int(sqlite3_column_bytes(statement, column))
+        guard length.contains(count) else { throw HistoryStoreError.invalidRecord }
+        let bytes = UnsafeBufferPointer(start: raw, count: count)
+        guard bytes.allSatisfy({ (32...126).contains($0) }),
+              let value = String(bytes: bytes, encoding: .utf8) else {
+            throw HistoryStoreError.invalidRecord
+        }
+        return value
+    }
+}
+
 public enum HistoryStoreError: Error, Equatable {
     case invalidRecord, invalidLegacy, unsupportedSchema, database(String)
 }
@@ -383,8 +404,8 @@ public final class HistoryStore {
         while true {
             let rc = sqlite3_step(stmt)
             if rc == SQLITE_DONE { return result }
-            guard rc == SQLITE_ROW, let text = sqlite3_column_text(stmt, 0)
-            else { throw HistoryStoreError.database("read") }
+            guard rc == SQLITE_ROW else { throw HistoryStoreError.database("read") }
+            let day = try HistorySQLiteText.read(stmt, 0, length: 10...10)
             func value(_ col: Int32) throws -> UInt64? {
                 if sqlite3_column_type(stmt, col) == SQLITE_NULL { return nil }
                 guard sqlite3_column_type(stmt, col) == SQLITE_INTEGER,
@@ -392,7 +413,7 @@ public final class HistoryStore {
                 return UInt64(sqlite3_column_int64(stmt, col))
             }
             guard let total = try value(1) else { throw HistoryStoreError.invalidRecord }
-            result.append(try HistoryDay(day: String(cString: text), total: total,
+            result.append(try HistoryDay(day: day, total: total,
                                          download: value(2), upload: value(3)))
         }
     }

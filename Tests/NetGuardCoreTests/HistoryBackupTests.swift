@@ -79,6 +79,50 @@ final class HistoryBackupTests: XCTestCase {
         }
     }
 
+    func testSQLiteIdentityTextCannotHideBytesAfterNUL() throws {
+        try withDirectory { dir in
+            let malformedDays = [
+                "CAST(X'323032362D31312D32340078' AS TEXT)",
+                "CAST(X'323032362D31312D3234FF' AS TEXT)",
+                "'2026-11-24 '"
+            ]
+            for (index, daySQL) in malformedDays.enumerated() {
+                let url = dir.appendingPathComponent("bad-day-\(index).sqlite")
+                let store = try HistoryStore(url: url)
+                var db: OpaquePointer?
+                guard sqlite3_open(url.path, &db) == SQLITE_OK, let db else {
+                    throw HistoryStoreError.database("fixture open")
+                }
+                let result = sqlite3_exec(db, "INSERT INTO history_days VALUES(\(daySQL),1,NULL,NULL)", nil, nil, nil)
+                sqlite3_close(db)
+                XCTAssertEqual(result, SQLITE_OK)
+                let original = try Data(contentsOf: url)
+                XCTAssertThrowsError(try store.recent())
+                XCTAssertThrowsError(try HistoryBackupInspector.inspect(url))
+                XCTAssertEqual(try Data(contentsOf: url), original)
+            }
+        }
+    }
+
+    func testBackupRejectsMalformedScopeIdentity() throws {
+        try withDirectory { dir in
+            let url = dir.appendingPathComponent("scope.sqlite")
+            var db: OpaquePointer?
+            guard sqlite3_open(url.path, &db) == SQLITE_OK, let db else {
+                throw HistoryStoreError.database("fixture open")
+            }
+            // An intentionally constraint-light historical schema, matching
+            // column inventory but containing a NUL-suffixed scope identity.
+            let sql = "CREATE TABLE history_days(day TEXT PRIMARY KEY,total INTEGER,download INTEGER,upload INTEGER); CREATE TABLE history_scopes(day TEXT,scope TEXT,download INTEGER,upload INTEGER,PRIMARY KEY(day,scope)); INSERT INTO history_days VALUES('2026-11-24',2,1,1); INSERT INTO history_scopes VALUES('2026-11-24',CAST(X'646F726D0078' AS TEXT),1,1); PRAGMA user_version=3;"
+            let status = sqlite3_exec(db, sql, nil, nil, nil)
+            sqlite3_close(db)
+            XCTAssertEqual(status, SQLITE_OK)
+            let original = try Data(contentsOf: url)
+            XCTAssertThrowsError(try HistoryBackupInspector.inspect(url))
+            XCTAssertEqual(try Data(contentsOf: url), original)
+        }
+    }
+
     func testUnexpectedTableFailsPreflight() throws {
         try withDirectory { dir in
             let url = dir.appendingPathComponent("unexpected.sqlite")
