@@ -212,6 +212,22 @@ class FoundationTests(unittest.TestCase):
             self.assertNotRegex(path.read_text(), r"\bProcess\s*\(")
         self.assertNotIn("140.120.251.126", (ROOT / "src/main.swift").read_text())
 
+    def test_popover_creation_deferred_until_opening(self):
+        swift = (ROOT / "src/main.swift").read_text()
+        setup = swift.split("func setupPopoverUI()", 1)[1].split("private func preparePopoverContent()", 1)[0]
+        prepare = swift.split("private func preparePopoverContent()", 1)[1].split("func updateQuickPanel()", 1)[0]
+        click = swift.split("func statusBarButtonClicked(", 1)[1].split("func pushDataToWebUI()", 1)[0]
+        switch = swift.split("func switchPanel(", 1)[1].split("func openHistoryAnalytics()", 1)[0]
+        self.assertNotIn("WKWebView(", setup)
+        self.assertNotIn("NSHostingController(", setup)
+        self.assertIn("guard popover.contentViewController == nil", prepare)
+        self.assertIn("WKWebView(", prepare)
+        self.assertIn("preparePopoverContent()", click)
+        self.assertIn("if show, let button", switch)
+        self.assertIn("preparePopoverContent()", switch)
+        self.assertIn("if button.title != title", swift)
+        self.assertIn("policyDayFormatter.string(from: Date())", swift)
+
     def test_legacy_bridge_has_no_markup_sink_or_dynamic_code(self):
         html = (ROOT / "src/Resources/popover.html").read_text()
         swift = (ROOT / "src/main.swift").read_text()

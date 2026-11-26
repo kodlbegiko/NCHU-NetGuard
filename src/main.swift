@@ -623,13 +623,19 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         if popover != nil && popover.isShown { pushDataToWebUI() }
     }
 
-    func getTodayString() -> String {
+    // Fixed policy timezone; reuse the immutable configuration, not the
+    // date value. Clock changes and midnight remain visible on every call.
+    private let policyDayFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.timeZone = TimeZone(identifier: "Asia/Taipei")
         formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: Date())
+        return formatter
+    }()
+
+    func getTodayString() -> String {
+        policyDayFormatter.string(from: Date())
     }
 
     func getRelativeDateLabel(targetDateStr: String) -> String {
@@ -1032,6 +1038,14 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         let panelHeight = max(280, min(570, availableHeight - 70))
         popover.contentSize = NSSize(width: 380, height: panelHeight)
         popover.behavior = .transient
+        webView = nil
+        // Defer both panel implementations until the first user opening.
+        // Background traffic accounting does not require a renderer.
+    }
+
+    private func preparePopoverContent() {
+        guard popover.contentViewController == nil else { return }
+        let panelHeight = popover.contentSize.height
         if nativePanelEnabled {
             webView = nil
             popover.contentViewController = NSHostingController(rootView: QuickPanel(
@@ -1097,9 +1111,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         popover?.performClose(nil)
         nativePanelEnabled = native
         setupPopoverUI()
-        pushDataToWebUI()
         syncSettingsModel()
         if show, let button = statusItem.button {
+            preparePopoverContent()
+            pushDataToWebUI()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
     }
@@ -1771,6 +1786,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         if popover.isShown {
             popover.performClose(sender)
         } else {
+            preparePopoverContent()
             pushDataToWebUI()
             popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
             // 打開面板時立即採樣最新的最耗流量 App 與 Ping 延遲，零延遲呈現
@@ -1780,6 +1796,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
     }
 
     func pushDataToWebUI() {
+        guard popover?.contentViewController != nil else { return }
         if nativePanelEnabled {
             updateQuickPanel()
             return
@@ -2776,23 +2793,26 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
 
     func updateStatusBar() {
         guard let button = statusItem.button else { return }
+        func setTitle(_ title: String) {
+            if button.title != title { button.title = title }
+        }
         
         if clockHeld {
-            button.title = "日期異常 · 暫停計量"
+            setTitle("日期異常 · 暫停計量")
             return
         }
         if !isConnected {
-            button.title = "網路未確認"
+            setTitle("網路未確認")
             return
         }
         
         if accountingOverflow {
-            button.title = "流量紀錄不完整"
+            setTitle("流量紀錄不完整")
             return
         }
         if isQuotaRestricted {
             guard localQuotaAssessment() != nil else {
-                button.title = "配額未確認"
+                setTitle("配額未確認")
                 return
             }
             let (totalUsed, dlUsed, ulUsed) = getEffectiveUsedBytes()
@@ -2822,22 +2842,22 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             
             switch displayMode {
             case 0:
-                button.title = String(format: "%@ %.2f GiB", statusIcon, displayGB)
+                setTitle(String(format: "%@ %.2f GiB", statusIcon, displayGB))
             case 1:
-                button.title = String(format: "%@ 剩 %.2f GiB", statusIcon, displayGB)
+                setTitle(String(format: "%@ 剩 %.2f GiB", statusIcon, displayGB))
             case 2:
-                button.title = String(format: "%@ ↓%@ ↑%@", statusIcon, formatSpeed(currentDownSpeed), formatSpeed(currentUpSpeed))
+                setTitle(String(format: "%@ ↓%@ ↑%@", statusIcon, formatSpeed(currentDownSpeed), formatSpeed(currentUpSpeed)))
             case 3:
-                button.title = String(format: "%@ %.2f GiB", dotIcon, displayGB)
+                setTitle(String(format: "%@ %.2f GiB", dotIcon, displayGB))
             case 4:
-                button.title = String(format: "%.2f GiB", displayGB)
+                setTitle(String(format: "%.2f GiB", displayGB))
             default:
-                button.title = String(format: "%@ %.2f GiB", statusIcon, displayGB)
+                setTitle(String(format: "%@ %.2f GiB", statusIcon, displayGB))
             }
         } else {
             // 非宿網 / 外部網路模式 (無配額限制，暢連無負擔)
             guard hasLocalScopeEvidence(.external) else {
-                button.title = "流量未確認"
+                setTitle("流量未確認")
                 return
             }
             let extTotalBytes = extTodayInBytes + extTodayOutBytes
@@ -2846,17 +2866,17 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             
             switch displayMode {
             case 0:
-                button.title = String(format: "%@ %@", statusIcon, extTotalStr)
+                setTitle(String(format: "%@ %@", statusIcon, extTotalStr))
             case 1:
-                button.title = String(format: "%@ 已用 %@", statusIcon, extTotalStr)
+                setTitle(String(format: "%@ 已用 %@", statusIcon, extTotalStr))
             case 2:
-                button.title = String(format: "%@ ↓%@ ↑%@", statusIcon, formatSpeed(currentDownSpeed), formatSpeed(currentUpSpeed))
+                setTitle(String(format: "%@ ↓%@ ↑%@", statusIcon, formatSpeed(currentDownSpeed), formatSpeed(currentUpSpeed)))
             case 3:
-                button.title = String(format: "🟢 %@", extTotalStr)
+                setTitle(String(format: "🟢 %@", extTotalStr))
             case 4:
-                button.title = extTotalStr
+                setTitle(extTotalStr)
             default:
-                button.title = String(format: "%@ %@", statusIcon, extTotalStr)
+                setTitle(String(format: "%@ %@", statusIcon, extTotalStr))
             }
         }
     }
