@@ -1545,6 +1545,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                 let summary = try HistoryBundle.create(database: source, process: process,
                     connections: connections, events: events, agents: agents, destination: destination)
                 status = "備份已建立：" + Self.bundleSummary(summary)
+            } catch HistoryBundlePublicationError.durabilityUncertain {
+                status = "備份副本已建立，但落盤狀態未確認；請保留副本並重新預檢，勿覆寫"
             } catch {
                 status = "完整歷史備份失敗；未覆寫既有目的地"
             }
@@ -1605,8 +1607,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             do {
                 let summary = try HistoryBundle.recoverCopy(from: source, to: destination)
                 status = "隔離復原完成：" + Self.bundleSummary(summary) + "；未取代使用中的資料"
+            } catch HistoryBundlePublicationError.durabilityUncertain {
+                status = "復原副本已建立，但落盤狀態未確認；請保留並重新預檢，未取代使用中的資料"
             } catch {
-                status = "隔離復原失敗；未發布復原副本或覆寫既有目的地"
+                status = "隔離復原失敗；未覆寫既有目的地或使用中的資料"
             }
             DispatchQueue.main.async {
                 self?.settingsModel.backupBusy = false

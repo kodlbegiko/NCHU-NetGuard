@@ -136,6 +136,23 @@ final class HistoryBundleTests: XCTestCase {
         }
     }
 
+    func testPublishedCopySurvivesUncertainDirectoryDurability() throws {
+        try fixture { root, db, process, connections, events in
+            let backup = root.appendingPathComponent("backup")
+            let summary = try HistoryBundle.create(database: db, process: process,
+                connections: connections, events: events, destination: backup)
+            let copy = root.appendingPathComponent("copy")
+            XCTAssertThrowsError(try HistoryBundle.recoverCopy(from: backup, to: copy,
+                beforePublish: {}, syncParent: { _ in false })) { error in
+                XCTAssertEqual(error as? HistoryBundlePublicationError, .durabilityUncertain)
+            }
+            XCTAssertEqual(try HistoryBundle.inspect(copy), summary)
+            XCTAssertEqual(try HistoryBundle.inspect(backup), summary)
+            XCTAssertThrowsError(try HistoryBundle.recoverCopy(from: backup, to: copy))
+            XCTAssertEqual(try HistoryBundle.inspect(copy), summary)
+        }
+    }
+
     func testRecoveryRejectsDanglingDestinationAndSymlinkDirectory() throws {
         try fixture { root, db, process, connections, events in
             let backup = root.appendingPathComponent("backup")

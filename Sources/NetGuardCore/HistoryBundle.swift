@@ -2,6 +2,12 @@ import Foundation
 import CryptoKit
 import Darwin
 
+public enum HistoryBundlePublicationError: Error, Equatable {
+    /// The complete verified copy was published, but the parent directory
+    /// synchronization could not be confirmed. Do not delete or overwrite it.
+    case durabilityUncertain
+}
+
 public struct HistoryBundleSummary: Equatable, Sendable {
     public let version: Int
     public let database: HistoryBackupSummary
@@ -54,7 +60,8 @@ public enum HistoryBundle {
     /// A failure after rename is an uncertain durability outcome: leave the
     /// complete published copy intact, never delete it or overwrite a target.
     private static func publish(_ staged: URL, to destination: URL,
-                                version: Int, beforePublish: () throws -> Void) throws {
+                                version: Int, beforePublish: () throws -> Void,
+                                syncParent: (Int32) -> Bool = { fsync($0) == 0 }) throws {
         try directory(staged)
         let parent = destination.deletingLastPathComponent().resolvingSymlinksInPath()
         let parentFD = open(parent.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
@@ -95,8 +102,8 @@ public enum HistoryBundle {
               current.st_dev == stageInfo.st_dev, current.st_ino == stageInfo.st_ino,
               renameatx_np(parentFD, staged.lastPathComponent, parentFD,
                            destination.lastPathComponent, UInt32(RENAME_EXCL)) == 0 else { throw fail() }
-        guard fsync(parentFD) == 0 else {
-            throw HistoryStoreError.database("published history copy; directory durability uncertain")
+        guard syncParent(parentFD) else {
+            throw HistoryBundlePublicationError.durabilityUncertain
         }
     }
 
@@ -259,7 +266,8 @@ public enum HistoryBundle {
     // Internal deterministic fault hook; no caller can use it to authorize
     // an active-store replacement, even in tests.
     static func recoverCopy(from source: URL, to destination: URL,
-                            beforePublish: () throws -> Void) throws -> HistoryBundleSummary {
+                            beforePublish: () throws -> Void,
+                            syncParent: (Int32) -> Bool = { fsync($0) == 0 }) throws -> HistoryBundleSummary {
         guard source.isFileURL, destination.isFileURL,
               source.standardizedFileURL != destination.standardizedFileURL,
               !fm.fileExists(atPath: destination.path) else { throw fail() }
@@ -292,7 +300,8 @@ public enum HistoryBundle {
         try write(manifestData, to: temp.appendingPathComponent("manifest.json"))
         let summary = try inspect(temp)
         guard summary == expectedSummary else { throw fail() }
-        try publish(temp, to: destination, version: manifest.version, beforePublish: beforePublish)
+        try publish(temp, to: destination, version: manifest.version,
+                    beforePublish: beforePublish, syncParent: syncParent)
         return summary
     }
 
