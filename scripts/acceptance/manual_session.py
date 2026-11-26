@@ -119,7 +119,11 @@ def record(directory, sha, gate_id, outcome, selected, note=""):
         if gate["outcome"] != "not_run":
             # Keep the first observation immutable; re-test in a new session.
             raise ValueError("gate already recorded")
-        hashes = sorted({store_evidence(directory, read_selected(path)) for path in selected})
+        # Validate all selected inputs before writing any new evidence files.
+        # A later disk/write error can leave an unreferenced private blob;
+        # only ledger-referenced evidence is counted.
+        inputs = [read_selected(path) for path in selected]
+        hashes = sorted({store_evidence(directory, data) for data in inputs})
         gate.update(outcome=outcome, observed_at=now(), evidence_sha256=hashes, note=note)
         validate(ledger)
         write_json(directory / "ledger.json", ledger)

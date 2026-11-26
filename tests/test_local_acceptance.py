@@ -174,6 +174,12 @@ class LocalAcceptanceTests(unittest.TestCase):
             result = session.record(out, "a"*40, "sleep_wake", "observed_pass", [source])
             self.assertEqual(result["verified_evidence_files"], 1)
             self.assertFalse(result["full_device_acceptance"])
+            new_source = out / "new.txt"
+            new_source.write_text("second observation")
+            prior = set((out / "evidence").iterdir())
+            with self.assertRaises(OSError):
+                session.record(out, "a"*40, "dual_stack", "observed_fail", [new_source, out / "missing"])
+            self.assertEqual(set((out / "evidence").iterdir()), prior)
             with self.assertRaises(ValueError):
                 session.record(out, "a"*40, "sleep_wake", "observed_fail", [source])
             with self.assertRaises(ValueError):

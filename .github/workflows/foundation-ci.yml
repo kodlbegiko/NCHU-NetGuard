@@ -16,6 +16,16 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify tested revision
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          printf 'Tested source SHA: %s\n' "$EXPECTED_SHA"
+          printf 'Tested source SHA: `%s`\n\nHosted macOS CI; not real-device acceptance.\n' "$EXPECTED_SHA" >> "$GITHUB_STEP_SUMMARY"
       - name: Toolchain
         run: swift --version && python3 --version
       - name: Static guards and Python tests
