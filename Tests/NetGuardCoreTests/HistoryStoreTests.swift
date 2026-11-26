@@ -240,6 +240,50 @@ final class HistoryStoreTests: XCTestCase {
             XCTAssertThrowsError(try HistoryBackupInspector.inspect(url))
         }
     }
+    func testInvalidLegacyDayNeverMigratesOrChangesOriginalDatabase() throws {
+        let values = [
+            "('2026-02-30',10,5,5)",
+            "('2026-11-25',10,5,NULL)",
+            "('2026-11-25',-1,NULL,NULL)",
+            "('2026-11-25',1.5,NULL,NULL)",
+            "(CAST(X'323032362d31312d32350078' AS TEXT),10,5,5)",
+            "('2026-11-25',9223372036854775807,9223372036854775807,1)"
+        ]
+        for value in values {
+            try withURL { url in
+                var database: OpaquePointer?
+                guard sqlite3_open(url.path, &database) == SQLITE_OK, let database else {
+                    throw HistoryStoreError.database("fixture")
+                }
+                let sql = "CREATE TABLE history_days(day TEXT PRIMARY KEY, total INTEGER NOT NULL, download INTEGER, upload INTEGER); INSERT INTO history_days VALUES" + value + "; PRAGMA user_version=1;"
+                let status = sqlite3_exec(database, sql, nil, nil, nil)
+                sqlite3_close(database)
+                XCTAssertEqual(status, SQLITE_OK)
+                let original = try Data(contentsOf: url)
+                XCTAssertThrowsError(try HistoryStore(url: url), value)
+                XCTAssertThrowsError(try HistoryBackupInspector.inspect(url), value)
+                XCTAssertEqual(try Data(contentsOf: url), original, value)
+            }
+        }
+    }
+
+    func testCurrentSchemaRejectsEmbeddedNULOnReadAndInspection() throws {
+        try withURL { url in
+            do { _ = try HistoryStore(url: url) }
+            var database: OpaquePointer?
+            guard sqlite3_open(url.path, &database) == SQLITE_OK, let database else {
+                throw HistoryStoreError.database("fixture")
+            }
+            let sql = "INSERT INTO history_days VALUES(CAST(X'323032362d31312d32350078' AS TEXT),10,5,5);"
+            let status = sqlite3_exec(database, sql, nil, nil, nil)
+            sqlite3_close(database)
+            XCTAssertEqual(status, SQLITE_OK)
+            let store = try HistoryStore(url: url)
+            XCTAssertThrowsError(try store.recent())
+            XCTAssertThrowsError(try HistoryBackupInspector.inspect(url))
+        }
+    }
+
     func testActualV1DatabaseMigratesWithoutReclassification() throws {
         try withURL { url in
             var database: OpaquePointer?

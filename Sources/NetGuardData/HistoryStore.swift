@@ -39,6 +39,20 @@ enum HistorySQLitePath {
     }
 }
 
+/// SQLite text is length-delimited, not a C string. Reject embedded NUL,
+/// invalid UTF-8 and excessive lengths before interpreting a stored key.
+enum HistorySQLiteText {
+    static func read(_ statement: OpaquePointer, column: Int32, maximum: Int) -> String? {
+        guard sqlite3_column_type(statement, column) == SQLITE_TEXT,
+              let bytes = sqlite3_column_text(statement, column) else { return nil }
+        let count = Int(sqlite3_column_bytes(statement, column))
+        guard count > 0, count <= maximum else { return nil }
+        let raw = UnsafeBufferPointer(start: bytes, count: count)
+        guard !raw.contains(0) else { return nil }
+        return String(bytes: raw, encoding: .utf8)
+    }
+}
+
 public enum HistoryStoreError: Error, Equatable {
     case invalidRecord, invalidLegacy, unsupportedSchema, database(String)
 }
@@ -176,9 +190,12 @@ public final class HistoryStore {
                     try execute("CREATE TABLE history_days(day TEXT PRIMARY KEY, total INTEGER NOT NULL CHECK(total >= 0), download INTEGER, upload INTEGER, CHECK((download IS NULL AND upload IS NULL) OR (download IS NOT NULL AND upload IS NOT NULL AND download >= 0 AND upload >= 0 AND download + upload = total)))")
                 }
                 if version < 3 {
+                    try withMigrationDeadline { deadline in
+                    if version >= 1 { try validateLegacyDays(deadline: deadline) }
                     // v3 permits an affirmative measured-zero row for known scopes.
                     // Rebuild v2 atomically; absence stays absent and no zero is inferred.
                     if version == 2 {
+                        guard try scalar("SELECT count(*) FROM history_scopes") <= 146_400 else { throw HistoryStoreError.invalidRecord }
                         // A zero in the legacy schema is not affirmative
                         // evidence. Reject malformed rows before granting v3 semantics.
                         guard try scalar("SELECT count(*) FROM history_scopes WHERE typeof(day)<>'text' OR typeof(scope)<>'text' OR scope NOT IN ('dorm','campusWifi','external','unknown') OR typeof(download)<>'integer' OR typeof(upload)<>'integer' OR download<0 OR upload<0 OR (download=0 AND upload=0)") == 0,
@@ -192,6 +209,7 @@ public final class HistoryStore {
                         try execute("DROP TABLE history_scopes_v2")
                     }
                     try execute("PRAGMA user_version=3")
+                    }
                 }
                 try validateTableInventory(version: 3)
             }
@@ -279,6 +297,46 @@ public final class HistoryStore {
                   try scalar("SELECT count(*) FROM pragma_table_info('history_scopes') WHERE (cid=0 AND name='day' AND type='TEXT' AND pk=1) OR (cid=1 AND name='scope' AND type='TEXT' AND pk=2) OR (cid=2 AND name='download' AND type='INTEGER' AND pk=0) OR (cid=3 AND name='upload' AND type='INTEGER' AND pk=0)") == 4,
                   try scalar("SELECT count(*) FROM pragma_table_xinfo('history_scopes')") == 4
             else { throw HistoryStoreError.database("unexpected history scope columns") }
+        }
+    }
+
+    /// Bound old-schema validation and migration inside the write
+    /// transaction. Clear the callback before transaction rollback.
+    private func withMigrationDeadline(_ body: (TimeInterval) throws -> Void) throws {
+        var deadline = ProcessInfo.processInfo.systemUptime + 5
+        try withUnsafeMutablePointer(to: &deadline) { pointer in
+            sqlite3_progress_handler(db, 1000, { context in
+                guard let context else { return 1 }
+                return ProcessInfo.processInfo.systemUptime >= context.assumingMemoryBound(to: Double.self).pointee ? 1 : 0
+            }, UnsafeMutableRawPointer(pointer))
+            defer { sqlite3_progress_handler(db, 0, nil, nil) }
+            try body(pointer.pointee)
+            guard ProcessInfo.processInfo.systemUptime < pointer.pointee else {
+                throw HistoryStoreError.database("migration deadline")
+            }
+        }
+    }
+
+    private func validateLegacyDays(deadline: TimeInterval) throws {
+        let stmt = try statement("SELECT day,total,download,upload FROM history_days")
+        defer { sqlite3_finalize(stmt) }
+        var count = 0
+        while true {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { break }
+            guard rc == SQLITE_ROW, count < 36_600, ProcessInfo.processInfo.systemUptime < deadline,
+                  let day = HistorySQLiteText.read(stmt, column: 0, maximum: 10)
+            else { throw HistoryStoreError.invalidRecord }
+            func value(_ column: Int32) throws -> UInt64? {
+                if sqlite3_column_type(stmt, column) == SQLITE_NULL { return nil }
+                guard sqlite3_column_type(stmt, column) == SQLITE_INTEGER,
+                      let n = UInt64(exactly: sqlite3_column_int64(stmt, column))
+                else { throw HistoryStoreError.invalidRecord }
+                return n
+            }
+            guard let total = try value(1) else { throw HistoryStoreError.invalidRecord }
+            _ = try HistoryDay(day: day, total: total, download: value(2), upload: value(3))
+            count += 1
         }
     }
 
@@ -383,7 +441,7 @@ public final class HistoryStore {
         while true {
             let rc = sqlite3_step(stmt)
             if rc == SQLITE_DONE { return result }
-            guard rc == SQLITE_ROW, let text = sqlite3_column_text(stmt, 0)
+            guard rc == SQLITE_ROW, let day = HistorySQLiteText.read(stmt, column: 0, maximum: 10)
             else { throw HistoryStoreError.database("read") }
             func value(_ col: Int32) throws -> UInt64? {
                 if sqlite3_column_type(stmt, col) == SQLITE_NULL { return nil }
@@ -392,7 +450,7 @@ public final class HistoryStore {
                 return UInt64(sqlite3_column_int64(stmt, col))
             }
             guard let total = try value(1) else { throw HistoryStoreError.invalidRecord }
-            result.append(try HistoryDay(day: String(cString: text), total: total,
+            result.append(try HistoryDay(day: day, total: total,
                                          download: value(2), upload: value(3)))
         }
     }

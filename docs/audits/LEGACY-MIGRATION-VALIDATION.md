@@ -1,0 +1,3 @@
+# Legacy SQLite migration validation
+
+Candidate: old schema rows must pass the same calendar, byte and direction invariants before upgrade. Legacy migration scans at most 36,600 aggregate rows and 146,400 scope rows, with a five-second monotonic VM/validation deadline; failure rolls back without granting new schema semantics. Read and backup inspection reject embedded NUL and invalid UTF-8 instead of treating SQLite text as an unbounded C string. Backup checks share one read transaction. Existing v3 records are validated when read or inspected; this is not full live database authentication. Tests cover invalid dates, missing direction, fractional/negative/overflow counters, embedded NUL, and preservation of source bytes. Exact CI required.
