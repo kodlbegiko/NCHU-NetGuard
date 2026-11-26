@@ -246,7 +246,8 @@ public struct ProcessHistoryStore: Sendable {
         guard values.isRegularFile == true, values.isSymbolicLink != true else {
             throw HistoryStoreError.invalidRecord
         }
-        try FileManager.default.removeItem(at: file)
+        guard let bytes = try HistoryFileAccess.read(file, limit: maxBytes) else { return }
+        try HistoryFileAccess.removeIfUnchanged(file, expected: bytes, limit: maxBytes)
     }
 
     @discardableResult
@@ -261,9 +262,11 @@ public struct ProcessHistoryStore: Sendable {
 
     public func read(day: String) throws -> ProcessHistoryDay {
         let path = try url(day)
-        guard let data = try HistoryFileAccess.read(path, limit: maxBytes) else {
-            return .init(day: day, buckets: [])
-        }
+        return try decode(day: day, data: HistoryFileAccess.read(path, limit: maxBytes))
+    }
+
+    private func decode(day: String, data: Data?) throws -> ProcessHistoryDay {
+        guard let data else { return .init(day: day, buckets: []) }
         let decoded = try JSONDecoder().decode([ProcessHistoryBucket].self, from: data)
         guard decoded.count <= 512, Set(decoded.map(\.id)).count == decoded.count else { throw HistoryStoreError.invalidRecord }
         let checked = try decoded.map { try ProcessHistoryBucket(session: $0.session, hour: $0.hour, intervals: $0.intervals, rows: $0.rows, limited: $0.limited) }
@@ -286,7 +289,8 @@ public struct ProcessHistoryStore: Sendable {
     private func saveLocked(day: String, bucket: ProcessHistoryBucket, allowedLabels: Set<String>?) throws {
         let bucket = try ProcessHistoryBucket(session: bucket.session, hour: bucket.hour, intervals: bucket.intervals, rows: bucket.rows, limited: bucket.limited)
         let path = try url(day)
-        var records = try read(day: day).buckets
+        let expected = try HistoryFileAccess.read(path, limit: maxBytes)
+        var records = try decode(day: day, data: expected).buckets
         if let allowedLabels {
             guard (records + [bucket]).allSatisfy({ $0.rows.allSatisfy { allowedLabels.contains($0.name) } }) else {
                 throw HistoryStoreError.invalidRecord
@@ -308,9 +312,7 @@ public struct ProcessHistoryStore: Sendable {
         _ = try ProcessHistoryDay(day: day, buckets: records).totals()
         let data = try JSONEncoder().encode(records)
         guard data.count <= maxBytes else { throw HistoryStoreError.invalidRecord }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        try data.write(to: path, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
+        try HistoryFileAccess.replaceIfUnchanged(path, expected: expected, data: data, limit: maxBytes)
     }
 }
 

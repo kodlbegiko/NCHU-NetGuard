@@ -1,0 +1,3 @@
+# History file write safety
+
+The process/agent, connection and traffic-event stores now capture exact bounded bytes under the existing directory lock, validate the decoded records, and use private descriptor-relative compare-and-replace with file fsync and directory fsync. Process record deletion compares the exact bytes under the same cooperating lock. This closes the read/encode/replace gap for cooperating writers and rejects symlinks, hardlinks and foreign owner files. It is not a guarantee against arbitrary same-user non-cooperating renames or multi-store atomicity. All stores preserve malformed input on update; explicit history deletion is still user-driven. Added hardlink and permission regressions; exact macOS CI remains necessary.

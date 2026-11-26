@@ -27,6 +27,22 @@ final class ConnectionHistoryStoreTests: XCTestCase {
             XCTAssertEqual(try reopened.read().count, 2)
         }
     }
+    func testArchivePrivateReplacementAndHardlinkRejection() throws {
+        try withStore { store in
+            let first = try row()
+            try store.save(first)
+            let path = store.directory.appendingPathComponent("sessions.json")
+            let original = try Data(contentsOf: path)
+            let mode = try FileManager.default.attributesOfItem(atPath: path.path)[.posixPermissions] as? NSNumber
+            XCTAssertEqual(mode?.intValue, 0o600)
+            let hard = store.directory.appendingPathComponent("alias.json")
+            try FileManager.default.linkItem(at: path, to: hard)
+            XCTAssertThrowsError(try store.save(row()))
+            XCTAssertThrowsError(try store.remove(id: first.id))
+            XCTAssertEqual(try Data(contentsOf: path), original)
+            XCTAssertEqual(try Data(contentsOf: hard), original)
+        }
+    }
     func testDeleteOnlySelectedRecord() throws {
         try withStore { store in
             let first = try row()

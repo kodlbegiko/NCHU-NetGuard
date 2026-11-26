@@ -72,6 +72,22 @@ final class ProcessHistoryStoreTests: XCTestCase {
             XCTAssertEqual(try store.read(day: day).buckets.count, 1)
         }
     }
+    func testHistoryHardlinkAndPrivateReplacement() throws {
+        try withStore { store in
+            let session = UUID(), day = "2026-11-25"
+            try store.save(day: day, bucket: bucket(session))
+            let path = store.directory.appendingPathComponent(day + ".json")
+            let original = try Data(contentsOf: path)
+            let mode = try FileManager.default.attributesOfItem(atPath: path.path)[.posixPermissions] as? NSNumber
+            XCTAssertEqual(mode?.intValue, 0o600)
+            let hard = store.directory.appendingPathComponent("alias.json")
+            try FileManager.default.linkItem(at: path, to: hard)
+            XCTAssertThrowsError(try store.save(day: day, bucket: bucket(session, intervals: 2, download: 20)))
+            XCTAssertThrowsError(try store.remove(day: day))
+            XCTAssertEqual(try Data(contentsOf: hard), original)
+            XCTAssertEqual(try Data(contentsOf: path), original)
+        }
+    }
     func testIdempotentSnapshotsAndRestartIsolation() throws {
         try withStore { store in
             let session = UUID()

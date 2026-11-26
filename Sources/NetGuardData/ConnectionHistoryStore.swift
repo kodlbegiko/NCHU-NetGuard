@@ -43,7 +43,11 @@ public struct ConnectionHistoryStore: Sendable {
     public init(directory: URL) { self.directory = directory }
 
     public func read() throws -> [SavedConnectionSession] {
-        guard let data = try HistoryFileAccess.read(file, limit: maxBytes) else { return [] }
+        try decode(HistoryFileAccess.read(file, limit: maxBytes))
+    }
+
+    private func decode(_ data: Data?) throws -> [SavedConnectionSession] {
+        guard let data else { return [] }
         let rows = try JSONDecoder().decode([SavedConnectionSession].self, from: data)
         guard rows.count <= 1000, Set(rows.map(\.id)).count == rows.count else { throw HistoryStoreError.invalidRecord }
         return try rows.map {
@@ -59,31 +63,30 @@ public struct ConnectionHistoryStore: Sendable {
     private func saveLocked(_ row: SavedConnectionSession) throws {
         _ = try SavedConnectionSession(id: row.id, label: row.label, savedAt: row.savedAt,
             received: row.received, sent: row.sent, limitBytes: row.limitBytes, intervals: row.intervals)
-        var rows = try read()
+        let expected = try HistoryFileAccess.read(file, limit: maxBytes)
+        var rows = try decode(expected)
         if let existing = rows.first(where: { $0.id == row.id }) {
             guard existing == row else { throw HistoryStoreError.invalidRecord }
             return
         }
         guard rows.count < 1000 else { throw HistoryStoreError.invalidRecord }
         rows.append(row)
-        try write(rows)
+        try write(rows, expected: expected)
     }
 
     public func remove(id: UUID) throws {
         guard FileManager.default.fileExists(atPath: directory.path) else { return }
         try HistoryFileAccess.withWriteLock(directory: directory) {
-            let rows = try read()
+            let expected = try HistoryFileAccess.read(file, limit: maxBytes)
+            let rows = try decode(expected)
             guard rows.contains(where: { $0.id == id }) else { return }
-            try write(rows.filter { $0.id != id })
+            try write(rows.filter { $0.id != id }, expected: expected)
         }
     }
 
-    private func write(_ rows: [SavedConnectionSession]) throws {
+    private func write(_ rows: [SavedConnectionSession], expected: Data?) throws {
         let data = try JSONEncoder().encode(rows)
         guard data.count <= maxBytes else { throw HistoryStoreError.invalidRecord }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700])
-        try data.write(to: file, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        try HistoryFileAccess.replaceIfUnchanged(file, expected: expected, data: data, limit: maxBytes)
     }
 }

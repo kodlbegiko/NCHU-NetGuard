@@ -9,7 +9,11 @@ public struct TrafficEventArchive: Sendable {
     public init(directory: URL) { self.directory = directory }
 
     public func read() throws -> [TrafficObservationEvent] {
-        guard let data = try HistoryFileAccess.read(file, limit: maxBytes) else { return [] }
+        try decode(HistoryFileAccess.read(file, limit: maxBytes))
+    }
+
+    private func decode(_ data: Data?) throws -> [TrafficObservationEvent] {
+        guard let data else { return [] }
         let rows = try JSONDecoder().decode([TrafficObservationEvent].self, from: data)
         guard rows.count <= 1000, Set(rows.map(\.id)).count == rows.count,
               rows.allSatisfy(\.isValid) else { throw ContractError.invalidField("eventArchive") }
@@ -20,30 +24,29 @@ public struct TrafficEventArchive: Sendable {
         guard events.count <= 100, Set(events.map(\.id)).count == events.count,
               events.allSatisfy(\.isValid) else { throw ContractError.invalidField("eventArchive") }
         try HistoryFileAccess.withWriteLock(directory: directory) {
-        var rows = Dictionary(uniqueKeysWithValues: try read().map { ($0.id, $0) })
-        for event in events {
-            if let prior = rows[event.id], prior != event { throw ContractError.invalidField("eventArchive") }
-            rows[event.id] = event
-        }
-        guard rows.count <= 1000 else { throw ContractError.invalidField("eventArchive") }
-        try write(Array(rows.values))
+            let expected = try HistoryFileAccess.read(file, limit: maxBytes)
+            var rows = Dictionary(uniqueKeysWithValues: try decode(expected).map { ($0.id, $0) })
+            for event in events {
+                if let prior = rows[event.id], prior != event { throw ContractError.invalidField("eventArchive") }
+                rows[event.id] = event
+            }
+            guard rows.count <= 1000 else { throw ContractError.invalidField("eventArchive") }
+            try write(Array(rows.values), expected: expected)
         }
     }
 
     public func clear() throws {
         // Validate before overwriting; preserve corrupted or unrecognized files.
         try HistoryFileAccess.withWriteLock(directory: directory) {
-            _ = try read()
-            try write([])
+            let expected = try HistoryFileAccess.read(file, limit: maxBytes)
+            _ = try decode(expected)
+            try write([], expected: expected)
         }
     }
 
-    private func write(_ rows: [TrafficObservationEvent]) throws {
+    private func write(_ rows: [TrafficObservationEvent], expected: Data?) throws {
         let data = try JSONEncoder().encode(rows)
         guard data.count <= maxBytes else { throw ContractError.invalidField("eventArchive") }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700])
-        try data.write(to: file, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        try HistoryFileAccess.replaceIfUnchanged(file, expected: expected, data: data, limit: maxBytes)
     }
 }
