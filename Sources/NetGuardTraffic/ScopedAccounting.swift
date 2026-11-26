@@ -9,10 +9,18 @@ public struct ScopedInterfaceSample: Codable, Equatable, Sendable {
     public let scope: NetworkScope
     /// Identity is local and ephemeral; changing it invalidates the attribution interval.
     public let identity: String
-    public init(counters: InterfaceCounters, scope: NetworkScope, identity: String) {
+    /// Ephemeral source generation (e.g. interface index), not a persistent
+    /// device identifier. A change invalidates counter continuity itself.
+    public let counterGeneration: String?
+    public init(counters: InterfaceCounters, scope: NetworkScope, identity: String, counterGeneration: String? = nil) {
         self.counters = counters
         self.scope = scope
         self.identity = identity
+        self.counterGeneration = counterGeneration
+    }
+    var hasScopeIdentity: Bool {
+        !identity.isEmpty && identity.utf8.count <= 4096 &&
+        !identity.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
     }
 }
 
@@ -61,7 +69,12 @@ public struct ScopedCounterAccumulator: Sendable {
                 continue
             }
             next[id] = sample
-            let stable = previous[id]?.scope == sample.scope &&
+            if let prior = previous[id], prior.counterGeneration != sample.counterGeneration {
+                result[id] = invalid
+                continue
+            }
+            let stable = sample.hasScopeIdentity && previous[id]?.hasScopeIdentity == true &&
+                         previous[id]?.scope == sample.scope &&
                          previous[id]?.identity == sample.identity
             result[id] = ScopedTrafficDelta(scope: stable ? sample.scope : .unknown,
                                             delta: delta)
@@ -75,7 +88,8 @@ public struct ScopedCounterAccumulator: Sendable {
 public enum InterfaceScopeProjection {
     public static func scopes(_ samples: [ScopedInterfaceSample]) -> [String: NetworkScope] {
         Dictionary(grouping: samples, by: { $0.counters.interfaceID }).mapValues { group in
-            group.count == 1 ? (group.first?.scope ?? .unknown) : .unknown
+            guard group.count == 1, let sample = group.first, sample.hasScopeIdentity else { return .unknown }
+            return sample.scope
         }
     }
 }

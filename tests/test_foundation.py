@@ -12,6 +12,14 @@ monitor = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(monitor)
 
 class FoundationTests(unittest.TestCase):
+    def test_interface_counter_source_has_no_legacy_32_bit_fallback(self):
+        main = (ROOT / "src/main.swift").read_text()
+        host = (ROOT / "src/HostProbeCheck.swift").read_text()
+        self.assertNotIn("assumingMemoryBound(to: if_data.self)", main)
+        self.assertIn("InterfaceMIBReader.read", main)
+        self.assertIn("IFMIB_IFDATA", host)
+        self.assertIn("MemoryLayout.size(ofValue: record.ifmd_data.ifi_ibytes) == 8", host)
+
     def test_tls_not_bypassed(self):
         for path in ["src/main.swift", "scripts/traffic_monitor.py"]:
             source = (ROOT / path).read_text()

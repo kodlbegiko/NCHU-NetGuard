@@ -2,6 +2,48 @@
 import NetGuardCore
 #endif
 import Foundation
+import Darwin
+
+/// Read a single interface through the documented IFMIB general-data MIB.
+/// No 32-bit AF_LINK fallback, shell, private framework or counter guessing.
+enum InterfaceMIBReader {
+    struct Reading {
+        let counters: InterfaceCounters
+        let index: UInt32
+    }
+    static func read(_ name: String) -> Reading? {
+        guard !name.isEmpty, name.utf8.count < Int(IFNAMSIZ),
+              name.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) })
+        else { return nil }
+        let index = if_nametoindex(name)
+        guard index > 0, let signedIndex = Int32(exactly: index) else { return nil }
+        var mib: [Int32] = [CTL_NET, PF_LINK, NETLINK_GENERIC, IFMIB_IFDATA, signedIndex, IFDATA_GENERAL]
+        var record = ifmibdata()
+        var length = MemoryLayout<ifmibdata>.size
+        let rc = mib.withUnsafeMutableBufferPointer { path in
+            sysctl(path.baseAddress, u_int(path.count), &record, &length, nil, 0)
+        }
+        guard rc == 0, length == MemoryLayout<ifmibdata>.size,
+              MemoryLayout.size(ofValue: record.ifmd_data.ifi_ibytes) == 8,
+              MemoryLayout.size(ofValue: record.ifmd_data.ifi_obytes) == 8,
+              if_nametoindex(name) == index else { return nil }
+        let returnedName = withUnsafeBytes(of: record.ifmd_name) { bytes -> String? in
+            guard let end = bytes.firstIndex(of: 0) else { return nil }
+            return String(bytes: bytes.prefix(end), encoding: .utf8)
+        }
+        guard returnedName == name else { return nil }
+        return Reading(counters: .init(interfaceID: name,
+            received: UInt64(record.ifmd_data.ifi_ibytes), sent: UInt64(record.ifmd_data.ifi_obytes)), index: index)
+    }
+
+    static func compatibility() -> Bool {
+        // Only a read of the local loopback; no packets sent, no names or
+        // raw counters printed. This is API compatibility, not accuracy.
+        guard let first = read("lo0"), let second = read("lo0") else { return false }
+        return first.index == second.index && second.counters.received >= first.counters.received &&
+            second.counters.sent >= first.counters.sent
+    }
+}
 
 /// The local compatibility check emits only coarse outcome categories.
 /// No network requests, raw command output, PIDs, paths, addresses or names.
@@ -34,14 +76,16 @@ enum HostProbeCheck {
         }
         let v4 = route(ipv6: false)
         let v6 = route(ipv6: true)
+        let interfaceCounters = InterfaceMIBReader.compatibility()
         print("NETGUARD_HOST_CHECK_V1")
+        print("ifmib_64bit=\(interfaceCounters ? "compatible" : "inconclusive")")
         print("ps=\(ps.rawValue)")
         print("nettop=\(counters.rawValue)")
         print("ipv4_default_route=\(v4.rawValue)")
         print("ipv6_default_route=\(v6.rawValue)")
         // A missing route is not a parser failure, and a zero-row snapshot
         // is not affirmative process-counter compatibility.
-        guard ps == .compatible, counters == .compatible,
+        guard interfaceCounters, ps == .compatible, counters == .compatible,
               v4 != .incompatible, v6 != .incompatible,
               v4 == .compatible || v6 == .compatible else {
             print("NETGUARD_HOST_CHECK_INCONCLUSIVE")

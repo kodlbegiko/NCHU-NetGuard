@@ -2179,19 +2179,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
     }
 
     func getInterfaceBytes(name: String) -> (ibytes: UInt64, obytes: UInt64)? {
-        var ifap: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifap) == 0, let first = ifap else { return nil }
-        defer { freeifaddrs(ifap) }
-        
-        for ptr in sequence(first: first, next: { $0.pointee.ifa_next }) {
-            let ifa = ptr.pointee
-            let ifaName = String(cString: ifa.ifa_name)
-            if ifaName == name, let address = ifa.ifa_addr, address.pointee.sa_family == UInt8(AF_LINK), let raw = ifa.ifa_data {
-                let data = raw.assumingMemoryBound(to: if_data.self)
-                return (UInt64(data.pointee.ifi_ibytes), UInt64(data.pointee.ifi_obytes))
-            }
-        }
-        return nil
+        guard let reading = InterfaceMIBReader.read(name) else { return nil }
+        return (reading.counters.received, reading.counters.sent)
     }
 
     // Read physical Ethernet/Wi-Fi counters only. No VPN/loopback double counting.
@@ -2215,7 +2204,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         guard getifaddrs(&list) == 0, let first = list else { return [] }
         defer { freeifaddrs(list) }
         var addresses: [String: [String]] = [:]
-        var counters: [String: InterfaceCounters] = [:]
+        var linkNames = Set<String>()
+        var ambiguousLinks = Set<String>()
         var tunnels = Set<String>()
         var familyEvidence: [String: InterfaceAddressEvidence] = [:]
         for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
@@ -2247,16 +2237,14 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                         }
                     }
                 }
-            } else if address.pointee.sa_family == UInt8(AF_LINK), let raw = item.ifa_data {
-                let data = raw.assumingMemoryBound(to: if_data.self).pointee
-                counters[name] = InterfaceCounters(interfaceID: name,
-                    received: UInt64(data.ifi_ibytes), sent: UInt64(data.ifi_obytes))
+            } else if address.pointee.sa_family == UInt8(AF_LINK) {
+                if !linkNames.insert(name).inserted { ambiguousLinks.insert(name) }
             }
         }
         observedTunnelCandidates = tunnels.sorted()
         observedAddressEvidence = familyEvidence
-        return counters.keys.sorted().compactMap { name in
-            guard let counter = counters[name], let kind = types[name] else { return nil }
+        return linkNames.subtracting(ambiguousLinks).sorted().compactMap { name in
+            guard let reading = InterfaceMIBReader.read(name), let kind = types[name] else { return nil }
             let ips = addresses[name, default: []].sorted()
             let campus = ips.contains { $0.hasPrefix("140.120.") }
             let hotspot = ips.contains { $0.hasPrefix("172.20.10.") }
@@ -2274,8 +2262,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             } else if hotspot {
                 scope = .external
             }
-            return ScopedInterfaceSample(counters: counter, scope: scope,
-                identity: kind + "|" + ips.joined(separator: ","))
+            return ScopedInterfaceSample(counters: reading.counters, scope: scope,
+                identity: ips.isEmpty ? "" : kind + "|" + ips.joined(separator: ","),
+                counterGeneration: String(reading.index))
         }
     }
 

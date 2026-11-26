@@ -14,6 +14,38 @@ final class TrafficModuleTests: XCTestCase {
         XCTAssertEqual(result["en1"]?.delta.quality, .unknown)
     }
 
+    func test64BitCountersCross4GiBWithoutResetAndGenerationChangeDiscardsInterval() {
+        var engine = ScopedCounterAccumulator()
+        func sample(_ bytes: UInt64, _ identity: String, _ generation: String?) -> ScopedInterfaceSample {
+            .init(counters: .init(interfaceID: "en0", received: bytes, sent: bytes),
+                  scope: .dorm, identity: identity, counterGeneration: generation)
+        }
+        let boundary: UInt64 = 1 << 32
+        _ = engine.ingest([sample(boundary - 10, "a", "1")], day: "2026-11-26", uptime: 1)
+        let crossed = engine.ingest([sample(boundary + 10, "a", "1")], day: "2026-11-26", uptime: 2)
+        XCTAssertEqual(crossed["en0"]?.delta.received, 20)
+        XCTAssertEqual(crossed["en0"]?.scope, .dorm)
+        let changed = engine.ingest([sample(boundary + 50, "a", "2")], day: "2026-11-26", uptime: 3)
+        XCTAssertEqual(changed["en0"]?.delta.quality, .unknown)
+        let next = engine.ingest([sample(boundary + 60, "a", "2")], day: "2026-11-26", uptime: 4)
+        XCTAssertEqual(next["en0"]?.delta.received, 10)
+        XCTAssertEqual(next["en0"]?.scope, .dorm)
+        XCTAssertEqual(engine.ingest([sample(boundary + 70, "a", nil)], day: "2026-11-26", uptime: 5)["en0"]?.delta.quality, .unknown)
+    }
+
+    func testMissingScopeIdentityRetainsOnlyUnattributedBytes() {
+        var engine = ScopedCounterAccumulator()
+        func sample(_ bytes: UInt64, _ identity: String) -> ScopedInterfaceSample {
+            .init(counters: .init(interfaceID: "en0", received: bytes, sent: 0), scope: .dorm, identity: identity)
+        }
+        _ = engine.ingest([sample(10, "")], day: "d", uptime: 1)
+        let delta = engine.ingest([sample(20, "")], day: "d", uptime: 2)
+        XCTAssertEqual(delta["en0"]?.scope, .unknown)
+        XCTAssertEqual(delta["en0"]?.delta.received, 10)
+        XCTAssertEqual(InterfaceScopeProjection.scopes([sample(20, "")]), ["en0": .unknown])
+        XCTAssertEqual(InterfaceScopeProjection.scopes([sample(20, "a\n")]), ["en0": .unknown])
+    }
+
     func testDailyLedgerUsesExactIntegerTotalsAndRejectsOverflowAtomically() {
         var ledger = DailyTrafficLedger()
         XCTAssertTrue(ledger.add(scope: .dorm, received: 10, sent: 5))
