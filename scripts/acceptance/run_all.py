@@ -25,6 +25,8 @@ MANUAL_IDS = ("traffic_accuracy", "vpn_deduplication", "dual_stack",
               "performance_idle", "accessibility", "novice_ux",
               "lifecycle", "soak_168h", "extension")
 
+BLOCKED_IDS = frozenset(("recovery", "lifecycle", "extension"))
+
 def now():
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
@@ -152,16 +154,45 @@ def performance_result(path):
     except (OSError, ValueError, KeyError, TypeError):
         return None
 
+def coverage_result(path):
+    try:
+        data = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+        total, covered = data["executable_lines"], data["covered_lines"]
+        if (type(total) is not int or type(covered) is not int or not 0 <= covered <= total
+            or type(data["complete_inventory"]) is not bool or type(data["meets_target"]) is not bool):
+            return None
+        complete = data["complete_inventory"] and total > 0
+        meets = complete and covered * 100 >= total * 90
+        if data["meets_target"] != meets:
+            return None
+        return {"executable_lines": total, "covered_lines": covered, "complete_inventory": complete,
+                "target_percent": 90, "meets_numeric_target": meets}
+    except (OSError, ValueError, KeyError, TypeError, IndexError):
+        return None
+
+def environment():
+    info = {"os": platform.system(), "os_version": platform.mac_ver()[0] or platform.release(),
+            "architecture": platform.machine(), "python": platform.python_version(), "hardware_model": None}
+    if info["os"] == "Darwin":
+        try:
+            model = subprocess.check_output(["/usr/sbin/sysctl", "-n", "hw.model"], timeout=5,
+                                            stderr=subprocess.DEVNULL, text=True).strip()
+            if re.fullmatch(r"[A-Za-z0-9,._-]{1,64}", model):
+                info["hardware_model"] = model
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+    return info
+
 def execute(args, out, sha, clean):
     rows = []
     report = {"schema_version": 1, "kind": "local_automatic", "started_at": now(),
               "commit_sha": sha, "clean_at_start": clean, "clean_at_end": False,
-              "same_revision_at_end": False, "environment": {
-                  "os": platform.system(), "os_version": platform.mac_ver()[0] or platform.release(),
-                  "architecture": platform.machine(), "python": platform.python_version()},
+              "same_revision_at_end": False, "environment": environment(),
               "profile": args.profile, "steps": rows,
-              "manual_gates": [{"id": id, "status": "review_required"} for id in MANUAL_IDS],
+              "manual_gates": [{"id": id, "status": "blocked" if id in BLOCKED_IDS else "review_required"}
+                               for id in MANUAL_IDS],
               "full_device_acceptance": False, "automatic_exit_code": 2}
+    write_json(out / "environment.json", report["environment"])
     write_json(out / "summary.json", report)
 
     def add(value):
@@ -189,11 +220,20 @@ def execute(args, out, sha, clean):
                 try:
                     coverage_path = subprocess.check_output(["swift", "test", "--show-codecov-path"],
                         cwd=ROOT, timeout=60, stderr=subprocess.DEVNULL).decode().strip()
-                    candidate = Path(coverage_path).resolve()
+                    candidate = (ROOT / coverage_path).resolve()
                     if ROOT.resolve() not in candidate.parents:
                         raise ValueError("coverage outside checkout")
-                    step("coverage", [sys.executable, "scripts/core_coverage.py", "--root", str(ROOT),
+                    coverage = step("coverage", [sys.executable, "scripts/core_coverage.py", "--root", str(ROOT),
                          "--report", str(candidate)], 120)
+                    if coverage["status"] == "pass":
+                        metrics = coverage_result(out / coverage["log"])
+                        coverage["metrics"] = metrics
+                        if metrics is None or not metrics["complete_inventory"]:
+                            coverage.update(status="inconclusive", reason="incomplete_coverage_evidence")
+                        elif not metrics["meets_numeric_target"]:
+                            coverage.update(status="fail", reason="coverage_below_target")
+                        write_json(out / "summary.json", report)
+                        print("coverage verdict: " + coverage["status"], flush=True)
                 except (OSError, ValueError, subprocess.SubprocessError):
                     add(row("coverage", "inconclusive", "coverage_path_unavailable"))
             else:
@@ -230,11 +270,14 @@ def execute(args, out, sha, clean):
                         perf.update(status="fail", reason="numeric_target_exceeded")
                     else:
                         perf["reason"] = "numeric_target_only_review_required"
+                    write_json(out / "summary.json", report)
+                    print("performance verdict: " + perf["status"], flush=True)
             if args.traffic_evidence is not None:
                 traffic = step("traffic_numeric", [sys.executable, "scripts/traffic_acceptance.py",
                                str(args.traffic_evidence.resolve())], 30, inconclusive_codes=(2,))
                 if traffic["status"] == "pass":
                     traffic["reason"] = "numeric_target_only_review_required"
+                    write_json(out / "summary.json", report)
     except KeyboardInterrupt:
         add(row("interruption", "inconclusive", "interrupted"))
     finally:

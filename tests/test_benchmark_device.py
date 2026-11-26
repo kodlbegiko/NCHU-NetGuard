@@ -1,6 +1,7 @@
 import importlib.util
 import pathlib
 import unittest
+from unittest.mock import patch
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location("device_benchmark",ROOT/"scripts/benchmark_device.py")
 benchmark=importlib.util.module_from_spec(spec)
@@ -18,3 +19,10 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(result["max_rss_bytes"],122880)
         with self.assertRaises(RuntimeError):
             benchmark.summarize([(("app","start"),10,1,100),(("app","new"),20,1.05,120)])
+
+    def test_sample_rechecks_identity(self):
+        with patch.object(benchmark, "probe", side_effect=["/fixture/NCHUTraffic", "start", "0:01", "100", "/fixture/NCHUTraffic", "new"]):
+            with self.assertRaises(RuntimeError):
+                benchmark.sample(12345)
+        with patch.object(benchmark, "probe", side_effect=["/fixture/NCHUTraffic", "start", "0:01", "100", "/fixture/NCHUTraffic", "start"]):
+            self.assertEqual(benchmark.sample(12345)[2:], (1.0, 100))

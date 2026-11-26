@@ -5,7 +5,7 @@ import datetime as dt
 import json
 import re
 from pathlib import Path
-from run_all import MANUAL_IDS
+from run_all import BLOCKED_IDS, MANUAL_IDS
 
 def validate(value):
     if not isinstance(value, dict) or type(value.get("schema_version")) is not int or value["schema_version"] != 1 or value.get("kind") != "manual_device_evidence":
@@ -33,7 +33,7 @@ def validate(value):
         outcome = gate["outcome"]
         if outcome not in ("not_run", "blocked", "inconclusive", "observed_pass", "observed_fail"):
             raise ValueError("outcome")
-        if id in ("recovery", "lifecycle", "extension") and outcome == "observed_pass":
+        if id in BLOCKED_IDS and outcome == "observed_pass":
             raise ValueError("disabled capability cannot pass current matrix")
         hashes = gate["evidence_sha256"]
         if not isinstance(hashes, list) or len(hashes) > 32 or any(not isinstance(h, str) or not re.fullmatch(r"[0-9a-f]{64}",h) for h in hashes):

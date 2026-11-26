@@ -32,8 +32,9 @@ def sample(pid):
     identity = (executable, probe(pid, "lstart"))
     cpu = cpu_seconds(probe(pid, "time"))
     rss = int(probe(pid, "rss"))
-    if rss <= 0 or not identity[1]:
-        raise RuntimeError("Invalid process sample")
+    confirmed = (probe(pid, "comm"), probe(pid, "lstart"))
+    if rss <= 0 or not identity[1] or confirmed != identity:
+        raise RuntimeError("Invalid sample or process identity changed")
     return identity, time.monotonic(), cpu, rss
 
 def summarize(samples):

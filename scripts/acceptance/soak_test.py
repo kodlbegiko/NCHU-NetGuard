@@ -2,14 +2,13 @@
 """Foreground, explicitly selected process soak observation; never launch or restart it."""
 import argparse
 import json
-import math
 import os
 import platform
+import subprocess
 import sys
 import time
-from pathlib import Path
 
-from run_all import ROOT, new_run, now, revision, write_json
+from run_all import ROOT, environment, new_run, now, revision, write_json
 
 sys.path.insert(0, str(ROOT / "scripts"))
 from benchmark_device import sample
@@ -38,7 +37,7 @@ def main():
         if not clean:
             raise ValueError("dirty checkout")
         out = new_run("soak-")
-    except (OSError, ValueError, RuntimeError):
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
         print("Soak setup failed.", file=sys.stderr)
         return 2
     summary = {"schema_version": 1, "kind": "process_soak", "commit_sha": sha,
@@ -47,7 +46,9 @@ def main():
                "samples": 0, "elapsed_seconds": 0, "max_gap_seconds": 0,
                "binary_identity": "operator_review_required", "full_device_acceptance": False}
     path = out / "summary.json"
+    write_json(out / "environment.json", environment())
     write_json(path, summary)
+    print("Private soak report: " + str(path.relative_to(ROOT)), flush=True)
     first = previous = None
     first_wall = previous_wall = None
     max_rss = max_gap = 0
@@ -84,7 +85,7 @@ def main():
                     break
                 previous, previous_wall = current, wall
                 time.sleep(min(args.interval, max(0, args.seconds - elapsed)))
-    except (KeyboardInterrupt, OSError, ValueError, RuntimeError, ArithmeticError, __import__("subprocess").SubprocessError):
+    except (KeyboardInterrupt, OSError, ValueError, RuntimeError, ArithmeticError, subprocess.SubprocessError):
         interrupted = True
     finally:
         try:

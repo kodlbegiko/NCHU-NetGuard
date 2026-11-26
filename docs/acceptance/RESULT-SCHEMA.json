@@ -51,7 +51,8 @@
         "os",
         "os_version",
         "architecture",
-        "python"
+        "python",
+        "hardware_model"
       ],
       "additionalProperties": false,
       "properties": {
@@ -66,6 +67,12 @@
         },
         "python": {
           "type": "string"
+        },
+        "hardware_model": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     },
