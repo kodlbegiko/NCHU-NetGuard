@@ -43,9 +43,33 @@ def summarize(samples):
     if elapsed <= 0 or any(a[0] != first[0] for a in samples) or any(
             b[1] <= a[1] or b[2] < a[2] for a,b in zip(samples, samples[1:])):
         raise RuntimeError("Process identity or monotonic counters changed.")
+    # Relative-time aggregates only; no process names, PID or absolute paths.
+    # A sampled RSS peak is not proof of a leak or monotonic growth.
+    windows = []
+    begin = 0
+    for index in range(1, len(samples)):
+        if samples[index][1] - samples[begin][1] >= 60 or index == len(samples)-1:
+            part = samples[begin:index+1]
+            seconds = part[-1][1] - part[0][1]
+            windows.append({
+                "start_seconds": round(part[0][1] - first[1], 3),
+                "end_seconds": round(part[-1][1] - first[1], 3),
+                "samples": len(part),
+                "average_cpu_percent_one_core": round(100*(part[-1][2]-part[0][2])/seconds, 4),
+                "min_rss_bytes": min(row[3] for row in part)*1024,
+                "max_rss_bytes": max(row[3] for row in part)*1024,
+                "end_rss_bytes": part[-1][3]*1024})
+            begin = index
+    peak = max(samples, key=lambda row: row[3])
     return {"duration_seconds": round(elapsed,3), "samples": len(samples),
             "average_cpu_percent_one_core": round(100*(last[2]-first[2])/elapsed,4),
-            "max_rss_bytes": max(s[3] for s in samples)*1024,
+            "max_rss_bytes": peak[3]*1024,
+            "min_rss_bytes": min(s[3] for s in samples)*1024,
+            "initial_rss_bytes": first[3]*1024,
+            "final_rss_bytes": last[3]*1024,
+            "peak_at_seconds": round(peak[1]-first[1], 3),
+            "max_sample_gap_seconds": round(max(b[1]-a[1] for a,b in zip(samples,samples[1:])),3),
+            "relative_windows": windows,
             "measurement": "process CPU-time delta and maximum sampled RSS; excludes other processes",
             "idle_cpu_target_percent": 0.5, "rss_target_bytes": 80_000_000}
 

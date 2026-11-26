@@ -26,3 +26,17 @@ class BenchmarkTests(unittest.TestCase):
                 benchmark.sample(12345)
         with patch.object(benchmark, "probe", side_effect=["/fixture/NCHUTraffic", "start", "0:01", "100", "/fixture/NCHUTraffic", "start"]):
             self.assertEqual(benchmark.sample(12345)[2:], (1.0, 100))
+
+
+    def test_relative_windows_disclose_peak_without_retaining_identity(self):
+        identity = ("/fixture/NCHUTraffic", "start")
+        samples = [(identity, 100, 1, 60), (identity, 160, 1.3, 100),
+                   (identity, 220, 1.6, 70), (identity, 240, 1.8, 65)]
+        result = benchmark.summarize(samples)
+        self.assertEqual(result["peak_at_seconds"], 60)
+        self.assertEqual(result["max_rss_bytes"], 100*1024)
+        self.assertEqual(result["final_rss_bytes"], 65*1024)
+        self.assertEqual(len(result["relative_windows"]), 3)
+        self.assertEqual(result["relative_windows"][-1]["start_seconds"], 120)
+        self.assertEqual(result["relative_windows"][-1]["end_seconds"], 140)
+        self.assertNotIn("NCHUTraffic", str(result))

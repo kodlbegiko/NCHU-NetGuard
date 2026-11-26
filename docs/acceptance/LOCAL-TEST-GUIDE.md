@@ -33,7 +33,7 @@ python3 scripts/acceptance/verify_report.py test-results/local-實際目錄名�
 python3 scripts/acceptance/run_all.py --pid 12345 --benchmark-seconds 300
 python3 scripts/acceptance/run_all.py --traffic-evidence /path/to/redacted-evidence.json
 ```
-效能以 process CPU-time delta、RSS 為限，不涵蓋其他子程序；空閒條件與執行檔 SHA 仍需人工核對。流量輸入依 [獨立計量規格](../audits/CONTROLLED-TRAFFIC-ACCEPTANCE.md)，僅判斷數學誤差，不能自行證明參考來源獨立或校方計費一致。不要為測試耗盡宿網配額。
+效能以 process CPU-time delta、RSS 為限，不涵蓋其他子程序；空閒條件與執行檔 SHA 仍需人工核對。新 benchmark JSON 額外記錄初始／最後／最低／峰值 RSS、峰值相對時間、最大採樣間隔及約 60 秒區段的 CPU/RSS 統計，不含 PID 或程序身分。區段共用邊界採樣點，不能將區段次數相加當成總採樣次數。若仍未達標，提供這些去識別數值以定位峰值區間；峰值上升本身不是記憶體洩漏證明。流量輸入依 [獨立計量規格](../audits/CONTROLLED-TRAFFIC-ACCEPTANCE.md)，僅判斷數學誤差，不能自行證明參考來源獨立或校方計費一致。不要為測試耗盡宿網配額。
 
 ## 可選：長時間觀測
 ```bash
