@@ -61,3 +61,12 @@ class RankingParserTests(unittest.TestCase):
         self.assertEqual(monitor.parse_ranking(header + valid, "192.0.2.1")["status"], "listed")
         self.assertEqual(monitor.parse_ranking(valid.replace("1.5 GB", "<b>1.5</b> GB"),
                                                "192.0.2.1")["status"], "listed")
+
+
+    def test_spans_cannot_shift_a_five_cell_row_into_a_listing(self):
+        five = "<tr><td>1</td><td colspan='2'>192.0.2.1</td><td>1 GB</td><td>2 MB</td><td>1 GB</td></tr>"
+        self.assertIsNone(monitor.parse_ranking(five, "192.0.2.1")["in_top1000"])
+        for html in (row("192.0.2.1").replace("<tr>", "<tr hidden>"),
+                     row("192.0.2.1").replace("<td>fixture", "<td rowspan='2'>fixture"),
+                     row("192.0.2.1").replace("<td>1.5 GB", "<td aria-hidden='true'>1.5 GB")):
+            self.assertEqual(monitor.parse_ranking(html, "192.0.2.1")["error_code"], "unrecognized_ranking")

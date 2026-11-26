@@ -276,6 +276,7 @@ class RankingParser(HTMLParser):
         self.cell = None
         self.cell_tag = None
         self.cell_chars = 0
+        self.row_spanned = False
         self.invalid = False
 
     def handle_starttag(self, tag, attrs):
@@ -286,13 +287,19 @@ class RankingParser(HTMLParser):
                 self.invalid = True
                 return
             self.row = []
+            self.row_spanned = False
+            if any(key == "hidden" or (key == "aria-hidden" and value == "true") for key, value in attrs):
+                self.invalid = True
         elif tag in ("td", "th"):
             if self.row is None or self.cell is not None or len(self.row) >= self.MAX_CELLS:
                 self.invalid = True
                 return
-            if any(key in ("rowspan", "colspan") and value != "1" for key, value in attrs):
-                # Explicit span does not establish a six-column identity row.
-                self.row.append("")
+            if any(key == "hidden" or (key == "aria-hidden" and value == "true") or
+                   (key == "rowspan" and value != "1") for key, value in attrs):
+                self.invalid = True
+                return
+            if any(key == "colspan" and value != "1" for key, value in attrs):
+                self.row_spanned = True
             self.cell, self.cell_tag, self.cell_chars = [], tag, 0
         elif self.row is not None and (tag in ("table", "script", "style", "template", "noscript", "iframe", "object") or
                 any(key == "hidden" or (key == "aria-hidden" and value == "true") for key, value in attrs)):
@@ -322,7 +329,9 @@ class RankingParser(HTMLParser):
             if self.row is None or self.cell is not None:
                 self.invalid = True
                 return
-            self.rows.append(self.row)
+            # Keep original identity cell positions; a spanned row cannot
+            # accidentally be accepted as six separate cells.
+            self.rows.append(self.row + ([""] * 7 if self.row_spanned else []))
             self.row = None
 
     @property
@@ -333,7 +342,7 @@ class RankingParser(HTMLParser):
 def valid_ranking_row(row):
     return len(row) == 6 and re.fullmatch(r"[1-9][0-9]{0,5}", row[0]) is not None and all(
         len(value.encode("utf-8")) <= 32 and
-        re.fullmatch(r"[0-9]{1,12}(?:\\.[0-9]{1,6})? *(?:B|KB|MB|GB|TB)", value, re.I | re.ASCII) is not None
+        re.fullmatch(r"[0-9]{1,12}(?:\.[0-9]{1,6})? *(?:B|KB|MB|GB|TB)", value, re.I | re.ASCII) is not None
         for value in row[3:])
 
 def parse_ranking(html, ip_addr):
