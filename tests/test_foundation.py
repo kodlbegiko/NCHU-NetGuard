@@ -20,6 +20,14 @@ class FoundationTests(unittest.TestCase):
         self.assertIn("IFMIB_IFDATA", host)
         self.assertIn("MemoryLayout.size(ofValue: record.ifmd_data.ifi_ibytes) == 8", host)
 
+    def test_runtime_scope_requires_explicit_connection_binding(self):
+        source = (ROOT / "src/main.swift").read_text()
+        self.assertIn("ManualScopeBinding(scope: scope", source)
+        self.assertIn("binding.applies(to:", source)
+        self.assertNotIn('return "興大二村 宿網 (有線)"', source)
+        self.assertNotIn("else if campus {", source)
+        self.assertIn('"network_mode_override": 0', source)
+
     def test_tls_not_bypassed(self):
         for path in ["src/main.swift", "scripts/traffic_monitor.py"]:
             source = (ROOT / path).read_text()

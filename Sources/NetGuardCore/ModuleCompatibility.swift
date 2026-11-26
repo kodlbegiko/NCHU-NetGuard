@@ -86,6 +86,7 @@ public typealias RoutePathEvidence = NetGuardObservation.RoutePathEvidence
 public typealias RoutePathParser = NetGuardObservation.RoutePathParser
 public typealias DualStackEvidence = NetGuardObservation.DualStackEvidence
 public typealias InterfaceAddressEvidence = NetGuardObservation.InterfaceAddressEvidence
+public typealias ManualScopeBinding = NetGuardTraffic.ManualScopeBinding
 public typealias ConnectionSessionMeter = NetGuardTraffic.ConnectionSessionMeter
 public typealias ConnectionSessionReading = NetGuardTraffic.ConnectionSessionReading
 public typealias SavedConnectionSession = NetGuardData.SavedConnectionSession

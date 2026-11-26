@@ -197,20 +197,24 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
     }
     
     // 網路環境模式 (0: 自動偵測, 1: 強制興大有線宿網, 2: 強制興大校園Wi-Fi, 3: 強制外部網路/自由模式)
-    var networkModeOverride: Int = 0
+    private var manualScopeBinding: ManualScopeBinding?
+    var networkModeOverride: Int {
+        switch manualScopeBinding?.scope {
+        case .dorm: return 1
+        case .campusWifi: return 2
+        case .external: return 3
+        default: return 0
+        }
+    }
     
     // 是否為興大校園無線網路 (NCHU Wi-Fi: 每日下載上限 10GB / 上傳 5GB / 總額 15GB，超量限速不斷網)
     var isCampusWifi: Bool {
-        if networkModeOverride == 2 { return true }
-        if networkModeOverride != 0 { return false }
-        return sampledScopes[activeInterface] == .campusWifi
+        return isConnected && sampledScopes[activeInterface] == .campusWifi
     }
     
     // Estimated wired dorm scope, not a verified provider classification or block status.
     var isDormNetwork: Bool {
-        if networkModeOverride == 1 { return true }
-        if networkModeOverride != 0 { return false }
-        return sampledScopes[activeInterface] == .dorm
+        return isConnected && sampledScopes[activeInterface] == .dorm
     }
     
     // 是否屬於受興大流量配額管控之網路 (有線宿網或校園Wi-Fi)
@@ -244,15 +248,13 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
     }
     
     var networkTypeName: String {
-        if isCampusWifi {
-            return "興大校園 Wi-Fi (NCHU)"
-        } else if isDormNetwork {
-            return "興大二村 宿網 (有線)"
-        } else if currentIP.hasPrefix("172.20.10.") {
-            return "iPhone 個人熱點"
-        } else {
-            return sampledScopes[activeInterface] == .external ? "外部網路（估計）" : "網路歸屬未確認"
-        }
+        guard isConnected else { return "網路歸屬未確認" }
+        if isCampusWifi { return "校園 Wi-Fi（手動指定）" }
+        if isDormNetwork { return "宿網（手動指定）" }
+        if sampledScopes[activeInterface] == .external { return "外部網路（手動指定）" }
+        if currentIP.hasPrefix("140.120.") { return "興大網段候選 · 請指定觀測範圍" }
+        if currentIP.hasPrefix("172.20.10.") { return "熱點網段候選 · 歸屬未確認" }
+        return "網路歸屬未確認"
     }
     
     // 警報等級追蹤
@@ -574,6 +576,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
 
     @objc func systemWillSleep() {
         guard workflowPowerGuard.systemSleep() else { return }
+        clearManualScope()
         observationSchedule.reset()
         observedInterfaceRates = [:]
         observedTunnelCandidates = []
@@ -718,6 +721,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.routeEventToken = UUID()
+                self.clearManualScope()
                 self.connectionSession.stop()
                 self.lastConnectionSamples = []
                 self.dualStackEvidence = nil
@@ -1069,7 +1073,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         let fresh = lastSampleUptime.map { now >= $0 && now - $0 <= 5 } ?? false
         let speed = activeSpeedMeasured && fresh && workflowPowerGuard.allowsSampling
             ? "↓ " + formatSpeed(currentDownSpeed) + "   ↑ " + formatSpeed(currentUpSpeed) : "未量測"
-        let state = QuickPanelState(networkName: scope == .unknown ? "網路歸屬未確認" : networkTypeName,
+        let state = QuickPanelState(networkName: networkTypeName,
             connectionKnown: isConnected && workflowPowerGuard.allowsSampling,
             scope: compatible && hasLocalScopeEvidence(scope) ? scope : .unknown,
             received: dl, sent: ul, receiveLimit: dlQuotaBytes, sendLimit: ulQuotaBytes,
@@ -1871,7 +1875,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             "isCampusWifi": isCampusWifi,
             "isQuotaRestricted": isQuotaRestricted,
             "localEstimateAvailable": localQuotaAssessment() != nil,
-            "externalUsageAvailable": !isQuotaRestricted && hasLocalScopeEvidence(.external),
+            "externalUsageAvailable": isConnected && sampledScopes[activeInterface] == .external && hasLocalScopeEvidence(.external),
             "networkTypeName": networkTypeName,
             "providerStatus": providerStatusText,
             "focusEnabled": workflowPowerGuard.focusEnabled,
@@ -2076,7 +2080,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             "today_in": NSNumber(value: trafficLedger.totals(for: .dorm).received),
             "today_out": NSNumber(value: trafficLedger.totals(for: .dorm).sent),
             "accounting_overflow": accountingOverflow,
-            "network_mode_override": networkModeOverride,
+            "network_mode_override": 0, // Session-only choice is never restored.
             "display_mode": displayMode,
             "alert_enabled": isAlertEnabled,
             "alert_ledger": quotaAlertLedger.persistedTiers(day: currentDateString),
@@ -2130,6 +2134,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
 
     private func applyDiscoveredNetwork(interface: String, ip: String) {
         if activeInterface != interface || currentIP != ip {
+            clearManualScope()
             connectionSession.stop()
             lastConnectionSamples = []
             networkQuality.reset()
@@ -2243,28 +2248,26 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         }
         observedTunnelCandidates = tunnels.sorted()
         observedAddressEvidence = familyEvidence
-        return linkNames.subtracting(ambiguousLinks).sorted().compactMap { name in
+        let rawSamples: [ScopedInterfaceSample] = linkNames.subtracting(ambiguousLinks).sorted().compactMap { name in
             guard let reading = InterfaceMIBReader.read(name), let kind = types[name] else { return nil }
             let ips = addresses[name, default: []].sorted()
-            let campus = ips.contains { $0.hasPrefix("140.120.") }
-            let hotspot = ips.contains { $0.hasPrefix("172.20.10.") }
-            var scope: NetworkScope = .unknown
-            // Explicit overrides affect only the currently selected interface.
-            if name == activeInterface && networkModeOverride != 0 && !ips.isEmpty {
-                switch networkModeOverride {
-                case 1: scope = .dorm
-                case 2: scope = .campusWifi
-                case 3: scope = .external
-                default: break
-                }
-            } else if campus {
-                scope = kind == (kSCNetworkInterfaceTypeIEEE80211 as String) ? .campusWifi : .dorm
-            } else if hotspot {
-                scope = .external
-            }
-            return ScopedInterfaceSample(counters: reading.counters, scope: scope,
+            // An IP prefix alone cannot establish dorm membership, Wi-Fi
+            // billing or a specific hotspot identity. Only explicit current
+            // connection selection permits a local scope label.
+            return ScopedInterfaceSample(counters: reading.counters, scope: .unknown,
                 identity: ips.isEmpty ? "" : kind + "|" + ips.joined(separator: ","),
                 counterGeneration: String(reading.index))
+        }
+        guard let binding = manualScopeBinding else { return rawSamples }
+        guard isConnected, rawSamples.contains(where: { binding.applies(to: $0,
+            activeInterface: activeInterface, routeToken: routeEventToken) }) else {
+            clearManualScope()
+            return rawSamples
+        }
+        return rawSamples.map { sample in
+            guard binding.applies(to: sample, activeInterface: activeInterface, routeToken: routeEventToken) else { return sample }
+            return ScopedInterfaceSample(counters: sample.counters, scope: binding.scope,
+                identity: sample.identity, counterGeneration: sample.counterGeneration)
         }
     }
 
@@ -3055,10 +3058,47 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         statusItem.menu = nil
     }
 
-    @objc func setNetModeAuto() { networkModeOverride = 0; savePersistedState(); updateStatusBar(); pushDataToWebUI() }
-    @objc func setNetModeDorm() { networkModeOverride = 1; savePersistedState(); updateStatusBar(); pushDataToWebUI() }
-    @objc func setNetModeWifi() { networkModeOverride = 2; savePersistedState(); updateStatusBar(); pushDataToWebUI() }
-    @objc func setNetModeExt() { networkModeOverride = 3; savePersistedState(); updateStatusBar(); pushDataToWebUI() }
+    // Drop stale UI evidence immediately; past measured history remains
+    // unchanged and the next interval across a scope change is unattributed.
+    private func clearManualScope() {
+        manualScopeBinding = nil
+        sampledScopes = [:]
+        activeSpeedMeasured = false
+        observedInterfaceRates = [:]
+        predictionEngine.reset()
+        predictionScope = .unknown
+        predictionIdentity = []
+        providerObservation = nil
+        providerPollGate.invalidate()
+    }
+
+    private func chooseManualScope(_ scope: NetworkScope?) {
+        if let scope {
+            let now = ProcessInfo.processInfo.systemUptime
+            let candidates = lastConnectionSamples.filter { $0.counters.interfaceID == activeInterface }
+            guard isConnected, workflowPowerGuard.allowsSampling,
+                  let last = lastSampleUptime, now >= last, now - last <= 5,
+                  candidates.count == 1, let sample = candidates.first,
+                  let binding = ManualScopeBinding(scope: scope, sample: sample, routeToken: routeEventToken)
+            else {
+                let alert = NSAlert()
+                alert.messageText = "目前連線尚未確認"
+                alert.informativeText = "取得近期介面觀測後才能指定本機用量範圍。"
+                alert.runModal()
+                return
+            }
+            clearManualScope()
+            manualScopeBinding = binding
+        } else { clearManualScope() }
+        connectionSession.stop()
+        updateStatusBar()
+        if popover != nil && popover.isShown { pushDataToWebUI() }
+    }
+
+    @objc func setNetModeAuto() { chooseManualScope(nil) }
+    @objc func setNetModeDorm() { chooseManualScope(.dorm) }
+    @objc func setNetModeWifi() { chooseManualScope(.campusWifi) }
+    @objc func setNetModeExt() { chooseManualScope(.external) }
 
     @objc func handleToggleAutoLaunch() { toggleLaunchAtLogin() }
     @objc func handleToggleAlert() { isAlertEnabled = !isAlertEnabled; savePersistedState() }

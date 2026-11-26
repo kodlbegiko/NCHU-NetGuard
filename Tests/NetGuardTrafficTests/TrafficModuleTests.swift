@@ -46,6 +46,24 @@ final class TrafficModuleTests: XCTestCase {
         XCTAssertEqual(InterfaceScopeProjection.scopes([sample(20, "a\n")]), ["en0": .unknown])
     }
 
+    func testManualScopeChoiceCannotTransferAcrossLinkOrPathGeneration() throws {
+        let route = UUID()
+        func sample(_ identity: String = "link-a", _ generation: String? = "1", _ name: String = "en0") -> ScopedInterfaceSample {
+            .init(counters: .init(interfaceID: name, received: 10, sent: 5),
+                  scope: .unknown, identity: identity, counterGeneration: generation)
+        }
+        let binding = try XCTUnwrap(ManualScopeBinding(scope: .dorm, sample: sample(), routeToken: route))
+        XCTAssertEqual(binding.scope, .dorm)
+        XCTAssertTrue(binding.applies(to: sample(), activeInterface: "en0", routeToken: route))
+        XCTAssertFalse(binding.applies(to: sample(), activeInterface: "en1", routeToken: route))
+        XCTAssertFalse(binding.applies(to: sample("link-b"), activeInterface: "en0", routeToken: route))
+        XCTAssertFalse(binding.applies(to: sample("link-a", "2"), activeInterface: "en0", routeToken: route))
+        XCTAssertFalse(binding.applies(to: sample(), activeInterface: "en0", routeToken: UUID()))
+        XCTAssertNil(ManualScopeBinding(scope: .unknown, sample: sample(), routeToken: route))
+        XCTAssertNil(ManualScopeBinding(scope: .external, sample: sample(""), routeToken: route))
+        XCTAssertNil(ManualScopeBinding(scope: .external, sample: sample("link-a", nil), routeToken: route))
+    }
+
     func testDailyLedgerUsesExactIntegerTotalsAndRejectsOverflowAtomically() {
         var ledger = DailyTrafficLedger()
         XCTAssertTrue(ledger.add(scope: .dorm, received: 10, sent: 5))

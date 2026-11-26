@@ -159,3 +159,33 @@ public struct DailyScopeCoverage: Equatable, Sendable {
         return result
     }
 }
+
+
+/// Explicit user choice bound to the observed connection, not proof of a
+/// campus billing identity. This binding is never persisted or reused after
+/// a path event; new links require a new user choice.
+public struct ManualScopeBinding: Equatable, Sendable {
+    public let scope: NetworkScope
+    private let interfaceID: String
+    private let identity: String
+    private let generation: String
+    private let routeToken: UUID
+
+    public init?(scope: NetworkScope, sample: ScopedInterfaceSample, routeToken: UUID) {
+        guard scope != .unknown, sample.hasScopeIdentity,
+              !sample.counters.interfaceID.isEmpty,
+              let generation = sample.counterGeneration, !generation.isEmpty
+        else { return nil }
+        self.scope = scope
+        interfaceID = sample.counters.interfaceID
+        identity = sample.identity
+        self.generation = generation
+        self.routeToken = routeToken
+    }
+
+    public func applies(to sample: ScopedInterfaceSample, activeInterface: String, routeToken: UUID) -> Bool {
+        activeInterface == interfaceID && sample.counters.interfaceID == interfaceID &&
+        sample.hasScopeIdentity && sample.identity == identity && sample.counterGeneration == generation &&
+        routeToken == self.routeToken
+    }
+}
