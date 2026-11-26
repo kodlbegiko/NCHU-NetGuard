@@ -25,11 +25,14 @@ public struct QuickPanelState: Equatable, Sendable {
     public let provider: String
     public let focusEnabled: Bool
     public let alertsEnabled: Bool
+    public let selectedScope: NetworkScope
+    public let canSelectScope: Bool
 
     public init(networkName: String, connectionKnown: Bool, scope: NetworkScope,
                 received: Double, sent: Double, receiveLimit: Double, sendLimit: Double,
                 speedText: String, diagnostic: String, forecast: String, provider: String,
-                focusEnabled: Bool, alertsEnabled: Bool, throughput: [ThroughputPoint] = []) {
+                focusEnabled: Bool, alertsEnabled: Bool, throughput: [ThroughputPoint] = [],
+                selectedScope: NetworkScope = .unknown, canSelectScope: Bool = false) {
         self.networkName = connectionKnown ? networkName : "網路尚未確認"
         let eligible = connectionKnown && (scope == .dorm || scope == .campusWifi)
         self.download = eligible ? QuickPanelBudget(used: received, limit: receiveLimit) : nil
@@ -41,6 +44,8 @@ public struct QuickPanelState: Equatable, Sendable {
         self.provider = provider
         self.focusEnabled = focusEnabled
         self.alertsEnabled = alertsEnabled
+        self.selectedScope = connectionKnown ? selectedScope : .unknown
+        self.canSelectScope = connectionKnown && canSelectScope
     }
 
     public static let initial = QuickPanelState(networkName: "", connectionKnown: false,

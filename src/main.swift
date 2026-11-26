@@ -155,7 +155,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
     var statusItem: NSStatusItem!
     var popover: NSPopover!
     var webView: WKWebView!
-    var nativePanelEnabled = false
+    var nativePanelEnabled = true // Native-first candidate; legacy panel remains reachable.
     let quickPanelModel = QuickPanelModel()
     var historyWindowController: NSWindowController?
     var settingsWindowController: NSWindowController?
@@ -1033,7 +1033,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                 openHistory: { [weak self] in self?.openHistoryAnalytics() },
                 openSettings: { [weak self] in self?.openNativeSettings() },
                 openManagement: { [weak self] in self?.openNativeManagement() },
-                openAdvanced: { [weak self] in self?.switchPanel(native: false) }
+                openAdvanced: { [weak self] in self?.switchPanel(native: false) },
+                selectScope: { [weak self] scope in self?.chooseManualScope(scope) }
             ))
             return
         }
@@ -1079,7 +1080,12 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             received: dl, sent: ul, receiveLimit: dlQuotaBytes, sendLimit: ulQuotaBytes,
             speedText: speed, diagnostic: diagnostic, forecast: forecastPresentation().message,
             provider: providerStatusText, focusEnabled: workflowPowerGuard.focusEnabled, alertsEnabled: isAlertEnabled,
-            throughput: activeSpeedMeasured && fresh && workflowPowerGuard.allowsSampling ? throughputWindow.recent(at: now) : [])
+            throughput: activeSpeedMeasured && fresh && workflowPowerGuard.allowsSampling ? throughputWindow.recent(at: now) : [],
+            selectedScope: manualScopeBinding?.scope ?? .unknown,
+            canSelectScope: fresh && isConnected && workflowPowerGuard.allowsSampling &&
+                lastConnectionSamples.filter { $0.counters.interfaceID == activeInterface }.count == 1 &&
+                lastConnectionSamples.contains { $0.counters.interfaceID == activeInterface &&
+                    ManualScopeBinding(scope: .external, sample: $0, routeToken: routeEventToken) != nil })
         if quickPanelModel.state != state { quickPanelModel.state = state }
     }
 
@@ -1882,7 +1888,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             "workflowStatus": workflowPowerGuard.statusText,
             "networkQualityStatus": networkQuality.state(at: ProcessInfo.processInfo.systemUptime).description,
             "appSampleStatus": workflowPowerGuard.focusEnabled ? "重要工作模式：暫停採樣" : (appSampleFresh ? "程序累計快照，非今日用量" : "尚未取得近期採樣"),
-            "observationStatus": !isConnected ? "網路未確認，請檢查連線" : (isQuotaRestricted ? "監控中 · 配額為本機估計" : "監控中 · 網路配額未確認"),
+            "observationStatus": !isConnected ? "網路未確認，請檢查連線" : (isQuotaRestricted ? "監控中 · 配額為本機估計" : "監控中 · 選單列右鍵可指定本次網路"),
             "currentIP": currentIP,
             "activeInterface": activeInterface,
             "unattributedTotalStr": formatBytes(unattributedInBytes + unattributedOutBytes),
@@ -2635,9 +2641,11 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
             predictionScope = scope
             predictionIdentity = identity
         }
-        guard !scopedSamples.isEmpty,
-              !deltas.values.contains(where: { $0.delta.quality == .unknown || $0.scope == .unknown }),
-              scopedSamples.allSatisfy({ deltas[$0.counters.interfaceID]?.scope == scope })
+        // Unknown secondary interfaces are not part of this explicitly
+        // selected local counter. Only its own continuity may authorize ETA.
+        guard !scopedSamples.isEmpty, identity.count == scopedSamples.count,
+              scopedSamples.allSatisfy({ deltas[$0.counters.interfaceID]?.scope == scope &&
+                  deltas[$0.counters.interfaceID]?.delta.quality == .measured })
         else { predictionEngine.reset(); return }
         var rx: UInt64 = 0
         var tx: UInt64 = 0
@@ -2919,7 +2927,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         let titleItem = NSMenuItem(title: "⚙️ 網路流量監控 設定 (\(networkTypeName))", action: nil, keyEquivalent: "")
         titleItem.isEnabled = false
         menu.addItem(titleItem)
-        let nativeItem = NSMenuItem(title: nativePanelEnabled ? "返回完整管理面板" : "試用原生快速面板（預覽）", action: #selector(toggleNativePanelPreview), keyEquivalent: "")
+        let nativeItem = NSMenuItem(title: nativePanelEnabled ? "開啟舊版管理面板" : "返回原生快速面板", action: #selector(toggleNativePanelPreview), keyEquivalent: "")
         nativeItem.target = self
         menu.addItem(nativeItem)
         let historyItem = NSMenuItem(title: "歷史流量與 CSV 匯出", action: #selector(openHistoryAnalytics), keyEquivalent: "")

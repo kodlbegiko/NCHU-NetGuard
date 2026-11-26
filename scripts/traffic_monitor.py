@@ -321,11 +321,11 @@ def query_traffic(scope=None):
     top100 = get_top100_data(ip) if campus_candidate else {"in_top1000": None, "status": "not_applicable"}
     unknown = {"schema_version": 1, "status": "local_usage_unknown", "date": get_today_string(),
                "iface": iface, "ip": ip, "top100": top100}
-    if state is None or state.get("accounting_overflow") is True or (scope is None and campus_candidate):
+    if state is None or state.get("accounting_overflow") is True or scope is None:
         # Keep ranking observations available to the Swift caller independently
         # of local scope attribution. Do not guess a dorm quota from an IP.
         return unknown
-    selected = scope or "external"
+    selected = scope
     prefix = {"dorm": "dorm", "campus_wifi": "wifi", "external": "ext"}.get(selected)
     if prefix is None:
         return unknown
@@ -384,6 +384,8 @@ def display_report(scope=None):
         return
     if data.get("status") == "local_usage_unknown":
         print("本機用量或網路歸屬未知；不估算校方剩餘配額。")
+        if scope is None:
+            print("使用 --scope dorm|campus_wifi|external 查詢已觀測的本機分類帳本。")
         ranking = data.get("top100", {})
         if ranking.get("status") == "listed":
             print(f"校方榜單第 {ranking['rank']} 名（單位與統計時間未驗證）")

@@ -17,6 +17,7 @@ struct QuickPanel: View {
     let openSettings: () -> Void
     let openManagement: () -> Void
     let openAdvanced: () -> Void
+    let selectScope: (NetworkScope?) -> Void
     @State private var showDetails = false
 
     private var state: QuickPanelState { model.state }
@@ -37,6 +38,18 @@ struct QuickPanel: View {
                         Text(state.networkName).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
+                    Menu {
+                        Button("宿網") { selectScope(.dorm) }
+                        Button("校園 Wi-Fi") { selectScope(.campusWifi) }
+                        Button("外部網路") { selectScope(.external) }
+                        Divider()
+                        Button("取消指定") { selectScope(nil) }
+                    } label: {
+                        Text("指定網路")
+                    }
+                    .disabled(!state.canSelectScope)
+                    .help("僅對目前連線有效，不變更系統網路設定")
+                    .accessibilityLabel("指定本次連線的觀測範圍")
                     Button(action: refresh) {
                         Image(systemName: "arrow.clockwise")
                     }
@@ -54,7 +67,15 @@ struct QuickPanel: View {
                             .font(.caption).foregroundStyle(.secondary)
                     } else {
                         Text("配額未確認").font(.title3.weight(.semibold))
-                        Text("尚無可用的網路與配額資料。").font(.caption).foregroundStyle(.secondary)
+                        if state.selectedScope == .external {
+                            Text("外部網路不套用校方配額。").font(.caption).foregroundStyle(.secondary)
+                        } else if state.selectedScope != .unknown {
+                            Text("已指定範圍，等待有效觀測。").font(.caption).foregroundStyle(.secondary)
+                        } else if state.canSelectScope {
+                            Text("請由上方指定本次網路；僅作本機估計。").font(.caption).foregroundStyle(.secondary)
+                        } else {
+                            Text("等待近期有效的連線觀測。").font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                 }
                 .padding(12)

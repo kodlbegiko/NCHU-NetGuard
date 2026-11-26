@@ -8,7 +8,7 @@ import SwiftUI
 final class NetGuardSettingsModel: ObservableObject {
     @Published var alertsEnabled = true
     @Published var focusEnabled = false
-    @Published var nativePreview = false
+    @Published var nativePreview = true
     @Published var displayMode = 0
     @Published var rateUnit = RateDisplayUnit.binaryBytes
     @Published var personalBudget: PersonalDailyBudget?
@@ -46,7 +46,7 @@ struct NetGuardSettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("外觀") {
-                Toggle("原生快速面板（本次執行預覽）", isOn: Binding(get: { model.nativePreview }, set: setNativePreview))
+                Toggle("原生快速面板（本次執行）", isOn: Binding(get: { model.nativePreview }, set: setNativePreview))
                 Picker("選單列顯示", selection: Binding(get: { model.displayMode }, set: setDisplayMode)) {
                     Text("精簡容量").tag(0)
                     Text("容量與文字").tag(1)

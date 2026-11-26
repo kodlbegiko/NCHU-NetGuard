@@ -1,0 +1,3 @@
+# Native-first scope selection candidate
+
+The quick panel now exposes a one-interaction menu to assign the observed connection to a local scope and revoke it. Selection is disabled until fresh evidence is present; pending selection is distinct from measured quota. The native panel is the candidate default with the legacy panel still available; fixture smoke does not establish interactive parity or accessibility. The CLI requires an explicit --scope for every local bucket, including non-campus addresses; its default still exposes the independent ranking status. Forecasting uses the measured selected scope, not unrelated unknown interfaces. Actual usability and device verification remain open.

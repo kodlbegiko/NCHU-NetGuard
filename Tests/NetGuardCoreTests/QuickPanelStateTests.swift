@@ -8,6 +8,20 @@ final class QuickPanelStateTests: XCTestCase {
             diagnostic: "fixture", forecast: "forecast", provider: "fixture",
             focusEnabled: false, alertsEnabled: true)
     }
+    func testScopeSelectionNeverClaimsOfflineOrUnobservedQuota() {
+        func selection(known: Bool) -> QuickPanelState {
+            .init(networkName: "fixture", connectionKnown: known, scope: .unknown,
+                  received: 0, sent: 0, receiveLimit: 100, sendLimit: 100,
+                  speedText: "sample", diagnostic: "fixture", forecast: "fixture",
+                  provider: "fixture", focusEnabled: false, alertsEnabled: true,
+                  selectedScope: .dorm, canSelectScope: true)
+        }
+        XCTAssertTrue(selection(known: true).canSelectScope)
+        XCTAssertEqual(selection(known: true).selectedScope, .dorm)
+        XCTAssertNil(selection(known: true).download)
+        XCTAssertFalse(selection(known: false).canSelectScope)
+        XCTAssertEqual(selection(known: false).selectedScope, .unknown)
+    }
     func testUnknownNeverShowsRemainingQuota() {
         XCTAssertNil(state(.unknown, known: true).download)
         XCTAssertNil(state(.external, known: true).upload)

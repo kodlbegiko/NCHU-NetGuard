@@ -28,6 +28,14 @@ class FoundationTests(unittest.TestCase):
         self.assertNotIn("else if campus {", source)
         self.assertIn('"network_mode_override": 0', source)
 
+    @patch.object(monitor, "run_probe", side_effect=["interface: en0", "192.0.2.1"])
+    @patch.object(monitor, "load_state", return_value={"ext_in": 10, "ext_out": 5,
+        "observed_scopes": ["external"], "scoped_history_eligible": True, "measured_sample_count": 1})
+    def test_noncampus_ip_alone_does_not_select_external_bucket(self, _state, _route):
+        result = monitor.query_traffic()
+        self.assertEqual(result["status"], "local_usage_unknown")
+        self.assertNotIn("used_total", result)
+
     def test_tls_not_bypassed(self):
         for path in ["src/main.swift", "scripts/traffic_monitor.py"]:
             source = (ROOT / path).read_text()

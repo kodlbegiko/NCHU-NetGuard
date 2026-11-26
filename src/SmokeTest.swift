@@ -43,7 +43,7 @@ final class NetGuardSmokeDelegate: NSObject, NSApplicationDelegate {
 
         let quick = QuickPanelModel()
         host(QuickPanel(model: quick, refresh: {}, toggleFocus: {}, toggleAlerts: {},
-            openHistory: {}, openSettings: {}, openManagement: {}, openAdvanced: {}),
+            openHistory: {}, openSettings: {}, openManagement: {}, openAdvanced: {}, selectScope: { _ in }),
             title: "Smoke · Quick panel", width: 380, height: 570)
 
         let settings = NetGuardSettingsModel()
