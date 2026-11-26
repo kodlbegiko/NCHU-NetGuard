@@ -222,12 +222,17 @@ def parse_top_apps(output):
         if not match:
             continue
         name, pid = match.groups()
-        if int(pid) > 2**31 - 1 or len(name.encode("utf-8", errors="replace")) > 128 or any(
-                unicodedata.category(c).startswith("C") or unicodedata.category(c) in ("Zl", "Zp") for c in name):
+        if int(pid) > 2**31 - 1:
             continue
+        if pid not in by_pid and pid not in ambiguous and len(by_pid) + len(ambiguous) >= 4096:
+            return []
         if pid in by_pid or pid in ambiguous:
             ambiguous.add(pid)
             by_pid.pop(pid, None)
+            continue
+        if len(name.encode("utf-8", errors="replace")) > 128 or any(
+                unicodedata.category(c).startswith("C") or unicodedata.category(c) in ("Zl", "Zp") for c in name):
+            ambiguous.add(pid)
             continue
         if not all(re.fullmatch(r"[0-9]{1,20}", x) for x in parts[1:]):
             ambiguous.add(pid)
@@ -237,8 +242,6 @@ def parse_top_apps(output):
             ambiguous.add(pid)
             continue
         by_pid[pid] = (name, rx + tx)
-        if len(by_pid) + len(ambiguous) > 4096:
-            return []
     totals = {}
     overflow = set()
     for name, count in by_pid.values():
@@ -261,31 +264,77 @@ def get_top_apps():
         return []
 
 class RankingParser(HTMLParser):
-    """Collect cells within a single row; never match across rows."""
+    """Bounded explicit row/cell structure; reject ambiguous nested markup."""
+    MAX_ROWS = 4096
+    MAX_CELLS = 32
+    MAX_CELL_CHARS = 1024
+
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.rows = []
         self.row = None
         self.cell = None
+        self.cell_tag = None
+        self.cell_chars = 0
+        self.invalid = False
 
     def handle_starttag(self, tag, attrs):
+        if self.invalid:
+            return
         if tag == "tr":
-            self.row, self.cell = [], None
-        elif tag in ("td", "th") and self.row is not None:
-            self.cell = []
+            if self.row is not None or len(self.rows) >= self.MAX_ROWS:
+                self.invalid = True
+                return
+            self.row = []
+        elif tag in ("td", "th"):
+            if self.row is None or self.cell is not None or len(self.row) >= self.MAX_CELLS:
+                self.invalid = True
+                return
+            if any(key in ("rowspan", "colspan") and value != "1" for key, value in attrs):
+                # Explicit span does not establish a six-column identity row.
+                self.row.append("")
+            self.cell, self.cell_tag, self.cell_chars = [], tag, 0
+        elif self.row is not None and (tag in ("table", "script", "style", "template", "noscript", "iframe", "object") or
+                any(key == "hidden" or (key == "aria-hidden" and value == "true") for key, value in attrs)):
+            self.invalid = True
+        elif tag == "br" and self.cell is not None:
+            self.handle_data(" ")
 
     def handle_data(self, data):
-        if self.cell is not None:
-            self.cell.append(data)
+        if self.invalid or self.cell is None:
+            return
+        self.cell_chars += len(data)
+        if self.cell_chars > self.MAX_CELL_CHARS:
+            self.invalid = True
+            return
+        self.cell.append(data)
 
     def handle_endtag(self, tag):
-        if tag in ("td", "th") and self.row is not None and self.cell is not None:
+        if self.invalid:
+            return
+        if tag in ("td", "th"):
+            if self.row is None or self.cell is None or tag != self.cell_tag:
+                self.invalid = True
+                return
             self.row.append("".join(self.cell).strip())
-            self.cell = None
-        elif tag == "tr" and self.row is not None:
+            self.cell, self.cell_tag, self.cell_chars = None, None, 0
+        elif tag == "tr":
+            if self.row is None or self.cell is not None:
+                self.invalid = True
+                return
             self.rows.append(self.row)
-            self.row, self.cell = None, None
+            self.row = None
 
+    @property
+    def complete(self):
+        return not self.invalid and self.row is None and self.cell is None
+
+
+def valid_ranking_row(row):
+    return len(row) == 6 and re.fullmatch(r"[1-9][0-9]{0,5}", row[0]) is not None and all(
+        len(value.encode("utf-8")) <= 32 and
+        re.fullmatch(r"[0-9]{1,12}(?:\\.[0-9]{1,6})? *(?:B|KB|MB|GB|TB)", value, re.I | re.ASCII) is not None
+        for value in row[3:])
 
 def parse_ranking(html, ip_addr):
     """Provisional six-column format; absence is never a safety decision."""
@@ -300,6 +349,8 @@ def parse_ranking(html, ip_addr):
     parser = RankingParser()
     parser.feed(html)
     parser.close()
+    if not parser.complete:
+        return unknown("unrecognized_ranking")
     identity_rows = []
     recognized = 0
     for row in parser.rows:
@@ -311,18 +362,14 @@ def parse_ranking(html, ip_addr):
             continue
         if address == target:
             identity_rows.append(row)
-        if len(row) == 6 and re.fullmatch(r"[1-9][0-9]{0,5}", row[0]) and all(
-                re.fullmatch(r"[0-9]{1,12}(?:\.[0-9]{1,6})? *(?:B|KB|MB|GB|TB)", value, re.I)
-                for value in row[3:]):
+        if valid_ranking_row(row):
             recognized += 1
     if len(identity_rows) > 1:
         return unknown("ambiguous_identity")
     if not identity_rows:
         return unknown("not_listed" if recognized else "unrecognized_ranking")
     row = identity_rows[0]
-    if len(row) != 6 or not re.fullmatch(r"[1-9][0-9]{0,5}", row[0]) or not all(
-            re.fullmatch(r"[0-9]{1,12}(?:\.[0-9]{1,6})? *(?:B|KB|MB|GB|TB)", value, re.I)
-            for value in row[3:]):
+    if not valid_ranking_row(row):
         return unknown("malformed_row")
     return {"status": "listed", "in_top1000": True,
             "rank": int(row[0]), "download_display": row[3],
