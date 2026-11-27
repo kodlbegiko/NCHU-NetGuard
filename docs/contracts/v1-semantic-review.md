@@ -24,3 +24,5 @@ Status: engineering review completed for this candidate; not approval by the own
 ## Review outcome
 
 Observation-only interfaces may be proposed for a scoped v1 freeze once exact integrated CI succeeds and the integration owner approves. Mutation-related contracts and actual platform execution remain explicitly excluded. Later contracts requiring omitted fields need versioned extensions/new versions plus ADR and tests. Do not mark broad parallel development unlocked. Isolated test, documentation and non-overlapping read-only module work remains permitted under ownership controls.
+
+- Expanded v1 golden-fixture verification requires every top-level required key and every nested interface key independently; absence must fail validated decoding. Optional EventRecord fields remain absent in its required-only fixture. No wire field, version or semantics changed. This is compatibility test strengthening, not owner freeze approval or end-to-end integration proof.

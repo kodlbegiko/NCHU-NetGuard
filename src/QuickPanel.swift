@@ -42,6 +42,7 @@ struct QuickPanel: View {
                     }
                     .help("重新整理")
                     .accessibilityLabel("重新整理網路狀態")
+                    .accessibilityHint("重新取得本機觀測資料，不修改網路設定")
                 }
                 VStack(alignment: .leading, spacing: 12) {
                     Text("今日剩餘流量（本機估計）").font(.subheadline.weight(.semibold))
@@ -79,6 +80,8 @@ struct QuickPanel: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(state.forecast)
                         Text(state.provider)
+                        Text("校方額度、計費單位及換日規則尚待確認。")
+                            .foregroundStyle(.secondary)
                         Toggle("本機用量提醒", isOn: Binding(get: { state.alertsEnabled }, set: { _ in toggleAlerts() }))
                         Text("自動網路切換與程序控制尚未開放。").foregroundStyle(.secondary)
                     }
@@ -105,6 +108,7 @@ struct QuickPanel: View {
             Label(label, systemImage: symbol).font(.caption).foregroundStyle(.secondary)
             Text(gib(item.remaining)).font(.system(.title3, design: .rounded).weight(.semibold))
                 .monospacedDigit()
+                .accessibilityLabel(label + "本機估計剩餘 " + gib(item.remaining))
             ProgressView(value: item.fraction)
                 .accessibilityLabel(label + "本機估計用量")
                 .accessibilityValue(String(format: "%.0f%%", item.fraction * 100))

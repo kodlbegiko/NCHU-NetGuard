@@ -18,8 +18,26 @@ final class ContractCompatibilityTests: XCTestCase {
         XCTAssertThrowsError(try T.decodeValidated(JSONSerialization.data(withJSONObject: fields))) {
             XCTAssertEqual($0 as? ContractError, .unsupportedVersion)
         }
-        fields.removeValue(forKey: "schemaVersion")
-        XCTAssertThrowsError(try T.decodeValidated(JSONSerialization.data(withJSONObject: fields)))
+        // Every field in the literal fixture is required. Remove it from
+        // the original, valid fixture independently, not an invalid version.
+        let required = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        for key in required.keys {
+            var missing = required
+            missing.removeValue(forKey: key)
+            XCTAssertThrowsError(try T.decodeValidated(JSONSerialization.data(withJSONObject: missing)),
+                                 "\(T.self) accepted missing required field \(key)")
+        }
+        // Nested interface records are also required, not default-filled.
+        if let interfaces = required["interfaces"] as? [[String: Any]], let first = interfaces.first {
+            for key in first.keys {
+                var missing = required
+                var row = first
+                row.removeValue(forKey: key)
+                missing["interfaces"] = [row]
+                XCTAssertThrowsError(try T.decodeValidated(JSONSerialization.data(withJSONObject: missing)),
+                                     "\(T.self) accepted missing nested field \(key)")
+            }
+        }
     }
 
     func testTrafficSnapshotV1() throws {
