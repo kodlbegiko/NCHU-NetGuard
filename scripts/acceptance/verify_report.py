@@ -11,7 +11,7 @@ import stat
 from pathlib import Path
 
 from run_all import (BLOCKED_IDS, MANUAL_IDS, automatic_exit, planned_steps,
-                     LIMIT)
+                     LIMIT, performance_metrics)
 
 MAX_JSON = 256 * 1024
 MARKERS = {
@@ -127,12 +127,10 @@ def verify(directory, expected_sha=None):
                                 and data["complete_inventory"] is True and data["meets_target"] is True,
                                 "coverage_not_demonstrated")
                     else:
-                        cpu, rss, seconds, count = (data[k] for k in ("average_cpu_percent_one_core",
-                            "max_rss_bytes", "duration_seconds", "samples"))
-                        require(type(cpu) in (int, float) and math.isfinite(cpu) and 0 <= cpu < .5
-                                and type(rss) is int and 0 < rss < 80_000_000
-                                and type(seconds) in (int,float) and math.isfinite(seconds) and seconds > 0
-                                and type(count) is int and count >= 2, "performance_not_demonstrated")
+                        metrics = performance_metrics(data)
+                        require(metrics["meets_numeric_target"] and metrics["meets_observation_window"],
+                                "performance_not_demonstrated")
+                        require(step.get("metrics") == metrics, "performance_summary_mismatch")
                 if id == "traffic_numeric":
                     data = strict_json(raw)
                     require(data.get("meets_numeric_target") is True and

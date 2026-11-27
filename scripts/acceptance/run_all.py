@@ -151,20 +151,34 @@ def automatic_exit(rows, clean, expected=None):
         return 2
     return 0 if rows and all(x["status"] == "pass" for x in rows) else 2
 
+PERFORMANCE_MIN_SECONDS = 300
+# The runner uses the benchmark's default five-second interval. A gap
+# over three intervals is insufficient evidence of continuous observation.
+PERFORMANCE_MAX_GAP_SECONDS = 15
+
+def performance_metrics(data):
+    cpu, rss, duration, count, gap = (data[k] for k in (
+        "average_cpu_percent_one_core", "max_rss_bytes", "duration_seconds",
+        "samples", "max_sample_gap_seconds"))
+    if (type(cpu) not in (int, float) or not math.isfinite(cpu) or cpu < 0 or
+        type(rss) is not int or rss <= 0 or type(duration) not in (int, float) or
+        not math.isfinite(duration) or duration <= 0 or type(count) is not int or
+        not 2 <= count <= 100_000 or type(gap) not in (int, float) or
+        not math.isfinite(gap) or not 0 < gap <= duration or
+        duration > (count - 1) * (gap + 0.001) + 0.001):
+        raise ValueError("bad metrics")
+    return {"cpu_percent_one_core": cpu, "max_rss_bytes": rss,
+            "duration_seconds": duration, "samples": count,
+            "max_sample_gap_seconds": gap,
+            "meets_numeric_target": cpu < 0.5 and rss < 80_000_000,
+            "meets_observation_window": (duration >= PERFORMANCE_MIN_SECONDS and
+                                         gap <= PERFORMANCE_MAX_GAP_SECONDS),
+            "idle_condition_and_binary_identity": "operator_review_required"}
+
 def performance_result(path):
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        cpu, rss, duration, count = (data[k] for k in ("average_cpu_percent_one_core",
-                                                      "max_rss_bytes", "duration_seconds", "samples"))
-        if (type(cpu) not in (int, float) or not math.isfinite(cpu) or cpu < 0 or
-            type(rss) is not int or rss <= 0 or type(duration) not in (int, float) or
-            not math.isfinite(duration) or duration <= 0 or type(count) is not int or count < 2):
-            raise ValueError("bad metrics")
-        return {"cpu_percent_one_core": cpu, "max_rss_bytes": rss,
-                "duration_seconds": duration, "samples": count,
-                "meets_numeric_target": cpu < 0.5 and rss < 80_000_000,
-                "idle_condition_and_binary_identity": "operator_review_required"}
-    except (OSError, ValueError, KeyError, TypeError):
+        return performance_metrics(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError, KeyError, TypeError, OverflowError):
         return None
 
 def coverage_result(path):
@@ -282,6 +296,8 @@ def execute(args, out, sha, clean):
                     perf["metrics"] = metrics
                     if metrics is None:
                         perf.update(status="inconclusive", reason="invalid_metrics")
+                    elif not metrics["meets_observation_window"]:
+                        perf.update(status="inconclusive", reason="insufficient_observation_window")
                     elif not metrics["meets_numeric_target"]:
                         perf.update(status="fail", reason="numeric_target_exceeded")
                     else:

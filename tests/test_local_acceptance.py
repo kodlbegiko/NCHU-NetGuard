@@ -42,10 +42,21 @@ class LocalAcceptanceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "metrics.json"
             data = {"average_cpu_percent_one_core": .49, "max_rss_bytes": 79_999_999,
-                    "duration_seconds": 60, "samples": 13}
+                    "duration_seconds": 60, "samples": 13, "max_sample_gap_seconds": 5}
             runner.write_json(path, data)
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertTrue(runner.performance_result(path)["meets_numeric_target"])
+            self.assertFalse(runner.performance_result(path)["meets_observation_window"])
+            data.update(duration_seconds=300, samples=61)
+            runner.write_json(path, data)
+            self.assertTrue(runner.performance_result(path)["meets_observation_window"])
+            data["max_sample_gap_seconds"] = 16
+            runner.write_json(path, data)
+            self.assertFalse(runner.performance_result(path)["meets_observation_window"])
+            data.update(max_sample_gap_seconds=5, samples=2)
+            runner.write_json(path, data)
+            self.assertIsNone(runner.performance_result(path))
+            data["samples"] = 61
             data["average_cpu_percent_one_core"] = .5
             runner.write_json(path, data)
             self.assertFalse(runner.performance_result(path)["meets_numeric_target"])
@@ -163,6 +174,57 @@ class LocalAcceptanceTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 verifier.verify(out)
 
+
+    def test_verifier_rejects_short_gapped_and_mismatched_performance_pass(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d)
+            (out / "logs").mkdir(mode=0o700)
+            env = {"os":"Darwin","os_version":"15.0","architecture":"arm64",
+                   "python":"3.12","hardware_model":"Mac16,12"}
+            options = {"performance":True,"traffic":False}
+            plan = runner.planned_steps("core", **options)
+            rows = [runner.row("preflight", "pass", "clean_macos_checkout")]
+            for id in plan[1:-1]:
+                raw = (verifier.MARKERS.get(id, "ok") + "\n").encode()
+                if id == "coverage":
+                    raw = json.dumps({"executable_lines":100,"covered_lines":95,
+                        "complete_inventory":True,"meets_target":True}).encode()
+                path = out / "logs" / (id + ".log")
+                path.write_bytes(raw)
+                path.chmod(0o600)
+                rows.append(runner.row(id, "pass", "exit", log="logs/" + path.name,
+                    log_sha256=hashlib.sha256(raw).hexdigest(), exit_code=0, duration_seconds=1))
+            report = {"schema_version":2,"kind":"local_automatic","started_at":runner.now(),
+                "finished_at":runner.now(),"commit_sha":"a"*40,"clean_at_start":True,
+                "clean_at_end":True,"same_revision_at_end":True,"environment":env,
+                "profile":"core","options":options,"planned_steps":list(plan),
+                "manual_gates":[{"id":id,"status":"blocked" if id in runner.BLOCKED_IDS else "review_required"}
+                    for id in runner.MANUAL_IDS],"full_device_acceptance":False,"automatic_exit_code":0}
+            runner.write_json(out / "environment.json", env)
+            path = out / "logs" / "performance.log"
+            data = {"average_cpu_percent_one_core":.25,"max_rss_bytes":55_000_000,
+                    "duration_seconds":300,"samples":61,"max_sample_gap_seconds":5}
+            def publish(payload, mismatch=False):
+                raw = json.dumps(payload).encode()
+                path.write_bytes(raw)
+                path.chmod(0o600)
+                metrics = runner.performance_metrics(payload)
+                if mismatch:
+                    metrics["cpu_percent_one_core"] = 0
+                report["steps"] = rows + [runner.row("performance", "pass", "numeric_target_only_review_required",
+                    log="logs/" + path.name, log_sha256=hashlib.sha256(raw).hexdigest(),
+                    exit_code=0, duration_seconds=payload["duration_seconds"], metrics=metrics)]
+                runner.write_json(out / "summary.json", report)
+            publish(data)
+            self.assertEqual(verifier.verify(out)["automatic_exit_code"], 0)
+            for payload in (dict(data, duration_seconds=60, samples=13),
+                            dict(data, max_sample_gap_seconds=16)):
+                publish(payload)
+                with self.assertRaises(ValueError):
+                    verifier.verify(out)
+            publish(data, mismatch=True)
+            with self.assertRaises(ValueError):
+                verifier.verify(out)
 
     def test_manual_session_keeps_first_observation_and_checks_actual_files(self):
         with tempfile.TemporaryDirectory() as d:
