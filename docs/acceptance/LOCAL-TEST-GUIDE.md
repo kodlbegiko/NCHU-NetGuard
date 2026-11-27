@@ -63,3 +63,7 @@ python3 scripts/acceptance/manual_session.py verify test-results/manual-實際�
 
 ## CI 與本機驗收的區別
 整合 PR 的 Foundation CI 檢查 PR head SHA 而非合併模擬 SHA，並將實際驗證的 SHA 記錄於 Actions 摘要。Foundation CI 強制完整核心原始碼覆蓋率清單及至少 90% 行覆蓋率，並對兩種建置產物執行私有暫存目錄內的安裝、內容比對及拒絕覆寫驗證；不啟動 App、不安裝至使用者 Applications。Hosted macOS CI 不替代你的 Mac 實機結果，也不代表合併後的內容已驗證。若整合 PR 關閉，需重新開 PR 或手動執行 workflow。手動工作階段只計算 ledger 引用的證據；磁碟寫入中斷可能留下未引用私有檔案，不代表新增有效觀察。
+
+## 隔離生命週期演練
+
+`python3 scripts/verify_lifecycle_candidate.py --app build/NCHUTraffic.app` 使用工具自行建立的私有暫存目錄，對實際建置 App 的副本與合成舊版執行 Darwin 原子交換、失敗後回滾、身分衝突拒絕與非破壞性隔離移動，並比對合成歷史資料與來源內容。它不接受實際安裝目的地、不啟動程式、不修改登入項目或使用者資料。CI 閘門不等於真實跨版本遷移、斷電復原、授權升級或解除安裝驗收。
