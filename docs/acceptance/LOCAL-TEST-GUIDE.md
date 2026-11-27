@@ -74,7 +74,7 @@ python3 scripts/acceptance/manual_session.py verify test-results/manual-實際�
 
 ## 一次設定後的無人值守驗收
 
-在乾淨、已審閱的候選 checkout 中執行 `caffeinate -i python3 scripts/acceptance/unattended.py`（或 `make acceptance-unattended`，但後者不抑制閒置睡眠）。先執行自動核心與 host 驗收、兩種 App 建置、隔離安裝/生命週期測試與候選指紋。依提示只需一次自行開啟候選 App、在活動監視器找到 PID，關閉 App 面板並輸入 PID；新版必須用工具顯示的 `open -a … --args --netguard-qa-health-dir …` 指令明確開啟候選 App；先正常退出舊 App，不接受普通已啟動的程序。必須可取得絕對執行檔路徑，且在磁碟上的整份 bundle 指紋吻合兩個建置產物之一；ps 路徑／啟動時間與磁碟內容比對並非已載入執行檔的簽章或密碼學證明。執行期間每次採樣核對 Git 版本、乾淨狀態及 bundle 內容；此會增加少量測試程序 CPU/I/O，效能數值只計目標程序。
+在乾淨、已審閱的候選 checkout 中執行 `caffeinate -i python3 scripts/acceptance/unattended.py`（或 `make acceptance-unattended`，但後者不抑制閒置睡眠）。先執行自動核心與 host 驗收、兩種 App 建置、隔離安裝/生命週期測試與候選指紋。依提示只需一次自行開啟候選 App、關閉 App 面板（專屬心跳自動提供 PID，不必手動輸入）；新版必須用工具顯示的 `open -a … --args --netguard-qa-health-dir …` 指令明確開啟候選 App；先正常退出舊 App，不接受普通已啟動的程序。必須可取得絕對執行檔路徑，且在磁碟上的整份 bundle 指紋吻合兩個建置產物之一；ps 路徑／啟動時間與磁碟內容比對並非已載入執行檔的簽章或密碼學證明。執行期間每次採樣核對 Git 版本、乾淨狀態及 bundle 內容；此會增加少量測試程序 CPU/I/O，效能數值只計目標程序。
 
 三輪各 300 秒的閒置 CPU/RSS 採樣完成後，連續觀測 168 小時，每 60 秒記錄 CPU 累積時間、RSS、相對單調與牆鐘時間，逐次 fsync 私有日誌並原子更新檢查點。任何版本、程序身分、時間或採樣缺口異常均停止，不自動重啟或補寫資料。`--trial-seconds 60` 只做短時 soak 演練（仍執行三輪效能）；不可能替代 168h。每項觀測於完成後重算日誌雜湊、時間、缺口及數值摘要。總報告 `test-results/unattended-*/summary.json`，內含獨立核心驗證摘要；尚未完成的觀測仍有自己的 JSON/JSONL。保持電源、上蓋開啟及終端執行，不更新 checkout 或候選 App。退出碼 0 僅表示完整長時間觀測及效能數值達標、仍需審查，2 為短試、未達門檻或不確定。Host 不確定項目保留，不視為通過。關閉程式後不能自動接續中斷區間。
 
@@ -105,3 +105,5 @@ QA 心跳另外保存自啟動累積的最大採樣年齡、成功儲存間隔�
 CI 與無人值守前置流程均強制對兩個實際建置執行檔執行 `qa_preflight.py`：不建立正式 delegate，使用私有暫存心跳、合成四次 tick，驗證已恢復的安全停寫仍被拒絕，且原心跳不得被第二程序覆寫。另用 loopback ephemeral socket 做 IPv4/IPv6 TCP/UDP 雙向各 8192 bytes 的逐位元組比對；不產生宿網流量，不是實體網卡或 App 流量計量證據。IPv6 不支援明確保留不確定。完整報告新增 evidence_gaps，列出未取得的資源/歷史/外部證據；不等於正式驗收通過。修正指紋第二次目錄遍歷錯誤與不安全目的地預覽、雙時鐘差異和報告 wall timestamp 交叉檢查。
 
 整份 schema v3 報告另有完整合成 168h 證據回歸：10,081 點、28 輪回歸、三輪效能及所有前置證據；檢查錯 SHA、遺失缺口清單、缺回歸輪次及竄改日誌必須被拒絕。這些測試只在私有暫存建立合成資料，絕不可當成實機證據。前置 loopback/心跳 JSON 也獨立核對，不只看成功 marker。Soak 每小時輸出進度；最終審查短試與效能未達標的完整報告也會重算。
+
+新版啟動流程不再要求手動輸入 PID：候選 App 必須由使用者依指令開啟，等待專屬私有心跳（最多五分鐘）並核對執行檔內容、關閉面板。閒置區間保留 App 視窗可見 tick 次數，若面板曾被開啟不得通過該區間；不證明全系統閒置。報告額外核對三輪及 soak 的牆鐘區間順序、整體開始/完成範圍與兩個候選的完整指紋、版本欄位。仍不自動啟動、關閉、重新啟動實際 App。

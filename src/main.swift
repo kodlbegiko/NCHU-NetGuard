@@ -172,6 +172,7 @@ private final class QAHealthReporter {
     private var maxSampleAge: TimeInterval = 0
     private var maxSaveGap: TimeInterval = 0
     private var safetyHoldTicks: UInt64 = 0
+    private var visibleTicks: UInt64 = 0
     private var busySince: [String: TimeInterval] = [:]
     private var maxBusy: [String: TimeInterval] = [:]
     private var disabled = false
@@ -212,7 +213,7 @@ private final class QAHealthReporter {
             reporter.tick(start: now, sampleUptime: now, day: "2026-11-28",
                           received: value, sent: 20, sleeping: false, clockHeld: false,
                           persistenceBlocked: blocked, accountingOverflow: false, historyHealthy: true,
-                          routeBusy: false, appsBusy: false, pingBusy: false, providerBusy: false, dnsBusy: false)
+                          routeBusy: false, appsBusy: false, pingBusy: false, providerBusy: false, dnsBusy: false, uiVisible: false)
         }
         emit(100)
         guard let first = reporter.expected, !reporter.disabled else { return 1 }
@@ -243,10 +244,11 @@ private final class QAHealthReporter {
               received: UInt64, sent: UInt64, sleeping: Bool, clockHeld: Bool,
               persistenceBlocked: Bool, accountingOverflow: Bool, historyHealthy: Bool,
               routeBusy: Bool, appsBusy: Bool, pingBusy: Bool,
-              providerBusy: Bool, dnsBusy: Bool) {
+              providerBusy: Bool, dnsBusy: Bool, uiVisible: Bool) {
         guard !disabled else { return }
         let uptime = ProcessInfo.processInfo.systemUptime
         tickCount &+= 1
+        if uiVisible { visibleTicks &+= 1 }
         if let lastTick { maxTickGap = max(maxTickGap, start - lastTick) }
         lastTick = start
         maxTickDuration = max(maxTickDuration, uptime - start)
@@ -284,6 +286,7 @@ private final class QAHealthReporter {
             "max_tick_duration_seconds": maxTickDuration,
             "max_sample_age_seconds": maxSampleAge, "max_save_gap_seconds": maxSaveGap,
             "safety_hold_ticks": safetyHoldTicks, "max_busy_seconds": maxBusy,
+            "visible_ticks": visibleTicks, "ui_visible": uiVisible,
             "sample_age_seconds": sampleUptime.map { NSNumber(value: uptime - $0) } as Any? ?? NSNull(),
             "save_age_seconds": lastSave.map { NSNumber(value: uptime - $0) } as Any? ?? NSNull(),
             "day": day, "received": received, "sent": sent,
@@ -2684,7 +2687,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                     persistenceBlocked: persistenceBlocked, accountingOverflow: accountingOverflow,
                     historyHealthy: TrafficHistoryManager.shared.healthy,
                     routeBusy: isDetectingNetwork, appsBusy: appProbeInFlight, pingBusy: pingInFlight,
-                    providerBusy: providerPollGate.isInFlight, dnsBusy: dnsInFlight)
+                    providerBusy: providerPollGate.isInFlight, dnsBusy: dnsInFlight,
+                    uiVisible: popover?.isShown == true || historyWindowController?.window?.isVisible == true ||
+                        settingsWindowController?.window?.isVisible == true ||
+                        managementWindowController?.window?.isVisible == true)
             }
         }
         guard workflowPowerGuard.allowsSampling else { return }

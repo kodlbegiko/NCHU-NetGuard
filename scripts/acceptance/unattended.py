@@ -16,6 +16,7 @@ import math
 import os
 from pathlib import Path
 import platform
+import re
 import subprocess
 import sys
 import time
@@ -96,11 +97,11 @@ def validate_transition(previous, current, allowed_gap):
 
 
 HEALTH_MAX_AGE = 15
-HEALTH_COUNTS = ("tick_count", "sample_cycles", "measured_cycles", "save_successes", "safety_hold_ticks")
+HEALTH_COUNTS = ("tick_count", "sample_cycles", "measured_cycles", "save_successes", "safety_hold_ticks", "visible_ticks")
 HEALTH_FLAGS = ("sleeping", "clock_held", "persistence_blocked", "accounting_overflow", "history_healthy")
 HEALTH_TIMES = ("wall_seconds", "max_tick_gap_seconds", "max_tick_duration_seconds",
                 "sample_age_seconds", "save_age_seconds", "max_sample_age_seconds", "max_save_gap_seconds")
-HEALTH_KEYS = {"schema_version", "day", "received", "sent", "busy_seconds", "max_busy_seconds",
+HEALTH_KEYS = {"schema_version", "day", "received", "sent", "busy_seconds", "max_busy_seconds", "ui_visible",
                *HEALTH_COUNTS, *HEALTH_FLAGS, *HEALTH_TIMES}
 
 
@@ -113,6 +114,7 @@ def validate_health(health, wall):
             raise ValueError("invalid heartbeat counter")
     if (health["tick_count"] < 1 or health["sample_cycles"] > health["tick_count"] or
             health["measured_cycles"] > health["sample_cycles"] or
+            health["visible_ticks"] > health["tick_count"] or type(health["ui_visible"]) is not bool or
             health["received"] + health["sent"] > 9_007_199_254_740_991):
         raise ValueError("heartbeat counter invariant")
     for key in HEALTH_TIMES:
@@ -183,6 +185,7 @@ def health_summary(rows):
             "max_sample_age_seconds": last["max_sample_age_seconds"],
             "max_save_gap_seconds": last["max_save_gap_seconds"],
             "max_busy_seconds": last["max_busy_seconds"], "safety_hold_ticks": last["safety_hold_ticks"],
+            "visible_ticks_delta": last["visible_ticks"] - first["visible_ticks"],
             "measurement_evidence": ("observed" if last["measured_cycles"] > first["measured_cycles"]
                                      else "no_measured_cycles_review_required")}
 
@@ -285,6 +288,9 @@ def observe(out, name, pid, expected, sha, seconds, interval):
                 row = sample_row(current, first, wall, first_wall)
                 row["sample_wall_seconds"] = wall
                 row["health"] = read_health(out / "health", pid, wall)
+                if interval == 5 and (row["health"]["ui_visible"] or
+                        (previous is not None and row["health"]["visible_ticks"] != previous["health"]["visible_ticks"])):
+                    raise ValueError("UI opened during idle observation")
                 if previous is not None:
                     health_transition(previous, row)
                     gap = validate_transition(previous, row, interval + (10 if interval == 5 else 15))
@@ -478,6 +484,8 @@ def observation_evidence(out, name, seconds, interval, *, require_health=False):
         for a,b in zip(rows, rows[1:]):
             health_transition(a, b)
         health = health_summary(rows)
+        if interval == 5 and (health["visible_ticks_delta"] != 0 or any(r["health"]["ui_visible"] for r in rows)):
+            raise ValueError("UI opened during idle observation")
     if interval == 5:
         target = round(cpu, 4) < 0.5 and rss < 80_000_000
         metrics = summary.get("metrics") or {}
@@ -496,6 +504,8 @@ def observation_evidence(out, name, seconds, interval, *, require_health=False):
               "sha256": summary["sha256"]}
     if require_health:
         result["functional_health"] = health
+        result["started_wall_seconds"] = rows[0]["sample_wall_seconds"]
+        result["finished_wall_seconds"] = rows[-1]["sample_wall_seconds"]
         if interval == SOAK_INTERVAL:
             result["periodic_diagnostics"] = diagnostic_summary(rows)
             result["periodic_regressions"] = review_regressions(out, seconds)
@@ -552,6 +562,45 @@ def evidence_gaps(observations, automatic, preflight):
     return gaps
 
 
+def validate_inventory(inventory, variants, sha):
+    if (inventory["schema_version"] != 1 or inventory["kind"] != "candidate_content_inventory" or
+            inventory["provenance"] != "content_identity_only_not_signed" or inventory["commit_sha"] != sha or
+            inventory["release_authorized"] is not False or inventory["full_device_acceptance"] is not False or
+            set(inventory["bundles"]) != {"legacy", "module"} or not isinstance(variants, list) or
+            not variants or len(set(variants)) != len(variants) or not set(variants) <= set(inventory["bundles"])):
+        raise ValueError("candidate inventory mismatch")
+    versions = set()
+    for value in inventory["bundles"].values():
+        if set(value) != {"sha256", "bundle_short_version", "bundle_build_version"} or not re.fullmatch(
+                r"[0-9a-f]{64}", value["sha256"]):
+            raise ValueError("candidate digest missing")
+        version, build = value["bundle_short_version"], value["bundle_build_version"]
+        if (not isinstance(version, str) or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){0,3}", version)
+                or len(version) > 32 or (build is not None and (not isinstance(build, str)
+                or len(build) > 32 or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){0,3}", build)))):
+            raise ValueError("candidate version invalid")
+        versions.add((version, build))
+    if len(versions) != 1:
+        raise ValueError("candidate versions disagree")
+
+
+def select_candidate(directory, inventory, timeout=300):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            raw = strict_json(read_private(directory / "heartbeat.json", 16_384))
+            pid = raw.get("pid")
+            if type(pid) is not int or pid <= 0:
+                raise ValueError("invalid heartbeat PID")
+            health = read_health(directory, pid, time.time())
+            if health["ui_visible"]:
+                raise ValueError("candidate panel open")
+            return pid, identity_of(pid, inventory)
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, KeyError, TypeError):
+            time.sleep(1)
+    raise ValueError("candidate heartbeat unavailable or unverified")
+
+
 def review_completed(out, expected_sha):
     """Verify completed evidence without using any live PID or network probe."""
     owned_directory(out)
@@ -585,12 +634,7 @@ def review_completed(out, expected_sha):
                 row["log"] != "logs/" + name + ".log" or
                 hashlib.sha256(raw).hexdigest() != row["log_sha256"] or marker.encode() not in raw.splitlines()):
             raise ValueError("isolated step not demonstrated")
-    inventory = report["candidate_inventory"]
-    if (inventory["commit_sha"] != sha or inventory["release_authorized"] is not False or
-            inventory["full_device_acceptance"] is not False or set(inventory["bundles"]) != {"legacy", "module"} or
-            not report["matched_candidate_variants"] or
-            not set(report["matched_candidate_variants"]) <= set(inventory["bundles"])):
-        raise ValueError("candidate inventory mismatch")
+    validate_inventory(report["candidate_inventory"], report["matched_candidate_variants"], sha)
     seconds = report["soak_requested_seconds"]
     if type(seconds) is not int or not 60 <= seconds <= TARGET:
         raise ValueError("invalid soak duration")
@@ -602,6 +646,13 @@ def review_completed(out, expected_sha):
                     for name, plan in expected.items()}
     if observations != report["observations"]:
         raise ValueError("observation summary mismatch")
+    prior = timestamp(report["started_at"]).timestamp()
+    finished = timestamp(report["finished_at"]).timestamp()
+    for name in expected:
+        item = observations[name]
+        if not prior <= item["started_wall_seconds"] <= item["finished_wall_seconds"] <= finished:
+            raise ValueError("observation timeline overlaps or falls outside run")
+        prior = item["finished_wall_seconds"]
     preflight = preflight_evidence(out)
     if preflight != report["qa_preflight"]:
         raise ValueError("preflight summary mismatch")
@@ -641,7 +692,7 @@ def main():
         parser.error("expected SHA is only for report review")
     if (platform.system() != "Darwin" or
             (args.trial_seconds is not None and not 60 <= args.trial_seconds < TARGET)):
-        parser.error("requires macOS, positive PID, and bounded short trial")
+        parser.error("requires macOS and bounded short trial")
     os.umask(0o077)
     sha, clean = revision()
     if not clean:
@@ -696,21 +747,10 @@ def main():
         print("Builds ready. Quit any existing NetGuard normally. In a second terminal run:", flush=True)
         print("/usr/bin/open -a " + shlex.quote(str(ROOT / "build/NCHUTraffic.app")) +
               " --args --netguard-qa-health-dir " + shlex.quote(str(health_directory)), flush=True)
-        print("Wait for the candidate to start, close its panels, and find its PID in Activity Monitor.", flush=True)
-        pid = int(input("Candidate PID: ").strip())
-        if pid <= 0:
-            raise ValueError("invalid PID")
-        expected = identity_of(pid, inventory)
-        # Allow the first periodic save and heartbeat to become available.
-        deadline = time.monotonic() + 30
-        while True:
-            try:
-                read_health(health_directory, pid, time.time())
-                break
-            except (OSError, ValueError, TypeError, KeyError):
-                if time.monotonic() >= deadline:
-                    raise ValueError("candidate heartbeat unavailable")
-                time.sleep(1)
+        print("Launch the candidate and close its panels. Waiting for its private heartbeat (up to five minutes).", flush=True)
+        pid, expected = select_candidate(health_directory, inventory)
+        validate_inventory(inventory, expected[3], sha)
+        print("Candidate matched. Starting idle observation; no PID entry required.", flush=True)
         report["matched_candidate_variants"] = expected[3]
         report["binary_identity"] = "on_disk_content_and_ps_identity_only"
         write_json(path, report)

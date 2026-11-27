@@ -68,7 +68,7 @@ class UnattendedTests(unittest.TestCase):
                     sample_cycles=ticks, measured_cycles=ticks-1, save_successes=1,
                     max_tick_gap_seconds=1.1, max_tick_duration_seconds=.01,
                     max_sample_age_seconds=.02, max_save_gap_seconds=11,
-                    safety_hold_ticks=0, sample_age_seconds=.01, save_age_seconds=2,
+                    safety_hold_ticks=0, visible_ticks=0, ui_visible=False, sample_age_seconds=.01, save_age_seconds=2,
                     day=day, received=received, sent=20,
                     sleeping=False, clock_held=False, persistence_blocked=False,
                     accounting_overflow=False, history_healthy=True,

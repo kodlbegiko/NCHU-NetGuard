@@ -71,7 +71,7 @@ def heartbeat(t):
                 sample_cycles=t+100, measured_cycles=t+99, save_successes=t//10+10,
                 max_tick_gap_seconds=1.1, max_tick_duration_seconds=.02,
                 max_sample_age_seconds=.03, max_save_gap_seconds=10,
-                safety_hold_ticks=0, sample_age_seconds=.01, save_age_seconds=1,
+                safety_hold_ticks=0, visible_ticks=0, ui_visible=False, sample_age_seconds=.01, save_age_seconds=1,
                 day=day, received=(t%86400)*10, sent=(t%86400)*2,
                 sleeping=False, clock_held=False, persistence_blocked=False,
                 accounting_overflow=False, history_healthy=True,
@@ -79,14 +79,15 @@ def heartbeat(t):
                 max_busy_seconds=dict.fromkeys(("route","apps","ping","provider","dns"),0))
 
 
-def observation(out, name, seconds, interval):
+def observation(out, name, seconds, interval, offset=0):
     rows = []
     resource_keys = {"open_descriptors", "thread_rows", "descendant_count",
                      "descendant_rss_bytes", "zombie_descendants", "matching_diagnostic_reports",
                      *diagnostics.RUSAGE_KEYS}
     for t in range(0, seconds+1, interval):
         h = heartbeat(t)
-        row = {"elapsed_seconds":t,"wall_elapsed_seconds":t,"sample_wall_seconds":WALL+t,
+        h["wall_seconds"] += offset
+        row = {"elapsed_seconds":t,"wall_elapsed_seconds":t,"sample_wall_seconds":WALL+t+offset,
                "cpu_seconds_delta":t*.002,"rss_bytes":50_000_000,"health":h}
         if interval == qa.SOAK_INTERVAL:
             if t % 300 == 0:
@@ -145,17 +146,20 @@ class WholeAcceptanceEvidenceTests(unittest.TestCase):
                     "steps":[log(out,"regression_%02d_%s"%(i,suffix),b"synthetic test only\n")
                              for suffix in ("python","swift")]})
             runner.write_json(out / "regressions.json",cycles)
-            observations = {"idle_"+str(i+1):observation(out,"idle_"+str(i+1),300,5)
+            observations = {"idle_"+str(i+1):observation(out,"idle_"+str(i+1),300,5,i*301)
                             for i in range(3)}
-            observations["soak"] = observation(out,"soak",qa.TARGET,qa.SOAK_INTERVAL)
+            observations["soak"] = observation(out,"soak",qa.TARGET,qa.SOAK_INTERVAL,903)
             report = {"schema_version":3,"kind":"unattended_acceptance","commit_sha":SHA,
-                "started_at":runner.now(),"finished_at":runner.now(),
+                "started_at":dt.datetime.fromtimestamp(WALL-1,dt.timezone.utc).isoformat(),
+                "finished_at":dt.datetime.fromtimestamp(WALL+qa.TARGET+904,dt.timezone.utc).isoformat(),
                 "full_device_acceptance":False,"release_authorized":False,
                 "status":"observations_complete_review_required","automatic":auto,
                 "fixture_ui_timing":qa.fixture_timing(out),"qa_preflight":preflight,
                 "steps":steps,"manual_gates":report_gates(),
-                "candidate_inventory":{"commit_sha":SHA,"release_authorized":False,
-                   "full_device_acceptance":False,"bundles":{"legacy":{},"module":{}}},
+                "candidate_inventory":{"schema_version":1,"kind":"candidate_content_inventory","commit_sha":SHA,
+                   "provenance":"content_identity_only_not_signed","release_authorized":False,
+                   "full_device_acceptance":False,"bundles":{v:{"sha256":"b"*64,"bundle_short_version":"3.0",
+                       "bundle_build_version":None} for v in ("legacy","module")}},
                 "matched_candidate_variants":["legacy"],"soak_requested_seconds":qa.TARGET,
                 "observations":observations,"evidence_gaps":qa.evidence_gaps(observations,auto,preflight)}
             runner.write_json(out / "summary.json", report)

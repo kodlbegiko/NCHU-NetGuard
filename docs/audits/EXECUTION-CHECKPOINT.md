@@ -99,3 +99,5 @@
 - R5-QA: gating actual dual-built heartbeat producer/consumer fixture (recovered safety hold + no overwrite), local TCP/UDP IPv4/IPv6 exact payload echo, final explicit evidence-gap ledger, stronger dual-clock/report cross-checks, installer fingerprint walk-error and unsafe review guards. No physical accounting or actual release claim. Exact CI pending.
 
 - R5-QA: whole-report synthetic seven-day verifier regression exercises 10081 observations, 28 cycles and three idle windows with adversarial missing cycle, log tamper, SHA and evidence-gap checks. Strict preflight JSON validation and explicit IPv6 gaps, periodic progress and final verdict only after self-check. Synthetic fixture is not real evidence. Exact CI pending.
+
+- R5-QA: auto-identify explicitly launched candidate via private heartbeat, no manual PID entry; reject UI-visible ticks during idle windows, verify complete candidate inventory and nonoverlapping observation wall timelines. Synthetic whole-report fixtures updated. Exact CI pending.
