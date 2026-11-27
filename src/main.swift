@@ -9,6 +9,7 @@ import IOKit
 import SystemConfiguration
 import Network
 import UserNotifications
+import Darwin
 
 // MARK: - 歷史紀錄模型與管理器
 struct DayTrafficRecord {
@@ -150,6 +151,112 @@ class ScriptHandler: NSObject, WKScriptMessageHandler {
     }
 }
 
+// Explicit local QA session only. No network identity, names, addresses, or
+// command lines are exported. The private live heartbeat includes PID so the
+// observer can bind it to the selected process; archived samples remove it.
+private final class QAHealthReporter {
+    private let directory: URL
+    private let directoryDevice: dev_t
+    private let directoryInode: ino_t
+    private let destination: URL
+    private var expected: Data?
+    private var lastPublish: TimeInterval?
+    private var lastTick: TimeInterval?
+    private var tickCount: UInt64 = 0
+    private var sampleCount: UInt64 = 0
+    private var measuredCount: UInt64 = 0
+    private var saveCount: UInt64 = 0
+    private var lastSave: TimeInterval?
+    private var maxTickGap: TimeInterval = 0
+    private var maxTickDuration: TimeInterval = 0
+    private var busySince: [String: TimeInterval] = [:]
+    private var disabled = false
+
+    static func requested() -> QAHealthReporter? {
+        let args = CommandLine.arguments
+        guard let index = args.firstIndex(of: "--netguard-qa-health-dir"),
+              args.indices.contains(index + 1),
+              args[index + 1].hasPrefix("/") else { return nil }
+        return QAHealthReporter(directory: URL(fileURLWithPath: args[index + 1], isDirectory: true))
+    }
+
+    private init?(directory: URL) {
+        var info = stat()
+        guard directory.lastPathComponent == "health",
+              directory.deletingLastPathComponent().lastPathComponent.hasPrefix("unattended-"),
+              lstat(directory.path, &info) == 0,
+              info.st_mode & mode_t(S_IFMT) == mode_t(S_IFDIR),
+              info.st_uid == geteuid(), info.st_mode & 0o077 == 0 else { return nil }
+        self.directory = directory
+        directoryDevice = info.st_dev
+        directoryInode = info.st_ino
+        destination = directory.appendingPathComponent("heartbeat.json")
+        // Never adopt an existing heartbeat, including a dangling alias.
+        var existing = stat()
+        guard lstat(destination.path, &existing) != 0, errno == ENOENT else { return nil }
+    }
+
+    func sampled(measured: Bool) {
+        sampleCount &+= 1
+        if measured { measuredCount &+= 1 }
+    }
+
+    func saved() {
+        saveCount &+= 1
+        lastSave = ProcessInfo.processInfo.systemUptime
+    }
+
+    func tick(start: TimeInterval, sampleUptime: TimeInterval?, day: String,
+              received: UInt64, sent: UInt64, sleeping: Bool, clockHeld: Bool,
+              persistenceBlocked: Bool, accountingOverflow: Bool, historyHealthy: Bool,
+              routeBusy: Bool, appsBusy: Bool, pingBusy: Bool) {
+        guard !disabled else { return }
+        let uptime = ProcessInfo.processInfo.systemUptime
+        tickCount &+= 1
+        if let lastTick { maxTickGap = max(maxTickGap, start - lastTick) }
+        lastTick = start
+        maxTickDuration = max(maxTickDuration, uptime - start)
+        var ages: [String: Double] = [:]
+        for (name, busy) in [("route", routeBusy), ("apps", appsBusy), ("ping", pingBusy)] {
+            if busy {
+                if busySince[name] == nil { busySince[name] = uptime }
+                ages[name] = uptime - (busySince[name] ?? uptime)
+            } else {
+                busySince[name] = nil
+                ages[name] = 0
+            }
+        }
+        guard lastPublish.map({ uptime - $0 >= 5 }) ?? true else { return }
+        var info = stat()
+        guard lstat(directory.path, &info) == 0,
+              info.st_dev == directoryDevice, info.st_ino == directoryInode,
+              info.st_uid == geteuid(), info.st_mode & mode_t(S_IFMT) == mode_t(S_IFDIR),
+              info.st_mode & 0o077 == 0 else { disabled = true; return }
+        let payload: [String: Any] = [
+            "schema_version": 1, "pid": Int(ProcessInfo.processInfo.processIdentifier),
+            "wall_seconds": Date().timeIntervalSince1970,
+            "tick_count": tickCount, "sample_cycles": sampleCount, "measured_cycles": measuredCount,
+            "save_successes": saveCount, "max_tick_gap_seconds": maxTickGap,
+            "max_tick_duration_seconds": maxTickDuration,
+            "sample_age_seconds": sampleUptime.map { NSNumber(value: uptime - $0) } as Any? ?? NSNull(),
+            "save_age_seconds": lastSave.map { NSNumber(value: uptime - $0) } as Any? ?? NSNull(),
+            "day": day, "received": received, "sent": sent,
+            "sleeping": sleeping, "clock_held": clockHeld,
+            "persistence_blocked": persistenceBlocked, "accounting_overflow": accountingOverflow,
+            "history_healthy": historyHealthy, "busy_seconds": ages
+        ]
+        do {
+            let bytes = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+            try HistoryFileAccess.replaceIfUnchanged(destination, expected: expected, data: bytes, limit: 16_384)
+            expected = bytes
+            lastPublish = uptime
+        } catch {
+            // No retry storm or alternative path; the observer detects stale data.
+            disabled = true
+        }
+    }
+}
+
 // MARK: - 主應用程式
 class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var statusItem: NSStatusItem!
@@ -163,6 +270,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
     let managementModel = ManagementModel()
     let settingsModel = NetGuardSettingsModel()
     var activeSpeedMeasured = false
+    private let qaHealth = QAHealthReporter.requested()
     
     var secondTimer: Timer?
     var serverSyncTimer: Timer?
@@ -2154,6 +2262,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                 expected: expectedDailyStateBytes, data: data, limit: 1_048_576)
             expectedDailyStateBytes = data
             persistenceStatus = "本機紀錄已儲存"
+            qaHealth?.saved()
             return true
         } catch {
             persistenceBlocked = true
@@ -2519,6 +2628,18 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
     }
 
     func tickRealtime() {
+        let qaStart = qaHealth.map { _ in ProcessInfo.processInfo.systemUptime }
+        defer {
+            if let qaHealth, let qaStart {
+                let total = trafficLedger.aggregate
+                qaHealth.tick(start: qaStart, sampleUptime: lastSampleUptime, day: currentDateString,
+                    received: total.received, sent: total.sent,
+                    sleeping: workflowPowerGuard.systemSleeping, clockHeld: clockHeld,
+                    persistenceBlocked: persistenceBlocked, accountingOverflow: accountingOverflow,
+                    historyHealthy: TrafficHistoryManager.shared.healthy,
+                    routeBusy: isDetectingNetwork, appsBusy: appProbeInFlight, pingBusy: pingInFlight)
+            }
+        }
         guard workflowPowerGuard.allowsSampling else { return }
         let todayStr = getTodayString()
         let transition = LocalDayTransition.evaluate(previous: currentDateString, observed: todayStr)
@@ -2666,7 +2787,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         if samples.isEmpty || deltas.values.contains(where: { $0.delta.quality != .measured }) {
             sampleGapCount = min(sampleGapCount + 1, Int(DailyTrafficLedger.maximumTotal))
         }
-        if deltas.values.contains(where: { $0.delta.quality == .measured }) {
+        let measuredCycle = deltas.values.contains(where: { $0.delta.quality == .measured })
+        qaHealth?.sampled(measured: measuredCycle)
+        if measuredCycle {
             measuredSampleCount = min(measuredSampleCount + 1, 9_007_199_254_740_991)
         }
         for (name, value) in deltas where value.delta.quality == .measured {
