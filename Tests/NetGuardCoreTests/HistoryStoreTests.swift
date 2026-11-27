@@ -240,6 +240,47 @@ final class HistoryStoreTests: XCTestCase {
             XCTAssertThrowsError(try HistoryBackupInspector.inspect(url))
         }
     }
+    func testScopedReadRejectsCorruptSiblingPartition() throws {
+        try withURL { url in
+            let store = try HistoryStore(url: url)
+            let aggregate = try HistoryDay(day: "2026-11-25", total: 100, download: 80, upload: 20)
+            let dorm = try HistoryDay(day: aggregate.day, total: 60, download: 50, upload: 10)
+            let wifi = try HistoryDay(day: aggregate.day, total: 40, download: 30, upload: 10)
+            try store.recordScoped(ScopedHistoryDay(aggregate: aggregate, scopes: [.dorm:dorm, .campusWifi:wifi]))
+            XCTAssertEqual(try store.recent(scope: .dorm), [dorm])
+            var database: OpaquePointer?
+            guard sqlite3_open(url.path, &database) == SQLITE_OK, let database else {
+                throw HistoryStoreError.database("fixture")
+            }
+            let status = sqlite3_exec(database, "UPDATE history_scopes SET download=29 WHERE scope='campusWifi'", nil, nil, nil)
+            sqlite3_close(database)
+            XCTAssertEqual(status, SQLITE_OK)
+            let original = try Data(contentsOf: url)
+            XCTAssertThrowsError(try store.recent(scope: .dorm))
+            XCTAssertThrowsError(try store.recent(scope: .campusWifi))
+            XCTAssertThrowsError(try HistoryBackupInspector.inspect(url))
+            XCTAssertEqual(try Data(contentsOf: url), original)
+        }
+    }
+
+    func testV2MalformedDayCannotBeMigrated() throws {
+        for literal in ["'2026-02-30'", "'2026-11-25'||char(0)||'suffix'"] {
+            try withURL { url in
+                var database: OpaquePointer?
+                guard sqlite3_open(url.path, &database) == SQLITE_OK, let database else {
+                    throw HistoryStoreError.database("fixture")
+                }
+                let sql = "CREATE TABLE history_days(day TEXT PRIMARY KEY,total INTEGER NOT NULL,download INTEGER,upload INTEGER); CREATE TABLE history_scopes(day TEXT NOT NULL,scope TEXT NOT NULL,download INTEGER NOT NULL,upload INTEGER NOT NULL,PRIMARY KEY(day,scope)); INSERT INTO history_days VALUES(\(literal),10,8,2); INSERT INTO history_scopes VALUES(\(literal),'dorm',8,2); PRAGMA user_version=2;"
+                let status = sqlite3_exec(database, sql, nil, nil, nil)
+                sqlite3_close(database)
+                XCTAssertEqual(status, SQLITE_OK)
+                let original = try Data(contentsOf: url)
+                XCTAssertThrowsError(try HistoryStore(url: url))
+                XCTAssertEqual(try Data(contentsOf: url), original)
+            }
+        }
+    }
+
     func testActualV1DatabaseMigratesWithoutReclassification() throws {
         try withURL { url in
             var database: OpaquePointer?

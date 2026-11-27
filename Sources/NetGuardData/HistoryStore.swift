@@ -205,6 +205,7 @@ public final class HistoryStore {
                         guard try scalar("SELECT count(*) FROM history_scopes WHERE typeof(day)<>'text' OR typeof(scope)<>'text' OR scope NOT IN ('dorm','campusWifi','external','unknown') OR typeof(download)<>'integer' OR typeof(upload)<>'integer' OR download<0 OR upload<0 OR (download=0 AND upload=0)") == 0,
                               try scalar("SELECT count(*) FROM (SELECT day,sum(download) AS dl,sum(upload) AS ul FROM history_scopes GROUP BY day) AS s LEFT JOIN history_days AS h ON h.day=s.day WHERE h.day IS NULL OR typeof(h.download)<>'integer' OR typeof(h.upload)<>'integer' OR h.download<>s.dl OR h.upload<>s.ul OR typeof(h.total)<>'integer' OR h.total<>s.dl+s.ul") == 0
                         else { throw HistoryStoreError.invalidRecord }
+                        try validateMigrationDays()
                         try execute("ALTER TABLE history_scopes RENAME TO history_scopes_v2")
                     }
                     try execute("CREATE TABLE history_scopes(day TEXT NOT NULL REFERENCES history_days(day), scope TEXT NOT NULL CHECK(scope IN ('dorm','campusWifi','external','unknown')), download INTEGER NOT NULL CHECK(typeof(download)='integer' AND download >= 0), upload INTEGER NOT NULL CHECK(typeof(upload)='integer' AND upload >= 0), CHECK(scope <> 'unknown' OR download > 0 OR upload > 0), PRIMARY KEY(day,scope))")
@@ -303,6 +304,20 @@ public final class HistoryStore {
         }
     }
 
+    private func validateMigrationDays() throws {
+        let stmt = try statement("SELECT day FROM history_days")
+        defer { sqlite3_finalize(stmt) }
+        var count = 0
+        while true {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { return }
+            guard rc == SQLITE_ROW, count < 36_600 else { throw HistoryStoreError.invalidRecord }
+            let day = try HistorySQLiteText.read(stmt, 0, length: 10...10)
+            _ = try HistoryDay(day: day, total: 0, download: nil, upload: nil)
+            count += 1
+        }
+    }
+
     private func execute(_ sql: String) throws {
         guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK
         else { throw HistoryStoreError.database("execute") }
@@ -385,6 +400,42 @@ public final class HistoryStore {
         let days = try LegacyHistoryMigration.decode(data)
         try transaction { for day in days { try write(day, replace: false) } }
     }
+    /// An active outer SELECT holds the same SQLite read snapshot while
+    /// the selected day's aggregate and every sibling scope are validated.
+    private func validatedPartition(day: String) throws -> ScopedHistoryDay {
+        let stmt = try statement("SELECT h.day,h.total,h.download,h.upload,s.scope,s.download,s.upload FROM history_days AS h JOIN history_scopes AS s ON h.day=s.day COLLATE BINARY WHERE h.day=? COLLATE BINARY")
+        defer { sqlite3_finalize(stmt) }
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        guard sqlite3_bind_text(stmt, 1, day, -1, transient) == SQLITE_OK
+        else { throw HistoryStoreError.database("bind partition") }
+        var aggregate: HistoryDay?
+        var scopes: [NetworkScope: HistoryDay] = [:]
+        while true {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { break }
+            guard rc == SQLITE_ROW, scopes.count < NetworkScope.allCases.count,
+                  try HistorySQLiteText.read(stmt, 0, length: 10...10) == day,
+                  let scope = NetworkScope(rawValue: try HistorySQLiteText.read(stmt, 4, length: 1...10))
+            else { throw HistoryStoreError.invalidRecord }
+            func bytes(_ column: Int32) throws -> UInt64 {
+                guard sqlite3_column_type(stmt, column) == SQLITE_INTEGER,
+                      let value = UInt64(exactly: sqlite3_column_int64(stmt, column))
+                else { throw HistoryStoreError.invalidRecord }
+                return value
+            }
+            let total = try HistoryDay(day: day, total: bytes(1), download: bytes(2), upload: bytes(3))
+            if let aggregate, aggregate != total { throw HistoryStoreError.invalidRecord }
+            aggregate = total
+            let dl = try bytes(5), ul = try bytes(6)
+            let (sum, overflow) = dl.addingReportingOverflow(ul)
+            guard !overflow else { throw HistoryStoreError.invalidRecord }
+            let row = try HistoryDay(day: day, total: sum, download: dl, upload: ul)
+            guard scopes.updateValue(row, forKey: scope) == nil else { throw HistoryStoreError.invalidRecord }
+        }
+        guard let aggregate else { throw HistoryStoreError.invalidRecord }
+        return try ScopedHistoryDay(aggregate: aggregate, scopes: scopes)
+    }
+
     public func recent(limit: Int = 30, scope: NetworkScope? = nil) throws -> [HistoryDay] {
         guard (1...3660).contains(limit) else { throw HistoryStoreError.invalidRecord }
         let sql = scope == nil
@@ -413,8 +464,14 @@ public final class HistoryStore {
                 return UInt64(sqlite3_column_int64(stmt, col))
             }
             guard let total = try value(1) else { throw HistoryStoreError.invalidRecord }
-            result.append(try HistoryDay(day: day, total: total,
-                                         download: value(2), upload: value(3)))
+            let record = try HistoryDay(day: day, total: total,
+                                        download: value(2), upload: value(3))
+            if let scope {
+                guard try validatedPartition(day: day).scopes[scope] == record else {
+                    throw HistoryStoreError.invalidRecord
+                }
+            }
+            result.append(record)
         }
     }
 }
