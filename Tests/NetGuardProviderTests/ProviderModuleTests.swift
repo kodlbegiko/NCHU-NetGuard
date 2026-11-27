@@ -93,6 +93,45 @@ final class ProviderModuleTests: XCTestCase {
             XCTAssertFalse(observation.isUsableRanking(for: "2026-11-25", now: now))
         }
     }
+    func testRankingRequiresWholeFieldMatchAndCanonicalTimestamp() throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-25T12:00:00Z"))
+        func observation(_ download: String, _ stamp: String = "2026-11-25T12:00:00Z") -> ProviderObservation {
+            .init(status: .listed, requestedDate: "2026-11-25", retrievedAt: stamp,
+                  rank: 1, downloadDisplay: download, uploadDisplay: "1 GB",
+                  totalDisplay: "2 GB", unitsVerified: false)
+        }
+        for text in ["1 GB\n", "1 GB\r\n", "1 GB\u{0000}", "1 GB\u{2028}", "1 GB\u{2029}"] {
+            XCTAssertFalse(observation(text).isUsableRanking(for: "2026-11-25", now: now))
+        }
+        for stamp in ["2026-11-25T12:00:00Z\n", "2026-11-25T12:00:00Zsuffix", "2026-11-25T12:00:00"] {
+            XCTAssertFalse(observation("1 GB", stamp).isFresh(for: "2026-11-25", now: now))
+        }
+        XCTAssertTrue(observation("1 GB").isUsableRanking(for: "2026-11-25", now: now))
+        XCTAssertTrue(observation("1 GB", "2026-11-25T12:00:00.123456+00:00")
+            .isUsableRanking(for: "2026-11-25", now: now))
+    }
+
+    func testOnlyUncontradictedRecognizedAbsenceCanResetBackoff() throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-25T12:00:00Z"))
+        func observation(rank: Int? = nil, download: String? = nil, upload: String? = nil,
+                         total: String? = nil, units: Bool? = nil,
+                         error: ProviderErrorCode = .notListed) -> ProviderObservation {
+            .init(status: .notFoundOrUnrecognized, requestedDate: "2026-11-25",
+                  retrievedAt: "2026-11-25T12:00:00Z", rank: rank,
+                  downloadDisplay: download, uploadDisplay: upload, totalDisplay: total,
+                  unitsVerified: units, errorCode: error)
+        }
+        XCTAssertTrue(observation().isRecognizedAbsence(for: "2026-11-25", now: now))
+        XCTAssertTrue(observation(units: false).isRecognizedAbsence(for: "2026-11-25", now: now))
+        for value in [observation(rank: 1), observation(download: "1 GB"),
+                      observation(upload: "1 GB"), observation(total: "1 GB"),
+                      observation(units: true), observation(error: .malformedRow)] {
+            XCTAssertFalse(value.isRecognizedAbsence(for: "2026-11-25", now: now))
+        }
+        XCTAssertFalse(observation().isRecognizedAbsence(for: "2026-11-25", now: now.addingTimeInterval(601)))
+        XCTAssertTrue(observation().displayStatus(for: "2026-11-25", now: now).contains("不能判定安全"))
+    }
+
     func testTypedFailureNeverLooksLikeFreshRanking() throws {
         let raw = Data(#"{"status":"unavailable","error_code":"rate_limited"}"#.utf8)
         let value = try JSONDecoder().decode(ProviderObservation.self, from: raw)

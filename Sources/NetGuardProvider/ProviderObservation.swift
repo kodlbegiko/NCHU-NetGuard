@@ -44,8 +44,11 @@ public struct ProviderObservation: Codable, Equatable, Sendable {
 
     public func isFresh(for day: String, now: Date, maxAge: TimeInterval = 600) -> Bool {
         guard maxAge.isFinite, maxAge >= 0, now.timeIntervalSinceReferenceDate.isFinite,
-              requestedDate == day, day.range(of: #"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"#, options: .regularExpression) != nil,
-              let stamp = retrievedAt, stamp.utf8.count <= 64 else { return false }
+              requestedDate == day, day.utf8.count == 10,
+              day.range(of: #"\A[0-9]{4}-[0-9]{2}-[0-9]{2}\z"#, options: .regularExpression) != nil,
+              let stamp = retrievedAt, stamp.utf8.count <= 64,
+              stamp.range(of: #"\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})\z"#,
+                          options: .regularExpression) != nil else { return false }
         let calendarDay = DateFormatter()
         calendarDay.locale = Locale(identifier: "en_US_POSIX")
         calendarDay.calendar = Calendar(identifier: .gregorian)
@@ -89,9 +92,17 @@ public extension ProviderObservation {
               (1...999_999).contains(rank), unitsVerified == false,
               let downloadDisplay, let uploadDisplay, let totalDisplay else { return false }
         return [downloadDisplay, uploadDisplay, totalDisplay].allSatisfy {
-            $0.utf8.count <= 32 && $0.range(of: #"^[0-9]{1,12}(\.[0-9]{1,6})? *(B|KB|MB|GB|TB)$"#,
+            $0.utf8.count <= 32 && $0.range(of: #"\A[0-9]{1,12}(\.[0-9]{1,6})? *(B|KB|MB|GB|TB)\z"#,
                                           options: [.regularExpression, .caseInsensitive]) != nil
         }
+    }
+
+    /// A recognized page without our identity is not evidence of safety.
+    /// Contradictory ranking fields must not reset the polling backoff.
+    func isRecognizedAbsence(for day: String, now: Date) -> Bool {
+        status == .notFoundOrUnrecognized && errorCode == .notListed &&
+        rank == nil && downloadDisplay == nil && uploadDisplay == nil && totalDisplay == nil &&
+        unitsVerified != true && isFresh(for: day, now: now)
     }
 }
 
