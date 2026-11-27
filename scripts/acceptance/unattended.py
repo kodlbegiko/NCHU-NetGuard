@@ -5,6 +5,7 @@ Never launches/restarts an app, changes sleep settings, modifies network routes,
 generates controlled traffic, or operates on the user's installation.
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import datetime as dt
 import shlex
 import sqlite3
@@ -32,6 +33,7 @@ from candidate_inventory import collect, describe
 PERFORMANCE_WINDOWS = 3
 PERFORMANCE_SECONDS = 300
 SOAK_INTERVAL = 60
+REGRESSION_PERIOD = 6 * 3600
 
 
 def exact_checkout(sha):
@@ -171,6 +173,65 @@ def health_summary(rows):
                                      else "no_measured_cycles_review_required")}
 
 
+def regression_cycle(out, index, sha):
+    exact_checkout(sha)
+    rows = []
+    for suffix, argv, timeout in (
+        ("python", ["make", "test"], 180),
+        ("swift", ["swift", "test", "--skip-build"], 600)):
+        name = "regression_%02d_%s" % (index, suffix)
+        result = run_step(out, name, argv, timeout)
+        rows.append(result)
+        if result["status"] != "pass":
+            break
+    exact_checkout(sha)
+    return rows
+
+
+def review_regressions(out, seconds):
+    data = strict_json(read_private(out / "regressions.json", 256 * 1024))
+    expected = (seconds - 1) // REGRESSION_PERIOD + 1
+    if not isinstance(data, list) or len(data) != expected:
+        raise ValueError("incomplete regression schedule")
+    for index, item in enumerate(data):
+        at = item["started_elapsed_seconds"]
+        due = index * REGRESSION_PERIOD
+        if (type(at) not in (int, float) or not math.isfinite(at) or
+                not due <= at <= due + 75 or item["index"] != index):
+            raise ValueError("regression schedule mismatch")
+        rows = item["steps"]
+        if len(rows) != 2:
+            raise ValueError("incomplete regression cycle")
+        for suffix, row in zip(("python", "swift"), rows):
+            name = "regression_%02d_%s" % (index, suffix)
+            raw = read_private(out / "logs" / (name + ".log"), LIMIT)
+            if (row["id"] != name or row["status"] != "pass" or row["exit_code"] != 0 or
+                    row["log"] != "logs/" + name + ".log" or
+                    hashlib.sha256(raw).hexdigest() != row["log_sha256"]):
+                raise ValueError("regression evidence mismatch")
+    return {"cycles": expected, "steps": expected * 2, "status": "recorded_pass",
+            "period_seconds": REGRESSION_PERIOD}
+
+
+def fixture_timing(out):
+    expected = {"Smoke · Quick panel", "Smoke · Settings", "Smoke · Management", "Smoke · History"}
+    result = {}
+    for name in ("legacy", "module"):
+        raw = read_private(out / "automatic" / "logs" / (name + "_smoke.log"), LIMIT)
+        prefix = b"NETGUARD_FIXTURE_TIMING "
+        lines = [line[len(prefix):] for line in raw.splitlines() if line.startswith(prefix)]
+        if len(lines) != 1:
+            raise ValueError("missing fixture UI timing")
+        data = strict_json(lines[0])
+        if set(data) != expected or any(
+                set(item) != {"construction_ms", "layout_ms"} or
+                any(type(v) not in (int,float) or not math.isfinite(v) or v < 0 for v in item.values())
+                for item in data.values()):
+            raise ValueError("invalid fixture UI timing")
+        result[name] = data
+    return {"variants": result, "scope": "fixture_construction_and_layout_not_production_open_latency"}
+
+
 def observe(out, name, pid, expected, sha, seconds, interval):
     """Write private streaming evidence; an interruption cannot be a pass."""
     path = out / (name + ".jsonl")
@@ -184,6 +245,22 @@ def observe(out, name, pid, expected, sha, seconds, interval):
     readings = []
     resource_at = history_at = None
     previous_day = None
+    pool = ThreadPoolExecutor(max_workers=1) if interval == SOAK_INTERVAL else None
+    future = None
+    regression_runs = []
+    pending = None
+
+    def finish_cycle():
+        nonlocal future, pending
+        if future is not None:
+            pending["steps"] = future.result()
+            regression_runs.append(pending)
+            write_json(out / "regressions.json", regression_runs)
+            future = pending = None
+            if len(regression_runs[-1]["steps"]) != 2 or any(
+                    step["status"] != "pass" for step in regression_runs[-1]["steps"]):
+                raise ValueError("periodic regression failed")
+
     try:
         with path.open("x", encoding="utf-8") as stream:
             while True:
@@ -204,6 +281,15 @@ def observe(out, name, pid, expected, sha, seconds, interval):
                 # Extra probes only during soak, never the idle benchmark.
                 if interval == SOAK_INTERVAL:
                     elapsed = row["elapsed_seconds"]
+                    if future is not None and future.done():
+                        finish_cycle()
+                    index = len(regression_runs)
+                    if index * REGRESSION_PERIOD < seconds and elapsed >= index * REGRESSION_PERIOD:
+                        if future is None:
+                            pending = {"index": index, "started_elapsed_seconds": elapsed}
+                            future = pool.submit(regression_cycle, out, index, sha)
+                        elif elapsed >= (index + 1) * REGRESSION_PERIOD:
+                            raise ValueError("periodic regression exceeded schedule")
                     rollover = previous_day is not None and previous_day["day"] != row["health"]["day"]
                     if resource_at is None or elapsed - resource_at >= 300:
                         row["resources"] = diagnostics.resources(pid)
@@ -233,7 +319,14 @@ def observe(out, name, pid, expected, sha, seconds, interval):
                 if row["elapsed_seconds"] >= seconds:
                     break
                 previous = row
-                time.sleep(min(interval, max(0, seconds - row["elapsed_seconds"])))
+                # Include diagnostics and logging in the sampling deadline,
+                # rather than adding their elapsed time to every sleep.
+                time.sleep(max(0, min(interval, seconds - row["elapsed_seconds"]) -
+                               (time.monotonic() - current[1])))
+        if future is not None:
+            finish_cycle()
+        if interval == SOAK_INTERVAL:
+            review_regressions(out, seconds)
         if interval == 5:
             metrics = performance_metrics(summarize(readings))
             status["metrics"] = metrics
@@ -246,6 +339,10 @@ def observe(out, name, pid, expected, sha, seconds, interval):
         status["status"] = "inconclusive"
         status["failure_type"] = type(error).__name__
     finally:
+        if pool is not None:
+            # The only active worker runs bounded fixture tests; never kills
+            # the selected application. Its current command may finish first.
+            pool.shutdown(wait=True, cancel_futures=True)
         if path.exists():
             status["sha256"] = hashlib.sha256(read_private(path, LIMIT)).hexdigest()
         write_json(checkpoint, status)
@@ -354,6 +451,7 @@ def observation_evidence(out, name, seconds, interval, *, require_health=False):
         result["functional_health"] = health
         if interval == SOAK_INTERVAL:
             result["periodic_diagnostics"] = diagnostic_summary(rows)
+            result["periodic_regressions"] = review_regressions(out, seconds)
     return result
 
 
@@ -363,7 +461,7 @@ def review_completed(out, expected_sha):
     owned_directory(out / "logs")
     report = strict_json(read_private(out / "summary.json", 256 * 1024))
     sha = report["commit_sha"]
-    if (report["schema_version"] != 1 or report["kind"] != "unattended_acceptance" or
+    if (report["schema_version"] != 2 or report["kind"] != "unattended_acceptance" or
             sha != expected_sha or report["full_device_acceptance"] is not False or
             report["release_authorized"] is not False or
             timestamp(report["finished_at"]) < timestamp(report["started_at"])):
@@ -371,6 +469,8 @@ def review_completed(out, expected_sha):
     auto = verify(out / "automatic", sha)
     if auto != report["automatic"]:
         raise ValueError("automatic summary mismatch")
+    if fixture_timing(out) != report["fixture_ui_timing"]:
+        raise ValueError("fixture timing mismatch")
     results = {row["id"]: row["status"] for row in auto["step_statuses"]}
     if (any(results.get(id) != "pass" for id in CORE_STEPS) or
             any(state == "fail" for state in results.values())):
@@ -413,7 +513,8 @@ def review_completed(out, expected_sha):
     if report["status"] != verdict:
         raise ValueError("unattended verdict mismatch")
     return {"commit_sha": sha, "status": verdict, "observations": observations,
-            "automatic": auto, "manual_gates": report["manual_gates"],
+            "automatic": auto, "fixture_ui_timing": report["fixture_ui_timing"],
+            "manual_gates": report["manual_gates"],
             "full_device_acceptance": False, "release_authorized": False,
             "integrity_scope": "local_consistency_only_not_authenticity"}
 
@@ -449,7 +550,7 @@ def main():
     automatic.mkdir(mode=0o700)
     (automatic / "logs").mkdir(mode=0o700)
     seconds = TARGET if args.trial_seconds is None else args.trial_seconds
-    report = {"schema_version": 1, "kind": "unattended_acceptance", "commit_sha": sha,
+    report = {"schema_version": 2, "kind": "unattended_acceptance", "commit_sha": sha,
               "started_at": now(), "environment": environment(), "status": "inconclusive",
               "soak_requested_seconds": seconds, "full_device_acceptance": False,
               "release_authorized": False, "steps": {}, "observations": {},
@@ -465,6 +566,7 @@ def main():
                                 benchmark_seconds=300), automatic, sha, clean)
         auto = verify(automatic, sha)
         report["automatic"] = auto
+        report["fixture_ui_timing"] = fixture_timing(out)
         write_json(path, report)
         results = {row["id"]: row["status"] for row in auto["step_statuses"]}
         if any(results.get(id) != "pass" for id in CORE_STEPS):

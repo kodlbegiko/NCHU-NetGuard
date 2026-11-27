@@ -3,6 +3,61 @@ import XCTest
 import NetGuardTraffic
 
 final class TrafficModuleTests: XCTestCase {
+    func testSyntheticSevenDayAccountingStressWithFaults() {
+        // 604,800 one-second synthetic intervals. No socket, network probe,
+        // machine clock change or user data. Oracle uses the scripted input,
+        // not a second instance of the accumulator under test.
+        var engine = ScopedCounterAccumulator()
+        var received: UInt64 = 0, sent: UInt64 = 0
+        let rxStep: UInt64 = 65_536, txStep: UInt64 = 8_192
+        for dayIndex in 0..<7 {
+            let day = String(format: "2026-11-%02d", 20 + dayIndex)
+            var ledger = DailyTrafficLedger()
+            var expectedRX: UInt64 = 0, expectedTX: UInt64 = 0
+            var expectedUnknownRX: UInt64 = 0
+            for tick in 0..<86_400 {
+                if tick == 43_200 { received = 0; sent = 0 }
+                else { received += rxStep; sent += txStep }
+                let scope: NetworkScope = tick >= 3_000 ? .campusWifi : .dorm
+                let physical = ScopedInterfaceSample(
+                    counters: .init(interfaceID: "en0", received: received, sent: sent),
+                    scope: scope, identity: scope.rawValue,
+                    counterGeneration: tick < 43_200 ? "1" : "2")
+                let zero = ScopedInterfaceSample(
+                    counters: .init(interfaceID: "en1", received: 0, sent: 0),
+                    scope: .external, identity: "fixture", counterGeneration: "3")
+                var inputs = [zero]
+                if tick != 1_000 { inputs.append(physical) }
+                if tick == 2_000 { inputs.append(physical) }
+                let result = engine.ingest(inputs, day: day,
+                    uptime: Double(dayIndex * 86_400 + tick + 1))
+                let valid = ![0, 1_000, 1_001, 2_000, 2_001, 43_200].contains(tick)
+                if valid {
+                    guard let actual = result["en0"],
+                          actual.delta == .init(received: rxStep, sent: txStep, quality: .measured),
+                          actual.scope == (tick == 3_000 ? .unknown : scope)
+                    else { XCTFail("unexpected synthetic physical delta"); return }
+                    expectedRX += rxStep; expectedTX += txStep
+                    if tick == 3_000 { expectedUnknownRX += rxStep }
+                } else if result["en0"]?.delta.quality != .unknown {
+                    XCTFail("invalid interval accepted"); return
+                }
+                if tick > 0 && result["en1"] != .init(scope: .external,
+                        delta: .init(received: 0, sent: 0, quality: .measured)) {
+                    XCTFail("measured zero lost"); return
+                }
+                for value in result.values where value.delta.quality == .measured {
+                    if !ledger.add(scope: value.scope, received: value.delta.received, sent: value.delta.sent) {
+                        XCTFail("valid synthetic ledger rejected"); return
+                    }
+                }
+            }
+            XCTAssertEqual(ledger.aggregate, .init(received: expectedRX, sent: expectedTX))
+            XCTAssertEqual(ledger.totals(for: .unknown).received, expectedUnknownRX)
+            XCTAssertGreaterThan(ledger.aggregate.received, UInt64(1) << 32)
+        }
+    }
+
     func testStandaloneScopedAccounting() {
         var accumulator = ScopedCounterAccumulator()
         func sample(_ id: String, _ value: UInt64, _ scope: NetworkScope) -> ScopedInterfaceSample {

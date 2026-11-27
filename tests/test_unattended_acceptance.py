@@ -57,7 +57,7 @@ class UnattendedTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             out = Path(folder)
             (out / "logs").mkdir(mode=0o700)
-            runner.write_json(out / "summary.json", {"schema_version": 1, "kind": "unattended_acceptance",
+            runner.write_json(out / "summary.json", {"schema_version": 2, "kind": "unattended_acceptance",
                 "commit_sha": "a"*40, "full_device_acceptance": False, "release_authorized": False,
                 "started_at": runner.now(), "status": "observations_complete_review_required"})
             with self.assertRaises((ValueError, KeyError)):
@@ -95,3 +95,10 @@ class UnattendedTests(unittest.TestCase):
         new_day = dict(b, health=dict(b["health"], day="2026-11-29", received=0))
         runner.health_transition(a, new_day)
         self.assertEqual(runner.health_summary([a,new_day])["observed_day_transitions"], 1)
+
+    def test_missing_periodic_regression_never_passes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            out = Path(folder)
+            runner.write_json(out / "regressions.json", [])
+            with self.assertRaises(ValueError):
+                runner.review_regressions(out, 60)
