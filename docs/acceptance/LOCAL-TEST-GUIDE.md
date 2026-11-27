@@ -99,3 +99,7 @@ Swift 新增七天共 604,800 個合成計量週期的壓力測試：連續兩�
 每五分鐘嘗試 macOS 公開 `proc_pid_rusage(RUSAGE_INFO_V2)` 讀取選定程序磁碟實際讀寫累積位元組、physical footprint、package idle/interrupt wakeups（參考 Apple sys/resource.h），不取得 UUID、不用 sudo；不支援則 null，喚醒數不是能耗焦耳。保存區間 CPU 峰值（60 秒平均，不是瞬時峰值）。僅計數使用者 DiagnosticReports 中符合程式檔名前綴且在觀測開始後修改的常見崩潰/卡死報告，不讀內容或留名稱；不證明歸屬與完整性。背景心跳包含 provider/DNS busy 監控。資料庫檢查加上精確欄位及物件清單。
 
 QA 心跳另外保存自啟動累積的最大採樣年齡、成功儲存間隔、背景探測最大持續時間與安全停寫/休眠/日期保護 tick 次數，避免兩次外部觀測之間已恢復的異常被抹去。失敗檢查點包含去識別錯誤分類與觀測時間。完成或中止後請正常退出 QA App；普通啟動不會繼續 QA 心跳寫入。
+
+### 驗收引擎自我測試（schema v3）
+
+CI 與無人值守前置流程均強制對兩個實際建置執行檔執行 `qa_preflight.py`：不建立正式 delegate，使用私有暫存心跳、合成四次 tick，驗證已恢復的安全停寫仍被拒絕，且原心跳不得被第二程序覆寫。另用 loopback ephemeral socket 做 IPv4/IPv6 TCP/UDP 雙向各 8192 bytes 的逐位元組比對；不產生宿網流量，不是實體網卡或 App 流量計量證據。IPv6 不支援明確保留不確定。完整報告新增 evidence_gaps，列出未取得的資源/歷史/外部證據；不等於正式驗收通過。修正指紋第二次目錄遍歷錯誤與不安全目的地預覽、雙時鐘差異和報告 wall timestamp 交叉檢查。

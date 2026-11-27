@@ -97,6 +97,28 @@ class InstallBundleTests(unittest.TestCase):
         self.assertEqual((target / installer.REQUIRED[1]).read_bytes(), b"different")
         self.assertEqual(installer.bundle_fingerprint(self.source), before)
 
+    def test_fingerprint_refuses_second_walk_failure(self):
+        real_walk = os.walk
+        calls = 0
+        def broken(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                kwargs["onerror"](PermissionError("fixture"))
+            return real_walk(*args, **kwargs)
+        with patch.object(installer.os, "walk", side_effect=broken):
+            with self.assertRaises(PermissionError):
+                installer.bundle_fingerprint(self.source)
+
+    def test_review_refuses_unsafe_destination(self):
+        link = self.root / "alias"
+        link.symlink_to(self.destination)
+        with self.assertRaises(ValueError):
+            installer.review(self.source, link)
+        self.destination.chmod(0o777)
+        with self.assertRaises(ValueError):
+            installer.review(self.source, self.destination)
+
     def test_copy_mismatch_never_publishes(self):
         copy = shutil.copytree
         def altered(source, target, *args, **kwargs):

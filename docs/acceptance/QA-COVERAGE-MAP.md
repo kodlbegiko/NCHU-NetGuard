@@ -41,3 +41,6 @@ Full seven-day run requires core/host report, two build fixture checks,
 isolation and version identity evidence, three idle windows, heartbeat-bearing
 soak, periodic diagnostics and all 28 six-hour regression cycles. Unsupported
 observations remain unknown. This map does not replace ACCEPTANCE-MATRIX.md.
+
+## Gating self-test
+Both built binaries must emit the actual heartbeat producer fixture and reject a recovered safety hold and existing report replacement. Local IPv4/IPv6 TCP/UDP echo fixtures validate known payloads without campus traffic; IPv6 unavailability remains review-required. Final v3 report explicitly inventories evidence gaps, including normal-mode performance; full device acceptance remains false.

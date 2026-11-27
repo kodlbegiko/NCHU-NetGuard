@@ -70,7 +70,9 @@ def bundle_fingerprint(bundle):
     entries = {}
     total = 0
     flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
-    for root, dirs, files in os.walk(bundle, followlinks=False):
+    def fail(error):
+        raise error
+    for root, dirs, files in os.walk(bundle, followlinks=False, onerror=fail):
         for name in sorted(dirs + files):
             path = Path(root) / name
             key = path.relative_to(bundle).as_posix()
@@ -117,6 +119,14 @@ def review(source, destination_dir):
     source = Path(source).absolute()
     destination_dir = Path(destination_dir).absolute()
     candidate = bundle_fingerprint(source)
+    try:
+        info = destination_dir.lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or
+                info.st_mode & 0o022):
+            raise ValueError("unsafe review destination")
     target = destination_dir / BUNDLE
     result = {"candidate_sha256": candidate, "installed_sha256": None,
               "operation": "fresh_install_candidate", "mutation_authorized": False}

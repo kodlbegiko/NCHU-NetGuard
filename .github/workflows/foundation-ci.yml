@@ -57,6 +57,9 @@ jobs:
       - name: Isolated lifecycle exchange and rollback rehearsal
         run: python3 scripts/verify_lifecycle_candidate.py --app build/NCHUTraffic.app
 
+      - name: Exercise built QA heartbeat and local protocol fixtures
+        run: python3 scripts/acceptance/qa_preflight.py --app build/NCHUTraffic.app --app build/module/NCHUTraffic.app
+
       - name: Record exact candidate bundle content inventory
         env:
           EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}

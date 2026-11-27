@@ -95,3 +95,5 @@
 - R5-QA: use Darwin public rusage v2 for target disk bytes/physical footprint/wakeup proxies, bounded matching DiagnosticReports counts (no contents/names), sampled CPU interval peak, strict SQLite column inventory; provider and DNS busy evidence added. Unsupported counters remain null, diagnostic report attribution and actual energy consumption remain review-only. Exact CI pending.
 
 - R5-QA: cumulative main-loop/sample/save/probe maxima and safety-hold counts retain transient recovered faults across external sampling windows; negative fixtures and allowlisted failure codes/timestamps. QA app should be quit normally after run. Exact CI pending.
+
+- R5-QA: gating actual dual-built heartbeat producer/consumer fixture (recovered safety hold + no overwrite), local TCP/UDP IPv4/IPv6 exact payload echo, final explicit evidence-gap ledger, stronger dual-clock/report cross-checks, installer fingerprint walk-error and unsafe review guards. No physical accounting or actual release claim. Exact CI pending.

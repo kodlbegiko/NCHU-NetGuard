@@ -200,6 +200,33 @@ private final class QAHealthReporter {
         guard lstat(destination.path, &existing) != 0, errno == ENOENT else { return nil }
     }
 
+    // A dedicated pre-AppKit entrypoint exercises the real writer with
+    // synthetic values only, in the test runner's private temporary folder.
+    static func fixture() -> Int32 {
+        guard let reporter = requested() else { return 2 }
+        func emit(_ value: UInt64, blocked: Bool = false) {
+            reporter.sampled(measured: true)
+            reporter.saved()
+            let now = ProcessInfo.processInfo.systemUptime
+            reporter.lastPublish = nil
+            reporter.tick(start: now, sampleUptime: now, day: "2026-11-28",
+                          received: value, sent: 20, sleeping: false, clockHeld: false,
+                          persistenceBlocked: blocked, accountingOverflow: false, historyHealthy: true,
+                          routeBusy: false, appsBusy: false, pingBusy: false, providerBusy: false, dnsBusy: false)
+        }
+        emit(100)
+        guard let first = reporter.expected, !reporter.disabled else { return 1 }
+        emit(110)
+        guard let second = reporter.expected, second != first, !reporter.disabled else { return 1 }
+        // The consumer must reject a recovered safety hold, even when the
+        // current persistence flag is healthy. Never exercise live storage.
+        emit(120, blocked: true)
+        emit(130)
+        guard let fourth = reporter.expected, fourth != second, !reporter.disabled else { return 1 }
+        print("NETGUARD_HEARTBEAT_FIXTURE_OK")
+        return 0
+    }
+
     func sampled(measured: Bool) {
         sampleCount &+= 1
         if measured { measuredCount &+= 1 }
@@ -3485,6 +3512,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
 }
 
 // Local compatibility check exits before constructing AppKit or the production delegate.
+if CommandLine.arguments.dropFirst().contains("--netguard-qa-heartbeat-fixture") {
+    exit(QAHealthReporter.fixture())
+}
 if CommandLine.arguments.dropFirst().contains("--netguard-udp-check") {
     exit(HostProbeCheck.runFlowCheck(transport: .udp))
 }

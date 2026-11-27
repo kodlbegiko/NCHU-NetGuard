@@ -34,6 +34,11 @@ PERFORMANCE_WINDOWS = 3
 PERFORMANCE_SECONDS = 300
 SOAK_INTERVAL = 60
 REGRESSION_PERIOD = 6 * 3600
+ISOLATED_MARKERS = {
+    "isolated_install": "NETGUARD_ISOLATED_INSTALL_OK bundles=2",
+    "isolated_lifecycle": "NETGUARD_LIFECYCLE_REHEARSAL_OK exchange rollback conflict quarantine synthetic-data",
+    "qa_preflight": "NETGUARD_QA_PREFLIGHT_OK"
+}
 
 
 def exact_checkout(sha):
@@ -84,7 +89,7 @@ def validate_transition(previous, current, allowed_gap):
             raise ValueError("invalid observation")
     mono = current["elapsed_seconds"] - previous["elapsed_seconds"]
     wall = current["wall_elapsed_seconds"] - previous["wall_elapsed_seconds"]
-    if (mono <= 0 or wall < 0 or max(mono, wall) > allowed_gap or
+    if (mono <= 0 or wall < 0 or abs(mono-wall) > 5 or max(mono, wall) > allowed_gap or
             current["cpu_seconds_delta"] < previous["cpu_seconds_delta"]):
         raise ValueError("observation gap, clock or CPU counter discontinuity")
     return max(mono, wall)
@@ -461,7 +466,10 @@ def observation_evidence(out, name, seconds, interval, *, require_health=False):
     cpu = 100 * rows[-1]["cpu_seconds_delta"] / elapsed
     health = None
     if require_health:
+        initial_wall = rows[0]["sample_wall_seconds"]
         for row in rows:
+            if abs(row["sample_wall_seconds"] - initial_wall - row["wall_elapsed_seconds"]) > .001:
+                raise ValueError("wall sample mismatch")
             validate_health(row["health"], row["sample_wall_seconds"])
         for a,b in zip(rows, rows[1:]):
             health_transition(a, b)
@@ -490,13 +498,35 @@ def observation_evidence(out, name, seconds, interval, *, require_health=False):
     return result
 
 
+def evidence_gaps(observations, automatic):
+    gaps = ["independent_physical_traffic", "provider_accounting", "real_network_switching",
+            "real_sleep_wake", "normal_mode_idle_performance", "manual_accessibility_and_ux",
+            "independent_security_review", "authorized_live_recovery_and_lifecycle",
+            "actual_energy_and_leak_analysis"]
+    for row in automatic["step_statuses"]:
+        if row["status"] != "pass":
+            gaps.append("host_" + row["id"] + "_not_passed")
+    soak = observations["soak"]
+    diag = soak["periodic_diagnostics"]
+    if soak["functional_health"]["measured_cycles"] == 0:
+        gaps.append("no_measured_traffic_cycles")
+    if diag["history_validated_samples"] != diag["history_samples"]:
+        gaps.append("history_snapshot_incomplete")
+    if any(x != "observed_lower_bound_met_review_required" for x in diag["rollovers"]):
+        gaps.append("rollover_evidence_incomplete")
+    for key, trend in sorted(diag["resources"].items()):
+        if trend["samples"] != diag["resource_samples"]:
+            gaps.append("resource_" + key + "_incomplete")
+    return gaps
+
+
 def review_completed(out, expected_sha):
     """Verify completed evidence without using any live PID or network probe."""
     owned_directory(out)
     owned_directory(out / "logs")
     report = strict_json(read_private(out / "summary.json", 256 * 1024))
     sha = report["commit_sha"]
-    if (report["schema_version"] != 2 or report["kind"] != "unattended_acceptance" or
+    if (report["schema_version"] != 3 or report["kind"] != "unattended_acceptance" or
             sha != expected_sha or report["full_device_acceptance"] is not False or
             report["release_authorized"] is not False or
             timestamp(report["finished_at"]) < timestamp(report["started_at"])):
@@ -513,8 +543,7 @@ def review_completed(out, expected_sha):
     if report["manual_gates"] != [{"id": id, "status": "blocked" if id in BLOCKED_IDS else "review_required"}
                                    for id in MANUAL_IDS]:
         raise ValueError("manual gate mismatch")
-    markers = {"isolated_install": "NETGUARD_ISOLATED_INSTALL_OK bundles=2",
-               "isolated_lifecycle": "NETGUARD_LIFECYCLE_REHEARSAL_OK exchange rollback conflict quarantine synthetic-data"}
+    markers = ISOLATED_MARKERS
     if set(report["steps"]) != set(markers):
         raise ValueError("isolated step inventory mismatch")
     for name, marker in markers.items():
@@ -541,6 +570,9 @@ def review_completed(out, expected_sha):
                     for name, plan in expected.items()}
     if observations != report["observations"]:
         raise ValueError("observation summary mismatch")
+    gaps = evidence_gaps(observations, auto)
+    if gaps != report["evidence_gaps"]:
+        raise ValueError("evidence gaps mismatch")
     failed = any(observations[name]["status"] != "numeric_target_met_review_required"
                  for name in expected if name != "soak")
     verdict = ("numeric_target_not_met" if failed else
@@ -549,7 +581,7 @@ def review_completed(out, expected_sha):
         raise ValueError("unattended verdict mismatch")
     return {"commit_sha": sha, "status": verdict, "observations": observations,
             "automatic": auto, "fixture_ui_timing": report["fixture_ui_timing"],
-            "manual_gates": report["manual_gates"],
+            "manual_gates": report["manual_gates"], "evidence_gaps": gaps,
             "full_device_acceptance": False, "release_authorized": False,
             "integrity_scope": "local_consistency_only_not_authenticity"}
 
@@ -585,7 +617,7 @@ def main():
     automatic.mkdir(mode=0o700)
     (automatic / "logs").mkdir(mode=0o700)
     seconds = TARGET if args.trial_seconds is None else args.trial_seconds
-    report = {"schema_version": 2, "kind": "unattended_acceptance", "commit_sha": sha,
+    report = {"schema_version": 3, "kind": "unattended_acceptance", "commit_sha": sha,
               "started_at": now(), "environment": environment(), "status": "inconclusive",
               "soak_requested_seconds": seconds, "full_device_acceptance": False,
               "release_authorized": False, "steps": {}, "observations": {},
@@ -612,10 +644,11 @@ def main():
             ("isolated_install", [sys.executable, "scripts/verify_install_candidate.py",
                                   "--app", "build/NCHUTraffic.app", "--app", "build/module/NCHUTraffic.app"]),
             ("isolated_lifecycle", [sys.executable, "scripts/verify_lifecycle_candidate.py",
-                                    "--app", "build/NCHUTraffic.app"])):
+                                    "--app", "build/NCHUTraffic.app"]),
+            ("qa_preflight", [sys.executable, "scripts/acceptance/qa_preflight.py",
+                              "--app", "build/NCHUTraffic.app", "--app", "build/module/NCHUTraffic.app"])):
             exact_checkout(sha)
-            marker = ("NETGUARD_ISOLATED_INSTALL_OK bundles=2" if name == "isolated_install" else
-                      "NETGUARD_LIFECYCLE_REHEARSAL_OK exchange rollback conflict quarantine synthetic-data")
+            marker = ISOLATED_MARKERS[name]
             result = run_step(out, name, argv, 180, marker=marker)
             report["steps"][name] = result
             write_json(path, report)
@@ -666,6 +699,7 @@ def main():
         check_process(pid, expected, sha)
         if collect(sha) != inventory:
             raise ValueError("built candidate inventory changed")
+        report["evidence_gaps"] = evidence_gaps(report["observations"], report["automatic"])
         if any(report["observations"]["idle_" + str(i+1)]["status"] != "numeric_target_met_review_required"
                for i in range(PERFORMANCE_WINDOWS)):
             report["status"] = "numeric_target_not_met"
