@@ -6,7 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-spec = importlib.util.spec_from_file_location("core_coverage", Path(__file__).resolve().parents[1] / "scripts/core_coverage.py")
+SCRIPT = Path(__file__).resolve().parents[1] / "scripts/core_coverage.py"
+spec = importlib.util.spec_from_file_location("core_coverage", SCRIPT)
 coverage = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(coverage)
 
@@ -65,10 +66,11 @@ class CoverageTests(unittest.TestCase):
                 return {"filename": str(path), "summary": {"lines": {"count": count, "covered": covered}}}
             def run(rows, required=True):
                 output.write_text(json.dumps({"data": [{"files": rows}]}))
-                args = [sys.executable, coverage.__file__, "--root", str(root), "--report", str(output)]
+                args = [sys.executable, str(SCRIPT), "--root", str(root), "--report", str(output)]
                 if required:
                     args.append("--require-target")
                 result = subprocess.run(args, capture_output=True, text=True, timeout=10)
+                self.assertTrue(result.stdout.strip(), msg=f"coverage CLI exit={result.returncode}, stderr={result.stderr[-500:]}")
                 return result.returncode, json.loads(result.stdout.splitlines()[0])
             for rows in ([row(a, 100, 100)], [row(a, 50, 50), row(b, 50, 39)]):
                 code, summary = run(rows)
