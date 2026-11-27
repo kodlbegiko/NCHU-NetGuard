@@ -169,7 +169,11 @@ private final class QAHealthReporter {
     private var lastSave: TimeInterval?
     private var maxTickGap: TimeInterval = 0
     private var maxTickDuration: TimeInterval = 0
+    private var maxSampleAge: TimeInterval = 0
+    private var maxSaveGap: TimeInterval = 0
+    private var safetyHoldTicks: UInt64 = 0
     private var busySince: [String: TimeInterval] = [:]
+    private var maxBusy: [String: TimeInterval] = [:]
     private var disabled = false
 
     static func requested() -> QAHealthReporter? {
@@ -203,7 +207,9 @@ private final class QAHealthReporter {
 
     func saved() {
         saveCount &+= 1
-        lastSave = ProcessInfo.processInfo.systemUptime
+        let uptime = ProcessInfo.processInfo.systemUptime
+        if let lastSave { maxSaveGap = max(maxSaveGap, uptime - lastSave) }
+        lastSave = uptime
     }
 
     func tick(start: TimeInterval, sampleUptime: TimeInterval?, day: String,
@@ -217,6 +223,11 @@ private final class QAHealthReporter {
         if let lastTick { maxTickGap = max(maxTickGap, start - lastTick) }
         lastTick = start
         maxTickDuration = max(maxTickDuration, uptime - start)
+        if let sampleUptime { maxSampleAge = max(maxSampleAge, uptime - sampleUptime) }
+        if let lastSave { maxSaveGap = max(maxSaveGap, uptime - lastSave) }
+        if sleeping || clockHeld || persistenceBlocked || accountingOverflow || !historyHealthy {
+            safetyHoldTicks &+= 1
+        }
         var ages: [String: Double] = [:]
         for (name, busy) in [("route", routeBusy), ("apps", appsBusy), ("ping", pingBusy),
                              ("provider", providerBusy), ("dns", dnsBusy)] {
@@ -224,9 +235,13 @@ private final class QAHealthReporter {
                 if busySince[name] == nil { busySince[name] = uptime }
                 ages[name] = uptime - (busySince[name] ?? uptime)
             } else {
+                if let since = busySince[name] {
+                    maxBusy[name] = max(maxBusy[name] ?? 0, uptime - since)
+                }
                 busySince[name] = nil
                 ages[name] = 0
             }
+            maxBusy[name] = max(maxBusy[name] ?? 0, ages[name] ?? 0)
         }
         guard lastPublish.map({ uptime - $0 >= 5 }) ?? true else { return }
         var info = stat()
@@ -240,6 +255,8 @@ private final class QAHealthReporter {
             "tick_count": tickCount, "sample_cycles": sampleCount, "measured_cycles": measuredCount,
             "save_successes": saveCount, "max_tick_gap_seconds": maxTickGap,
             "max_tick_duration_seconds": maxTickDuration,
+            "max_sample_age_seconds": maxSampleAge, "max_save_gap_seconds": maxSaveGap,
+            "safety_hold_ticks": safetyHoldTicks, "max_busy_seconds": maxBusy,
             "sample_age_seconds": sampleUptime.map { NSNumber(value: uptime - $0) } as Any? ?? NSNull(),
             "save_age_seconds": lastSave.map { NSNumber(value: uptime - $0) } as Any? ?? NSNull(),
             "day": day, "received": received, "sent": sent,

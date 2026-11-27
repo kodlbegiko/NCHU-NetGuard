@@ -91,11 +91,11 @@ def validate_transition(previous, current, allowed_gap):
 
 
 HEALTH_MAX_AGE = 15
-HEALTH_COUNTS = ("tick_count", "sample_cycles", "measured_cycles", "save_successes")
+HEALTH_COUNTS = ("tick_count", "sample_cycles", "measured_cycles", "save_successes", "safety_hold_ticks")
 HEALTH_FLAGS = ("sleeping", "clock_held", "persistence_blocked", "accounting_overflow", "history_healthy")
 HEALTH_TIMES = ("wall_seconds", "max_tick_gap_seconds", "max_tick_duration_seconds",
-                "sample_age_seconds", "save_age_seconds")
-HEALTH_KEYS = {"schema_version", "day", "received", "sent", "busy_seconds",
+                "sample_age_seconds", "save_age_seconds", "max_sample_age_seconds", "max_save_gap_seconds")
+HEALTH_KEYS = {"schema_version", "day", "received", "sent", "busy_seconds", "max_busy_seconds",
                *HEALTH_COUNTS, *HEALTH_FLAGS, *HEALTH_TIMES}
 
 
@@ -117,16 +117,21 @@ def validate_health(health, wall):
     if (type(wall) not in (int, float) or not math.isfinite(wall) or
             not -2 <= wall - health["wall_seconds"] <= HEALTH_MAX_AGE or
             health["max_tick_gap_seconds"] > 15 or health["max_tick_duration_seconds"] > 15 or
-            health["sample_age_seconds"] > 5 or health["save_age_seconds"] > 30):
+            health["sample_age_seconds"] > 5 or health["save_age_seconds"] > 30 or
+            health["max_sample_age_seconds"] > 5 or health["max_save_gap_seconds"] > 30):
         raise ValueError("stalled heartbeat, sample or persistence")
     if (any(type(health[key]) is not bool for key in HEALTH_FLAGS) or
-            any(health[key] for key in HEALTH_FLAGS[:-1]) or not health["history_healthy"]):
+            any(health[key] for key in HEALTH_FLAGS[:-1]) or not health["history_healthy"] or
+            health["safety_hold_ticks"] != 0):
         raise ValueError("app safety hold or persistence failure")
-    busy = health["busy_seconds"]
-    if (not isinstance(busy, dict) or set(busy) != {"route", "apps", "ping", "provider", "dns"} or
-            any(type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 60
-                for v in busy.values())):
-        raise ValueError("background probe stalled")
+    for field in ("busy_seconds", "max_busy_seconds"):
+        busy = health[field]
+        if (not isinstance(busy, dict) or set(busy) != {"route", "apps", "ping", "provider", "dns"} or
+                any(type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 60
+                    for v in busy.values())):
+            raise ValueError("background probe stalled")
+    if any(health["busy_seconds"][k] > health["max_busy_seconds"][k] for k in health["busy_seconds"]):
+        raise ValueError("busy maximum inconsistent")
     day = dt.date.fromisoformat(health["day"])
     if day.isoformat() != health["day"]:
         raise ValueError("invalid heartbeat day")
@@ -146,7 +151,8 @@ def health_transition(previous, current):
     if (any(b[k] < a[k] for k in HEALTH_COUNTS) or b["day"] < a["day"] or
             b["wall_seconds"] < a["wall_seconds"] or
             b["max_tick_gap_seconds"] < a["max_tick_gap_seconds"] or
-            b["max_tick_duration_seconds"] < a["max_tick_duration_seconds"]):
+            any(b[k] < a[k] for k in ("max_tick_duration_seconds", "max_sample_age_seconds", "max_save_gap_seconds")) or
+            any(b["max_busy_seconds"][k] < a["max_busy_seconds"][k] for k in a["max_busy_seconds"])):
         raise ValueError("heartbeat rollback")
     if b["tick_count"] == a["tick_count"] and b != a:
         raise ValueError("heartbeat changed without new tick")
@@ -169,6 +175,9 @@ def health_summary(rows):
             "observed_day_transitions": rollovers,
             "max_tick_gap_seconds": last["max_tick_gap_seconds"],
             "max_tick_duration_seconds": last["max_tick_duration_seconds"],
+            "max_sample_age_seconds": last["max_sample_age_seconds"],
+            "max_save_gap_seconds": last["max_save_gap_seconds"],
+            "max_busy_seconds": last["max_busy_seconds"], "safety_hold_ticks": last["safety_hold_ticks"],
             "measurement_evidence": ("observed" if last["measured_cycles"] > first["measured_cycles"]
                                      else "no_measured_cycles_review_required")}
 
@@ -338,6 +347,22 @@ def observe(out, name, pid, expected, sha, seconds, interval):
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, ArithmeticError, KeyboardInterrupt, KeyError, TypeError, sqlite3.Error) as error:
         status["status"] = "inconclusive"
         status["failure_type"] = type(error).__name__
+        # Only fixed diagnostic strings are retained, never arbitrary errors
+        # from subprocess, file paths, SQLite or user data.
+        codes = {"stalled heartbeat, sample or persistence": "health_stalled",
+                 "app safety hold or persistence failure": "safety_hold",
+                 "background probe stalled": "probe_stalled",
+                 "heartbeat rollback": "heartbeat_rollback",
+                 "daily ledger regressed": "ledger_regressed",
+                 "main loop, sample or save progress stopped": "functional_progress_stalled",
+                 "observation gap, clock or CPU counter discontinuity": "observation_discontinuity",
+                 "candidate on disk changed": "bundle_changed",
+                 "selected process changed": "process_changed",
+                 "checkout changed": "revision_changed",
+                 "finalized history lost observed bytes": "history_lower_bound_mismatch",
+                 "periodic regression failed": "regression_failed"}
+        status["failure_code"] = codes.get(str(error), "unclassified_review_required")
+        status["failure_observed_at"] = now()
     finally:
         if pool is not None:
             # The only active worker runs bounded fixture tests; never kills

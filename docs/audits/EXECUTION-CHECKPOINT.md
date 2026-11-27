@@ -93,3 +93,5 @@
 - R5-QA: 604800 synthetic accounting ticks (seven logical days), reset/duplicate/drop/scope transition/zero/>4GiB oracle, fixture UI construction/layout timing, soak-only periodic Python and skip-build Swift regressions every 6h with bounded worker and verified schedule/log digests. Unattended report schema v2; no real panel latency or physical traffic accuracy claim. Exact CI pending.
 
 - R5-QA: use Darwin public rusage v2 for target disk bytes/physical footprint/wakeup proxies, bounded matching DiagnosticReports counts (no contents/names), sampled CPU interval peak, strict SQLite column inventory; provider and DNS busy evidence added. Unsupported counters remain null, diagnostic report attribution and actual energy consumption remain review-only. Exact CI pending.
+
+- R5-QA: cumulative main-loop/sample/save/probe maxima and safety-hold counts retain transient recovered faults across external sampling windows; negative fixtures and allowlisted failure codes/timestamps. QA app should be quit normally after run. Exact CI pending.

@@ -97,3 +97,5 @@ Swift 新增七天共 604,800 個合成計量週期的壓力測試：連續兩�
 ### 原生資源計數與崩潰索引
 
 每五分鐘嘗試 macOS 公開 `proc_pid_rusage(RUSAGE_INFO_V2)` 讀取選定程序磁碟實際讀寫累積位元組、physical footprint、package idle/interrupt wakeups（參考 Apple sys/resource.h），不取得 UUID、不用 sudo；不支援則 null，喚醒數不是能耗焦耳。保存區間 CPU 峰值（60 秒平均，不是瞬時峰值）。僅計數使用者 DiagnosticReports 中符合程式檔名前綴且在觀測開始後修改的常見崩潰/卡死報告，不讀內容或留名稱；不證明歸屬與完整性。背景心跳包含 provider/DNS busy 監控。資料庫檢查加上精確欄位及物件清單。
+
+QA 心跳另外保存自啟動累積的最大採樣年齡、成功儲存間隔、背景探測最大持續時間與安全停寫/休眠/日期保護 tick 次數，避免兩次外部觀測之間已恢復的異常被抹去。失敗檢查點包含去識別錯誤分類與觀測時間。完成或中止後請正常退出 QA App；普通啟動不會繼續 QA 心跳寫入。

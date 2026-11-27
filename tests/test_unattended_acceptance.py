@@ -67,16 +67,21 @@ class UnattendedTests(unittest.TestCase):
         return dict(schema_version=1, wall_seconds=100, tick_count=ticks,
                     sample_cycles=ticks, measured_cycles=ticks-1, save_successes=1,
                     max_tick_gap_seconds=1.1, max_tick_duration_seconds=.01,
-                    sample_age_seconds=.01, save_age_seconds=2, day=day, received=received, sent=20,
+                    max_sample_age_seconds=.02, max_save_gap_seconds=11,
+                    safety_hold_ticks=0, sample_age_seconds=.01, save_age_seconds=2,
+                    day=day, received=received, sent=20,
                     sleeping=False, clock_held=False, persistence_blocked=False,
                     accounting_overflow=False, history_healthy=True,
-                    busy_seconds={"route":0, "apps":0, "ping":0, "provider":0, "dns":0})
+                    busy_seconds={"route":0, "apps":0, "ping":0, "provider":0, "dns":0},
+                    max_busy_seconds={"route":0, "apps":0, "ping":0, "provider":0, "dns":0})
 
     def test_heartbeat_rejects_stale_or_stalled_function_and_safety_holds(self):
         h = self.healthy()
         self.assertEqual(runner.validate_health(h, 105), h)
         for bad in (dict(h, sample_age_seconds=6), dict(h, save_age_seconds=31),
                     dict(h, persistence_blocked=True), dict(h, max_tick_gap_seconds=16),
+                    dict(h, max_save_gap_seconds=31), dict(h, safety_hold_ticks=1),
+                    dict(h, max_busy_seconds={"route":61, "apps":0, "ping":0, "provider":0, "dns":0}),
                     dict(h, busy_seconds={"route":61, "apps":0, "ping":0, "provider":0, "dns":0}),
                     dict(h, measured_cycles=11), dict(h, day="2026-02-30")):
             with self.assertRaises(ValueError):
