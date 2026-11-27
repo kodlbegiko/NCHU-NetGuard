@@ -330,6 +330,10 @@ def observe(out, name, pid, expected, sha, seconds, interval):
                 if interval == 5:
                     readings.append(current)
                 write_json(checkpoint, status)
+                if interval == SOAK_INTERVAL and (previous is None or
+                        int(previous["elapsed_seconds"] // 3600) < int(row["elapsed_seconds"] // 3600)):
+                    print("Soak observation: %.2f / %.2f hours; %d samples" %
+                          (row["elapsed_seconds"] / 3600, seconds / 3600, status["samples"]), flush=True)
                 if row["elapsed_seconds"] >= seconds:
                     break
                 previous = row
@@ -498,7 +502,32 @@ def observation_evidence(out, name, seconds, interval, *, require_health=False):
     return result
 
 
-def evidence_gaps(observations, automatic):
+def preflight_evidence(out):
+    raw = read_private(out / "logs" / "qa_preflight.log", LIMIT)
+    lines = raw.splitlines()
+    if len(lines) != 2 or lines[1] != ISOLATED_MARKERS["qa_preflight"].encode():
+        raise ValueError("invalid preflight log shape")
+    data = strict_json(lines[0])
+    if (data.get("kind") != "isolated_preflight" or data.get("full_device_acceptance") is not False or
+            data.get("scope") != "loopback_payload_and_fixture_only_not_physical_accounting" or
+            set(data["heartbeat"]) != {"legacy", "module"} or
+            set(data["loopback"]) != {"ipv4_tcp", "ipv4_udp", "ipv6_tcp", "ipv6_udp"}):
+        raise ValueError("preflight inventory mismatch")
+    for result in data["heartbeat"].values():
+        if result != {"status": "producer_consumer_fixture_verified", "ticks": 4,
+                      "recovered_hold_rejected": True, "existing_report_preserved": True}:
+            raise ValueError("heartbeat preflight mismatch")
+    expected_digest = hashlib.sha256(bytes(range(256)) * 32).hexdigest()
+    for key, result in data["loopback"].items():
+        if result == {"status": "unsupported_review_required"} and key.startswith("ipv6_"):
+            continue
+        if result != {"status": "payload_roundtrip_verified", "bytes_each_direction": 8192,
+                      "sha256": expected_digest}:
+            raise ValueError("loopback preflight mismatch")
+    return data
+
+
+def evidence_gaps(observations, automatic, preflight):
     gaps = ["independent_physical_traffic", "provider_accounting", "real_network_switching",
             "real_sleep_wake", "normal_mode_idle_performance", "manual_accessibility_and_ux",
             "independent_security_review", "authorized_live_recovery_and_lifecycle",
@@ -506,6 +535,9 @@ def evidence_gaps(observations, automatic):
     for row in automatic["step_statuses"]:
         if row["status"] != "pass":
             gaps.append("host_" + row["id"] + "_not_passed")
+    for key, value in sorted(preflight["loopback"].items()):
+        if value["status"] != "payload_roundtrip_verified":
+            gaps.append("loopback_" + key + "_unavailable")
     soak = observations["soak"]
     diag = soak["periodic_diagnostics"]
     if soak["functional_health"]["measured_cycles"] == 0:
@@ -570,7 +602,10 @@ def review_completed(out, expected_sha):
                     for name, plan in expected.items()}
     if observations != report["observations"]:
         raise ValueError("observation summary mismatch")
-    gaps = evidence_gaps(observations, auto)
+    preflight = preflight_evidence(out)
+    if preflight != report["qa_preflight"]:
+        raise ValueError("preflight summary mismatch")
+    gaps = evidence_gaps(observations, auto, preflight)
     if gaps != report["evidence_gaps"]:
         raise ValueError("evidence gaps mismatch")
     failed = any(observations[name]["status"] != "numeric_target_met_review_required"
@@ -580,7 +615,7 @@ def review_completed(out, expected_sha):
     if report["status"] != verdict:
         raise ValueError("unattended verdict mismatch")
     return {"commit_sha": sha, "status": verdict, "observations": observations,
-            "automatic": auto, "fixture_ui_timing": report["fixture_ui_timing"],
+            "automatic": auto, "fixture_ui_timing": report["fixture_ui_timing"], "qa_preflight": preflight,
             "manual_gates": report["manual_gates"], "evidence_gaps": gaps,
             "full_device_acceptance": False, "release_authorized": False,
             "integrity_scope": "local_consistency_only_not_authenticity"}
@@ -654,6 +689,7 @@ def main():
             write_json(path, report)
             if result["status"] != "pass":
                 raise ValueError("isolated test did not pass")
+        report["qa_preflight"] = preflight_evidence(out)
         inventory = collect(sha)
         report["candidate_inventory"] = inventory
         write_json(path, report)
@@ -699,7 +735,7 @@ def main():
         check_process(pid, expected, sha)
         if collect(sha) != inventory:
             raise ValueError("built candidate inventory changed")
-        report["evidence_gaps"] = evidence_gaps(report["observations"], report["automatic"])
+        report["evidence_gaps"] = evidence_gaps(report["observations"], report["automatic"], report["qa_preflight"])
         if any(report["observations"]["idle_" + str(i+1)]["status"] != "numeric_target_met_review_required"
                for i in range(PERFORMANCE_WINDOWS)):
             report["status"] = "numeric_target_not_met"
@@ -707,20 +743,23 @@ def main():
             report["status"] = "short_trial_only"
         else:
             report["status"] = "observations_complete_review_required"
-    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, ArithmeticError, KeyboardInterrupt, EOFError):
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, ArithmeticError,
+            KeyboardInterrupt, EOFError, KeyError, TypeError, sqlite3.Error) as error:
         report["status"] = "inconclusive"
+        report["failure_type"] = type(error).__name__
+        report["failure_observed_at"] = now()
     finally:
         report["finished_at"] = now()
         write_json(path, report)
         print("Private acceptance summary: " + str(path.relative_to(ROOT)), flush=True)
-        print("Result: " + report["status"] + "; full device acceptance not granted", flush=True)
-    if report["status"] == "observations_complete_review_required":
+    if report["status"] in ("observations_complete_review_required", "short_trial_only", "numeric_target_not_met"):
         try:
             review_completed(out, sha)
         except (OSError, ValueError, TypeError, KeyError, IndexError, OverflowError):
             report["status"] = "inconclusive"
             write_json(path, report)
             print("Final evidence review failed; no complete observation claim.", flush=True)
+    print("Result: " + report["status"] + "; full device acceptance not granted", flush=True)
     return 0 if report["status"] == "observations_complete_review_required" else 2
 
 

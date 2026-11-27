@@ -97,3 +97,5 @@
 - R5-QA: cumulative main-loop/sample/save/probe maxima and safety-hold counts retain transient recovered faults across external sampling windows; negative fixtures and allowlisted failure codes/timestamps. QA app should be quit normally after run. Exact CI pending.
 
 - R5-QA: gating actual dual-built heartbeat producer/consumer fixture (recovered safety hold + no overwrite), local TCP/UDP IPv4/IPv6 exact payload echo, final explicit evidence-gap ledger, stronger dual-clock/report cross-checks, installer fingerprint walk-error and unsafe review guards. No physical accounting or actual release claim. Exact CI pending.
+
+- R5-QA: whole-report synthetic seven-day verifier regression exercises 10081 observations, 28 cycles and three idle windows with adversarial missing cycle, log tamper, SHA and evidence-gap checks. Strict preflight JSON validation and explicit IPv6 gaps, periodic progress and final verdict only after self-check. Synthetic fixture is not real evidence. Exact CI pending.
