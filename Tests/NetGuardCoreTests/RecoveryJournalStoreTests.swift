@@ -48,6 +48,7 @@ final class RecoveryJournalStoreTests: XCTestCase {
         try withStore { store in
             let payload = Data(repeating: 0x20, count: 1_048_577)
             try payload.write(to: store.url)
+            XCTAssertEqual(chmod(store.url.path, 0o600), 0)
             XCTAssertThrowsError(try store.load()) {
                 XCTAssertEqual($0 as? JournalValidationError, .oversized)
             }
@@ -127,6 +128,28 @@ final class RecoveryJournalStoreTests: XCTestCase {
             entry.phase = .applied
             XCTAssertThrowsError(try store.save(entry))
             XCTAssertNil(try store.load())
+        }
+    }
+    func testUnsafeJournalPermissionsAndParentAreRejected() throws {
+        try withStore { store in
+            let entry = RecoveryJournalEntry(plan: plan())
+            try store.save(entry)
+            let original = try Data(contentsOf: store.url)
+            XCTAssertEqual(chmod(store.url.path, 0o644), 0)
+            XCTAssertThrowsError(try store.load()) {
+                XCTAssertEqual($0 as? JournalValidationError, .invalidPlan)
+            }
+            XCTAssertThrowsError(try store.save(entry))
+            XCTAssertEqual(try Data(contentsOf: store.url), original)
+            XCTAssertEqual(chmod(store.url.path, 0o600), 0)
+            XCTAssertEqual(chmod(store.url.path + ".lock", 0o666), 0)
+            XCTAssertThrowsError(try store.load())
+            XCTAssertEqual(chmod(store.url.path + ".lock", 0o600), 0)
+            let parent = store.url.deletingLastPathComponent()
+            XCTAssertEqual(chmod(parent.path, 0o777), 0)
+            XCTAssertThrowsError(try store.load())
+            XCTAssertEqual(chmod(parent.path, 0o700), 0)
+            XCTAssertEqual(try store.load(), entry)
         }
     }
     func testSimulationRefusesConflictingWrite() {

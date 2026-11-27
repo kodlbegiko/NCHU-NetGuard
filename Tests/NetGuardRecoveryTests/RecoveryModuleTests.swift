@@ -68,6 +68,25 @@ final class RecoveryModuleTests: XCTestCase {
         }
     }
 
+    func testPreparedJournalCannotAuthorizeNewExecutionByReplay() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = RecoveryJournalStore(url: directory.appendingPathComponent("journal.json"))
+        let before = OwnedNetworkConfiguration(revision: 1, settings: ["fixture":"old"])
+        let plan = RecoveryPlan(transactionID: UUID(), expected: before, desired: ["fixture":"new"])
+        let initial = RecoverySimulator.execute(plan: plan, observed: before, authorized: true,
+                                               store: store, faults: [.preparedUnknown])
+        XCTAssertEqual(initial.outcome, .rejected)
+        XCTAssertEqual(initial.simulatedWrites, 0)
+        let prepared = try XCTUnwrap(store.load())
+        XCTAssertEqual(prepared.phase, .prepared)
+        let replay = RecoverySimulator.execute(plan: plan, observed: before, authorized: true, store: store)
+        XCTAssertEqual(replay.outcome, .rejected)
+        XCTAssertEqual(replay.simulatedWrites, 0)
+        XCTAssertEqual(try store.load(), prepared)
+    }
+
     func testRestartNeverInfersUnknownApplyOwnership() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)

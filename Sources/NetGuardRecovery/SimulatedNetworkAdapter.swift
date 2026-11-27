@@ -87,7 +87,11 @@ public enum RecoverySimulator {
         }
         if let before, faults.contains(before) { return .notWritten }
         do {
-            try store.save(entry)
+            if entry.phase == .prepared {
+                try store.prepareNew(entry)
+            } else {
+                try store.save(entry)
+            }
             if let ambiguous, faults.contains(ambiguous) { return .unknown }
             return .persisted
         } catch JournalValidationError.writeOutcomeUnknown {

@@ -61,6 +61,12 @@ public struct RecoveryJournalStore: Sendable {
         let parent = open(directory.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         guard parent >= 0 else { throw JournalValidationError.ioFailure }
         defer { _ = close(parent) }
+        var directoryInfo = stat()
+        guard fstat(parent, &directoryInfo) == 0,
+              directoryInfo.st_uid == geteuid(),
+              directoryInfo.st_mode & 0o022 == 0 else {
+            throw JournalValidationError.invalidPlan
+        }
         let lock = openat(parent, name + ".lock", O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK, mode_t(0o600))
         guard lock >= 0 else { throw JournalValidationError.ioFailure }
         defer { _ = close(lock) }
@@ -74,7 +80,8 @@ public struct RecoveryJournalStore: Sendable {
         var info = stat()
         guard fstat(fd, &info) == 0,
               (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
-              info.st_nlink == 1, info.st_uid == geteuid() else {
+              info.st_nlink == 1, info.st_uid == geteuid(),
+              info.st_mode & 0o077 == 0 else {
             throw JournalValidationError.invalidPlan
         }
     }
@@ -105,6 +112,17 @@ public struct RecoveryJournalStore: Sendable {
     }
 
     public func save(_ entry: RecoveryJournalEntry) throws {
+        try write(entry, requireAbsent: false)
+    }
+
+    // A new simulated transaction must never reuse a prior prepared record.
+    // The absence check shares the same lock as journal publication.
+    func prepareNew(_ entry: RecoveryJournalEntry) throws {
+        guard entry.phase == .prepared else { throw JournalValidationError.invalidPhase }
+        try write(entry, requireAbsent: true)
+    }
+
+    private func write(_ entry: RecoveryJournalEntry, requireAbsent: Bool) throws {
         try entry.validate()
         // Legacy journals without the additive restoration evidence remain
         // readable. New rolledBack records must prove the exact observation.
@@ -113,7 +131,7 @@ public struct RecoveryJournalStore: Sendable {
         }
         try withLock { parent, name in
             if let existing = try readLocked(parent: parent, name: name) {
-                guard existing.plan == entry.plan else { throw JournalValidationError.conflict }
+                guard !requireAbsent, existing.plan == entry.plan else { throw JournalValidationError.conflict }
                 if existing == entry { return }
                 let allowed: Bool
                 switch (existing.phase, entry.phase) {
