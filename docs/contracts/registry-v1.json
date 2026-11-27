@@ -1,0 +1,191 @@
+{
+  "schema_version": 1,
+  "status": "freeze-candidate-not-approved",
+  "compatibility": {
+    "date_encoding": "seconds since 2001-01-01 UTC",
+    "integer_bytes": "UInt64",
+    "unknown_additive_fields": "ignored",
+    "breaking_change": "new schema version, ADR, migration and golden fixtures",
+    "deprecation": "document migration before removal",
+    "decoder": "decodeValidated",
+    "max_document_bytes": 1048576
+  },
+  "contracts": {
+    "TrafficSnapshot": {
+      "wire_version": 1,
+      "owner": 0,
+      "module": "NetGuardTraffic",
+      "source": "Sources/NetGuardTraffic/TrafficAccounting.swift",
+      "validator": "Sources/NetGuardCore/ContractValidation.swift",
+      "golden_test": "testTrafficSnapshotV1",
+      "required_fields": [
+        "schemaVersion",
+        "timestamp",
+        "interfaces",
+        "quality"
+      ],
+      "optional_fields": [],
+      "interface_fields": [
+        "interfaceID",
+        "received",
+        "sent"
+      ],
+      "semantics": "Raw interface observations; measured requires nonempty unique interfaces; never provider billing.",
+      "consumer_review": "pending full integration audit",
+      "approval": "pending"
+    },
+    "NetworkSnapshot": {
+      "wire_version": 1,
+      "owner": 0,
+      "module": "NetGuardCore",
+      "source": "Sources/NetGuardCore/Contracts.swift",
+      "validator": "Sources/NetGuardCore/ContractValidation.swift",
+      "golden_test": "testNetworkSnapshotV1",
+      "required_fields": [
+        "schemaVersion",
+        "observedAt",
+        "interfaces"
+      ],
+      "optional_fields": [],
+      "interface_fields": [
+        "serviceID",
+        "name",
+        "scope",
+        "quality"
+      ],
+      "semantics": "Estimated interface identity and scope; no authoritative route or connectivity guarantee.",
+      "consumer_review": "pending full integration audit",
+      "approval": "pending"
+    },
+    "QuotaProfile": {
+      "wire_version": 1,
+      "owner": 0,
+      "module": "NetGuardCore",
+      "source": "Sources/NetGuardCore/Contracts.swift",
+      "validator": "Sources/NetGuardCore/ContractValidation.swift",
+      "golden_test": "testQuotaProfileV1",
+      "required_fields": [
+        "schemaVersion",
+        "providerID",
+        "scope",
+        "receiveLimit",
+        "sendLimit",
+        "totalLimit",
+        "resetTimeZoneID",
+        "policySource",
+        "policyVerified"
+      ],
+      "optional_fields": [],
+      "interface_fields": [],
+      "semantics": "Declared positive byte limits, valid time zone; policyVerified requires provenance independent of decode.",
+      "consumer_review": "pending full integration audit",
+      "approval": "pending"
+    },
+    "PolicyDecision": {
+      "wire_version": 1,
+      "owner": 0,
+      "module": "NetGuardCore",
+      "source": "Sources/NetGuardCore/Contracts.swift",
+      "validator": "Sources/NetGuardCore/ContractValidation.swift",
+      "golden_test": "testPolicyDecisionV1",
+      "required_fields": [
+        "schemaVersion",
+        "decisionID",
+        "kind",
+        "reason",
+        "requiresAuthorization",
+        "expiresAt"
+      ],
+      "optional_fields": [],
+      "interface_fields": [],
+      "semantics": "Inert recommendation; caller checks expiry; never grants authorization.",
+      "consumer_review": "pending full integration audit",
+      "approval": "pending"
+    },
+    "NetworkAction": {
+      "wire_version": 1,
+      "owner": 0,
+      "module": "NetGuardCore",
+      "source": "Sources/NetGuardCore/Contracts.swift",
+      "validator": "Sources/NetGuardCore/ContractValidation.swift",
+      "golden_test": "testNetworkActionV1",
+      "required_fields": [
+        "schemaVersion",
+        "transactionID",
+        "operation",
+        "targetServiceID",
+        "preconditionDigest",
+        "timeoutSeconds"
+      ],
+      "optional_fields": [],
+      "interface_fields": [],
+      "semantics": "Inert plan, bounded timeout, allowlisted enum; no host execution contract.",
+      "consumer_review": "pending full integration audit",
+      "approval": "pending"
+    },
+    "RecoverySnapshot": {
+      "wire_version": 1,
+      "owner": 0,
+      "module": "NetGuardCore",
+      "source": "Sources/NetGuardCore/Contracts.swift",
+      "validator": "Sources/NetGuardCore/ContractValidation.swift",
+      "golden_test": "testRecoverySnapshotV1",
+      "required_fields": [
+        "schemaVersion",
+        "transactionID",
+        "observedAt",
+        "ownedConfiguration",
+        "integrityDigest"
+      ],
+      "optional_fields": [],
+      "interface_fields": [],
+      "semantics": "Descriptive owned settings; no digest verification or durable storage guarantee.",
+      "consumer_review": "pending full integration audit",
+      "approval": "pending"
+    },
+    "ProtectedWorkflow": {
+      "wire_version": 1,
+      "owner": 0,
+      "module": "NetGuardCore",
+      "source": "Sources/NetGuardCore/Contracts.swift",
+      "validator": "Sources/NetGuardCore/ContractValidation.swift",
+      "golden_test": "testProtectedWorkflowV1",
+      "required_fields": [
+        "schemaVersion",
+        "workflowID",
+        "processIdentity",
+        "optedIn",
+        "expiresAt"
+      ],
+      "optional_fields": [],
+      "interface_fields": [],
+      "semantics": "Opt-in preference with expiry; no authenticated process identity or reservation.",
+      "consumer_review": "pending full integration audit",
+      "approval": "pending"
+    },
+    "EventRecord": {
+      "wire_version": 1,
+      "owner": 0,
+      "module": "NetGuardCore",
+      "source": "Sources/NetGuardCore/Contracts.swift",
+      "validator": "Sources/NetGuardCore/ContractValidation.swift",
+      "golden_test": "testEventRecordV1",
+      "required_fields": [
+        "schemaVersion",
+        "eventID",
+        "timestamp",
+        "category",
+        "redactedReason",
+        "outcome"
+      ],
+      "optional_fields": [
+        "correlationID",
+        "errorCode"
+      ],
+      "interface_fields": [],
+      "semantics": "Redacted local event metadata; producer owns privacy.",
+      "consumer_review": "pending full integration audit",
+      "approval": "pending"
+    }
+  }
+}

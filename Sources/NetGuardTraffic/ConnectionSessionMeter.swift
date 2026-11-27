@@ -18,6 +18,7 @@ public struct ConnectionSessionMeter: Sendable {
     private var label: String?
     private var interface: String?
     private var identity: String?
+    private var counterGeneration: String?
     private var scope: NetworkScope?
     private var limit: UInt64 = 0
     private var received: UInt64 = 0
@@ -30,11 +31,12 @@ public struct ConnectionSessionMeter: Sendable {
         let name = label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, name.utf8.count <= 80,
               !name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
-              (1...10_000).contains(gigabytes), !sample.identity.isEmpty,
-              !sample.counters.interfaceID.isEmpty else { return false }
+              (1...10_000).contains(gigabytes), sample.hasScopeIdentity,
+              sample.hasValidCounterIdentity else { return false }
         self.label = name
         interface = sample.counters.interfaceID
         identity = sample.identity
+        counterGeneration = sample.counterGeneration
         scope = sample.scope
         limit = gigabytes * 1_000_000_000
         received = 0; sent = 0; intervals = 0; stopped = false
@@ -48,7 +50,9 @@ public struct ConnectionSessionMeter: Sendable {
         guard !stopped, let interface, let identity else { return }
         let matching = samples.filter { $0.counters.interfaceID == interface }
         guard connectionKnown, currentInterface == interface, matching.count == 1,
+              matching[0].hasScopeIdentity, matching[0].hasValidCounterIdentity,
               matching[0].identity == identity, matching[0].scope == scope,
+              matching[0].counterGeneration == counterGeneration,
               let value = deltas[interface], value.delta.quality == .measured,
               value.scope == matching[0].scope else { stop(); return }
         // The first delta may have started before the user pressed Start.

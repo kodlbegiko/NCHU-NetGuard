@@ -4,6 +4,61 @@ import NetGuardTraffic
 #endif
 import CoreFoundation
 import SQLite3
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
+
+/// Canonicalize the caller-owned parent (macOS /var and /tmp may be
+/// system symlinks). Never resolve the final database filename: SQLite
+/// NOFOLLOW must still reject a symlink at the actual data boundary.
+enum HistorySQLitePath {
+    static func resolve(_ url: URL) throws -> String {
+        guard url.isFileURL, !url.lastPathComponent.isEmpty,
+              url.lastPathComponent != ".", url.lastPathComponent != "..",
+              let parent = realpath(url.deletingLastPathComponent().path, nil)
+        else { throw HistoryStoreError.database("invalid database path") }
+        defer { free(parent) }
+        let path = String(cString: parent) + "/" + url.lastPathComponent
+        // SQLite NOFOLLOW is retained at open. Reject pre-existing aliases,
+        // nonregular files and foreign owners for the database and sidecars.
+        // This is a preflight, not a guarantee against a non-cooperating
+        // process racing a rename in the caller-owned directory.
+        for suffix in ["", "-journal", "-wal", "-shm"] {
+            var metadata = stat()
+            if lstat(path + suffix, &metadata) == 0 {
+                guard (metadata.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+                      metadata.st_nlink == 1, metadata.st_uid == geteuid()
+                else { throw HistoryStoreError.database("unsafe database file") }
+            } else if errno != ENOENT {
+                throw HistoryStoreError.database("database file preflight")
+            }
+        }
+        return path
+    }
+}
+
+/// Decode bounded identity text by its actual SQLite byte length, not a
+/// NUL-terminated prefix. SQLite TEXT can contain embedded NUL or invalid
+/// UTF-8; neither is a valid date or scope identifier.
+enum HistorySQLiteText {
+    static func read(_ statement: OpaquePointer, _ column: Int32,
+                     length: ClosedRange<Int>) throws -> String {
+        guard sqlite3_column_type(statement, column) == SQLITE_TEXT,
+              let raw = sqlite3_column_text(statement, column) else {
+            throw HistoryStoreError.invalidRecord
+        }
+        let count = Int(sqlite3_column_bytes(statement, column))
+        guard length.contains(count) else { throw HistoryStoreError.invalidRecord }
+        let bytes = UnsafeBufferPointer(start: raw, count: count)
+        guard bytes.allSatisfy({ (32...126).contains($0) }),
+              let value = String(bytes: bytes, encoding: .utf8) else {
+            throw HistoryStoreError.invalidRecord
+        }
+        return value
+    }
+}
 
 public enum HistoryStoreError: Error, Equatable {
     case invalidRecord, invalidLegacy, unsupportedSchema, database(String)
@@ -14,6 +69,14 @@ public struct HistoryDay: Codable, Equatable, Sendable {
     public let total: UInt64
     public let download: UInt64?
     public let upload: UInt64?
+
+    private enum CodingKeys: String, CodingKey { case day, total, download, upload }
+    public init(from decoder: Decoder) throws {
+        let v = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(day: v.decode(String.self, forKey: .day), total: v.decode(UInt64.self, forKey: .total),
+                      download: v.decodeIfPresent(UInt64.self, forKey: .download),
+                      upload: v.decodeIfPresent(UInt64.self, forKey: .upload))
+    }
 
     public init(day: String, total: UInt64, download: UInt64?, upload: UInt64?) throws {
         let f = DateFormatter()
@@ -39,7 +102,9 @@ public struct HistoryDay: Codable, Equatable, Sendable {
 /// Legacy total-only records retain an unknown directional breakdown.
 public enum LegacyHistoryMigration {
     public static func decode(_ data: Data) throws -> [HistoryDay] {
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard data.count <= 4 * 1024 * 1024,
+              let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object.count <= 36_600
         else { throw HistoryStoreError.invalidLegacy }
         func bytes(_ value: Any?) throws -> UInt64 {
             guard let n = value as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(),
@@ -66,6 +131,22 @@ public enum LegacyHistoryMigration {
 public struct ScopedHistoryDay: Equatable, Sendable {
     public let aggregate: HistoryDay
     public let scopes: [NetworkScope: HistoryDay]
+    /// A zero row requires affirmative scope evidence. All nonzero observed
+    /// bytes are retained, including unattributed bytes; missing scopes stay absent.
+    public static func project(day: String, ledger: DailyTrafficLedger,
+                               coverage: DailyScopeCoverage) throws -> Self {
+        let all = ledger.aggregate
+        let aggregate = try HistoryDay(day: day, total: all.received + all.sent,
+                                       download: all.received, upload: all.sent)
+        var rows: [NetworkScope: HistoryDay] = [:]
+        for scope in NetworkScope.allCases {
+            let bytes = ledger.totals(for: scope)
+            let total = bytes.received + bytes.sent
+            if total == 0 && !coverage.observed(scope) { continue }
+            rows[scope] = try HistoryDay(day: day, total: total, download: bytes.received, upload: bytes.sent)
+        }
+        return try Self(aggregate: aggregate, scopes: rows)
+    }
     public init(aggregate: HistoryDay, scopes: [NetworkScope: HistoryDay]) throws {
         _ = try HistoryDay(day: aggregate.day, total: aggregate.total,
                            download: aggregate.download, upload: aggregate.upload)
@@ -73,10 +154,10 @@ public struct ScopedHistoryDay: Equatable, Sendable {
         else { throw HistoryStoreError.invalidRecord }
         var download: UInt64 = 0
         var upload: UInt64 = 0
-        for record in scopes.values {
+        for (scope, record) in scopes {
             _ = try HistoryDay(day: record.day, total: record.total,
                                download: record.download, upload: record.upload)
-            guard record.day == aggregate.day, record.total > 0,
+            guard record.day == aggregate.day, scope != .unknown || record.total > 0,
                   let dl = record.download, let ul = record.upload else { throw HistoryStoreError.invalidRecord }
             let (d, od) = download.addingReportingOverflow(dl)
             let (u, ou) = upload.addingReportingOverflow(ul)
@@ -94,31 +175,50 @@ public struct ScopedHistoryDay: Equatable, Sendable {
 public final class HistoryStore {
     private var db: OpaquePointer?
     public init(url: URL) throws {
-        let rc = sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil)
+        guard url.isFileURL else { throw HistoryStoreError.database("invalid history URL") }
+        let rc = sqlite3_open_v2(try HistorySQLitePath.resolve(url), &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_NOFOLLOW, nil)
         guard rc == SQLITE_OK else {
             if let db { sqlite3_close(db) }
             db = nil
             throw HistoryStoreError.database("open")
         }
         do {
-            sqlite3_busy_timeout(db, 1000)
-            try execute("PRAGMA journal_mode=DELETE")
-            try execute("PRAGMA synchronous=FULL")
-            let version = try scalar("PRAGMA user_version")
-            guard (0...2).contains(version) else { throw HistoryStoreError.unsupportedSchema }
-            if version == 0 {
-                try transaction {
-                    try execute("CREATE TABLE history_days(day TEXT PRIMARY KEY, total INTEGER NOT NULL CHECK(total >= 0), download INTEGER, upload INTEGER, CHECK((download IS NULL AND upload IS NULL) OR (download IS NOT NULL AND upload IS NOT NULL AND download >= 0 AND upload >= 0 AND download + upload = total)))")
-                    try execute("PRAGMA user_version=1")
-                }
-            }
-            if version < 2 {
-                try transaction {
-                    try execute("CREATE TABLE history_scopes(day TEXT NOT NULL REFERENCES history_days(day), scope TEXT NOT NULL CHECK(scope IN ('dorm','campusWifi','external','unknown')), download INTEGER NOT NULL CHECK(download >= 0), upload INTEGER NOT NULL CHECK(upload >= 0), CHECK(download + upload > 0), PRIMARY KEY(day,scope))")
-                    try execute("PRAGMA user_version=2")
-                }
-            }
+            sqlite3_busy_timeout(db, 3000)
+            try execute("PRAGMA trusted_schema=OFF")
             try execute("PRAGMA foreign_keys=ON")
+            try execute("PRAGMA synchronous=FULL")
+            // Read schema version only after acquiring the write transaction.
+            // A second initializer must observe the first one's committed migration.
+            try transaction {
+                let version = try scalar("PRAGMA user_version")
+                guard (0...3).contains(version) else { throw HistoryStoreError.unsupportedSchema }
+                try validateTableInventory(version: version)
+                if version == 0 {
+                    try execute("CREATE TABLE history_days(day TEXT PRIMARY KEY, total INTEGER NOT NULL CHECK(total >= 0), download INTEGER, upload INTEGER, CHECK((download IS NULL AND upload IS NULL) OR (download IS NOT NULL AND upload IS NOT NULL AND download >= 0 AND upload >= 0 AND download + upload = total)))")
+                }
+                if version < 3 {
+                    // v3 permits an affirmative measured-zero row for known scopes.
+                    // Rebuild v2 atomically; absence stays absent and no zero is inferred.
+                    if version == 2 {
+                        // A zero in the legacy schema is not affirmative
+                        // evidence. Reject malformed rows before granting v3 semantics.
+                        guard try scalar("SELECT count(*) FROM history_scopes WHERE typeof(day)<>'text' OR typeof(scope)<>'text' OR scope NOT IN ('dorm','campusWifi','external','unknown') OR typeof(download)<>'integer' OR typeof(upload)<>'integer' OR download<0 OR upload<0 OR (download=0 AND upload=0)") == 0,
+                              try scalar("SELECT count(*) FROM (SELECT day,sum(download) AS dl,sum(upload) AS ul FROM history_scopes GROUP BY day) AS s LEFT JOIN history_days AS h ON h.day=s.day WHERE h.day IS NULL OR typeof(h.download)<>'integer' OR typeof(h.upload)<>'integer' OR h.download<>s.dl OR h.upload<>s.ul OR typeof(h.total)<>'integer' OR h.total<>s.dl+s.ul") == 0
+                        else { throw HistoryStoreError.invalidRecord }
+                        try validateMigrationDays()
+                        try execute("ALTER TABLE history_scopes RENAME TO history_scopes_v2")
+                    }
+                    try execute("CREATE TABLE history_scopes(day TEXT NOT NULL REFERENCES history_days(day), scope TEXT NOT NULL CHECK(scope IN ('dorm','campusWifi','external','unknown')), download INTEGER NOT NULL CHECK(typeof(download)='integer' AND download >= 0), upload INTEGER NOT NULL CHECK(typeof(upload)='integer' AND upload >= 0), CHECK(scope <> 'unknown' OR download > 0 OR upload > 0), PRIMARY KEY(day,scope))")
+                    if version == 2 {
+                        try execute("INSERT INTO history_scopes SELECT day,scope,download,upload FROM history_scopes_v2")
+                        try execute("DROP TABLE history_scopes_v2")
+                    }
+                    try execute("PRAGMA user_version=3")
+                }
+                try validateTableInventory(version: 3)
+            }
+            // No schema mutation or journal mode change before validating the inventory.
+            try execute("PRAGMA journal_mode=DELETE")
         } catch {
             if let db { sqlite3_close(db) }
             db = nil
@@ -138,7 +238,7 @@ public final class HistoryStore {
     public static func backup(from source: URL, to destination: URL) throws {
         guard source.isFileURL else { throw HistoryStoreError.database("backup source") }
         var connection: OpaquePointer?
-        let status = sqlite3_open_v2(source.path, &connection, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil)
+        let status = sqlite3_open_v2(try HistorySQLitePath.resolve(source), &connection, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_NOFOLLOW, nil)
         guard status == SQLITE_OK, let connection else {
             if let connection { sqlite3_close(connection) }
             throw HistoryStoreError.database("backup source open")
@@ -156,7 +256,7 @@ public final class HistoryStore {
         else { throw HistoryStoreError.database("backup destination exists or unavailable") }
         defer { try? fm.removeItem(at: temporary) }
         var target: OpaquePointer?
-        let open = sqlite3_open_v2(temporary.path, &target, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil)
+        let open = sqlite3_open_v2(try HistorySQLitePath.resolve(temporary), &target, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_NOFOLLOW, nil)
         guard open == SQLITE_OK, let target else {
             if let target { sqlite3_close(target) }
             throw HistoryStoreError.database("backup open")
@@ -179,6 +279,43 @@ public final class HistoryStore {
         _ = try HistoryBackupInspector.inspect(temporary)
         // moveItem refuses an existing destination, including a race after the initial check.
         try fm.moveItem(at: temporary, to: destination)
+    }
+
+    /// Reject views, triggers, virtual tables and foreign table inventories.
+    /// Older v1 fixtures need not have today's CHECK clauses. Column names
+    /// and primary-key positions must nevertheless match the supported model.
+    private func validateTableInventory(version: Int64) throws {
+        let expected = version == 0 ? 0 : (version == 1 ? 1 : 2)
+        guard try scalar("SELECT count(*) FROM sqlite_master WHERE type IN ('view','trigger')") == 0,
+              try scalar("SELECT count(*) FROM sqlite_master WHERE type='table'") == expected,
+              try scalar("SELECT count(*) FROM pragma_table_list WHERE schema='main' AND name IN ('history_days','history_scopes') AND type='table'") == expected
+        else { throw HistoryStoreError.database("unexpected history schema") }
+        if version >= 1 {
+            guard try scalar("SELECT count(*) FROM pragma_table_info('history_days')") == 4,
+                  try scalar("SELECT count(*) FROM pragma_table_info('history_days') WHERE (cid=0 AND name='day' AND type='TEXT' AND pk=1) OR (cid=1 AND name='total' AND type='INTEGER' AND pk=0) OR (cid=2 AND name='download' AND type='INTEGER' AND pk=0) OR (cid=3 AND name='upload' AND type='INTEGER' AND pk=0)") == 4,
+                  try scalar("SELECT count(*) FROM pragma_table_xinfo('history_days')") == 4
+            else { throw HistoryStoreError.database("unexpected history days columns") }
+        }
+        if version >= 2 {
+            guard try scalar("SELECT count(*) FROM pragma_table_info('history_scopes')") == 4,
+                  try scalar("SELECT count(*) FROM pragma_table_info('history_scopes') WHERE (cid=0 AND name='day' AND type='TEXT' AND pk=1) OR (cid=1 AND name='scope' AND type='TEXT' AND pk=2) OR (cid=2 AND name='download' AND type='INTEGER' AND pk=0) OR (cid=3 AND name='upload' AND type='INTEGER' AND pk=0)") == 4,
+                  try scalar("SELECT count(*) FROM pragma_table_xinfo('history_scopes')") == 4
+            else { throw HistoryStoreError.database("unexpected history scope columns") }
+        }
+    }
+
+    private func validateMigrationDays() throws {
+        let stmt = try statement("SELECT day FROM history_days")
+        defer { sqlite3_finalize(stmt) }
+        var count = 0
+        while true {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { return }
+            guard rc == SQLITE_ROW, count < 36_600 else { throw HistoryStoreError.invalidRecord }
+            let day = try HistorySQLiteText.read(stmt, 0, length: 10...10)
+            _ = try HistoryDay(day: day, total: 0, download: nil, upload: nil)
+            count += 1
+        }
     }
 
     private func execute(_ sql: String) throws {
@@ -231,7 +368,7 @@ public final class HistoryStore {
         }
     }
 
-    /// Atomically store aggregate and nonzero observed scope rows. Existing
+    /// Atomically store aggregate and explicitly observed scope rows. Existing
     /// finalized history wins during stale-state recovery; no retroactive split.
     public func recordScoped(_ record: ScopedHistoryDay, preserveExisting: Bool = false) throws {
         _ = try ScopedHistoryDay(aggregate: record.aggregate, scopes: record.scopes)
@@ -263,6 +400,42 @@ public final class HistoryStore {
         let days = try LegacyHistoryMigration.decode(data)
         try transaction { for day in days { try write(day, replace: false) } }
     }
+    /// An active outer SELECT holds the same SQLite read snapshot while
+    /// the selected day's aggregate and every sibling scope are validated.
+    private func validatedPartition(day: String) throws -> ScopedHistoryDay {
+        let stmt = try statement("SELECT h.day,h.total,h.download,h.upload,s.scope,s.download,s.upload FROM history_days AS h JOIN history_scopes AS s ON h.day=s.day COLLATE BINARY WHERE h.day=? COLLATE BINARY")
+        defer { sqlite3_finalize(stmt) }
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        guard sqlite3_bind_text(stmt, 1, day, -1, transient) == SQLITE_OK
+        else { throw HistoryStoreError.database("bind partition") }
+        var aggregate: HistoryDay?
+        var scopes: [NetworkScope: HistoryDay] = [:]
+        while true {
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_DONE { break }
+            guard rc == SQLITE_ROW, scopes.count < NetworkScope.allCases.count,
+                  try HistorySQLiteText.read(stmt, 0, length: 10...10) == day,
+                  let scope = NetworkScope(rawValue: try HistorySQLiteText.read(stmt, 4, length: 1...10))
+            else { throw HistoryStoreError.invalidRecord }
+            func bytes(_ column: Int32) throws -> UInt64 {
+                guard sqlite3_column_type(stmt, column) == SQLITE_INTEGER,
+                      let value = UInt64(exactly: sqlite3_column_int64(stmt, column))
+                else { throw HistoryStoreError.invalidRecord }
+                return value
+            }
+            let total = try HistoryDay(day: day, total: bytes(1), download: bytes(2), upload: bytes(3))
+            if let aggregate, aggregate != total { throw HistoryStoreError.invalidRecord }
+            aggregate = total
+            let dl = try bytes(5), ul = try bytes(6)
+            let (sum, overflow) = dl.addingReportingOverflow(ul)
+            guard !overflow else { throw HistoryStoreError.invalidRecord }
+            let row = try HistoryDay(day: day, total: sum, download: dl, upload: ul)
+            guard scopes.updateValue(row, forKey: scope) == nil else { throw HistoryStoreError.invalidRecord }
+        }
+        guard let aggregate else { throw HistoryStoreError.invalidRecord }
+        return try ScopedHistoryDay(aggregate: aggregate, scopes: scopes)
+    }
+
     public func recent(limit: Int = 30, scope: NetworkScope? = nil) throws -> [HistoryDay] {
         guard (1...3660).contains(limit) else { throw HistoryStoreError.invalidRecord }
         let sql = scope == nil
@@ -282,8 +455,8 @@ public final class HistoryStore {
         while true {
             let rc = sqlite3_step(stmt)
             if rc == SQLITE_DONE { return result }
-            guard rc == SQLITE_ROW, let text = sqlite3_column_text(stmt, 0)
-            else { throw HistoryStoreError.database("read") }
+            guard rc == SQLITE_ROW else { throw HistoryStoreError.database("read") }
+            let day = try HistorySQLiteText.read(stmt, 0, length: 10...10)
             func value(_ col: Int32) throws -> UInt64? {
                 if sqlite3_column_type(stmt, col) == SQLITE_NULL { return nil }
                 guard sqlite3_column_type(stmt, col) == SQLITE_INTEGER,
@@ -291,8 +464,14 @@ public final class HistoryStore {
                 return UInt64(sqlite3_column_int64(stmt, col))
             }
             guard let total = try value(1) else { throw HistoryStoreError.invalidRecord }
-            result.append(try HistoryDay(day: String(cString: text), total: total,
-                                         download: value(2), upload: value(3)))
+            let record = try HistoryDay(day: day, total: total,
+                                        download: value(2), upload: value(3))
+            if let scope {
+                guard try validatedPartition(day: day).scopes[scope] == record else {
+                    throw HistoryStoreError.invalidRecord
+                }
+            }
+            result.append(record)
         }
     }
 }

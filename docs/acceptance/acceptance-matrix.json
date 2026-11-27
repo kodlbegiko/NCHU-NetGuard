@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "gates": [
+    {
+      "id": "traffic_accuracy",
+      "priority": "P0",
+      "criteria": "Controlled reference, same boundary and interval; both directions ≤1%, zero traffic, >4GiB, resets/hotplug; numeric evaluator is not independence proof.",
+      "initial_status": "review_required"
+    },
+    {
+      "id": "vpn_deduplication",
+      "priority": "P0",
+      "criteria": "VPN off/on on authorized network, compare physical and virtual counters separately, prove no duplicate in aggregate; unknown on ambiguous overlap.",
+      "initial_status": "review_required"
+    },
+    {
+      "id": "dual_stack",
+      "priority": "P0",
+      "criteria": "IPv4-only, IPv6-only, dual stack, TCP and UDP; distinguish absent family and parser failure, require independent path evidence.",
+      "initial_status": "review_required"
+    },
+    {
+      "id": "network_switching",
+      "priority": "P0",
+      "criteria": "Operator switches Wi-Fi/Ethernet or disconnects using macOS UI, verify scope revocation, stale-rate clear, monotonic totals and no unsolicited mutations.",
+      "initial_status": "review_required"
+    },
+    {
+      "id": "sleep_wake",
+      "priority": "P1",
+      "criteria": "Operator sleeps/wakes Mac, verify no invented bytes or stale forecast, explicit gap, no process controls.",
+      "initial_status": "review_required"
+    },
+    {
+      "id": "workflow_identity",
+      "priority": "P1",
+      "criteria": "Opt-in owned development task; compare independent process identity across exit/restart, verify protected workflow and no process termination.",
+      "initial_status": "review_required"
+    },
+    {
+      "id": "provider_accounting",
+      "priority": "P0",
+      "criteria": "Official current policy scope, byte unit, reset, identity, same interval and boundary; absence not safe, compare directions.",
+      "initial_status": "review_required"
+    },
+    {
+      "id": "security_review",
+      "priority": "P0",
+      "criteria": "Independent trust-boundary and negative TLS, file alias/race and lifecycle review; fixture tests alone not closure.",
+      "initial_status": "review_required"
+    },
+    {
+      "id": "recovery",
+      "priority": "P0",
+      "criteria": "BLOCKED: real mutation adapter disabled; only simulation until separately authorized transactional snapshot and rollback protocol reviewed.",
+      "initial_status": "blocked"
+    },
+    {
+      "id": "performance_idle",
+      "priority": "P1",
+      "criteria": "Explicit existing process PID, verify exact binary SHA/provenance, idle conditions, repeated ≥300s samples, CPU <0.5% one core and RSS <80MB; separately inspect child processes.",
+      "initial_status": "review_required"
+    },
+    {
+      "id": "accessibility",
+      "priority": "P1",
+      "criteria": "Keyboard, VoiceOver, non-color states, light/dark, display scaling; UX-01–06/08; no unsafe prompts.",
+      "initial_status": "review_required"
+    },
+    {
+      "id": "novice_ux",
+      "priority": "P1",
+      "criteria": "≥5 representative novice sessions; ≥80% unassisted completion of status/quota/pause/diagnosis and zero unsafe consent errors.",
+      "initial_status": "review_required"
+    },
+    {
+      "id": "lifecycle",
+      "priority": "P2",
+      "criteria": "BLOCKED for upgrade/uninstall: isolated test install destination, verify no overwrite or data loss, rollback and uninstall; no real user install by runner.",
+      "initial_status": "blocked"
+    },
+    {
+      "id": "soak_168h",
+      "priority": "P1",
+      "criteria": "Explicit process read-only monitoring for ≥168 hours with continuous evidence, no unexplained restart or gap; independently review crash/functional behavior.",
+      "initial_status": "review_required"
+    },
+    {
+      "id": "extension",
+      "priority": "P2",
+      "criteria": "BLOCKED: entitlement/signing and explicit owner authorization required; no extension activation by runner.",
+      "initial_status": "blocked"
+    }
+  ]
+}

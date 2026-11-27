@@ -1,5 +1,8 @@
 import Foundation
 import CoreFoundation
+#if SWIFT_PACKAGE
+import NetGuardTraffic
+#endif
 
 public enum UsageMigrationError: Error, Equatable {
     case invalidDocument, unsupportedVersion, invalidDate, invalidCounter
@@ -24,7 +27,8 @@ public struct DailyUsageState: Codable, Equatable, Sendable {
 /// counter baselines, network settings, addresses or unsafe automation flags.
 public enum UsageMigration {
     public static func decode(_ data: Data) throws -> DailyUsageState {
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        guard data.count <= 1_048_576,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw UsageMigrationError.invalidDocument
         }
         let version = object["schema_version"]
@@ -60,12 +64,24 @@ public enum UsageMigration {
                   d.rounded(.towardZero) == d else { throw UsageMigrationError.invalidCounter }
             return UInt64(d)
         }
-        return try DailyUsageState(schemaVersion: 1, date: day,
+        let state = try DailyUsageState(schemaVersion: 1, date: day,
             dormIn: number("dorm_in", fallback: "today_in"),
             dormOut: number("dorm_out", fallback: "today_out"),
             wifiIn: number("wifi_in"), wifiOut: number("wifi_out"),
             externalIn: number("ext_in"), externalOut: number("ext_out"),
             unattributedIn: number("unattributed_in"), unattributedOut: number("unattributed_out"),
             sampleGapCount: number("sample_gap_count"), measuredSampleCount: number("measured_sample_count"))
+        var ledger = DailyTrafficLedger()
+        for (scope, dl, ul) in [
+            (NetworkScope.dorm, state.dormIn, state.dormOut),
+            (.campusWifi, state.wifiIn, state.wifiOut),
+            (.external, state.externalIn, state.externalOut),
+            (.unknown, state.unattributedIn, state.unattributedOut)
+        ] {
+            guard ledger.add(scope: scope, received: dl, sent: ul) else {
+                throw UsageMigrationError.invalidCounter
+            }
+        }
+        return state
     }
 }

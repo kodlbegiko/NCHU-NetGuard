@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
-import NetGuardCore
+import Darwin
+@testable import NetGuardCore
 
 final class HistoryBundleTests: XCTestCase {
     private func fixture(_ body: (URL, URL, ProcessHistoryStore, ConnectionHistoryStore, TrafficEventArchive) throws -> Void) throws {
@@ -53,6 +54,33 @@ final class HistoryBundleTests: XCTestCase {
         }
     }
 
+    func testBundleRejectsHardlinksAndNonregularPayloads() throws {
+        try fixture { root, db, process, connections, events in
+            let backup = root.appendingPathComponent("backup")
+            let expected = try HistoryBundle.create(database: db, process: process,
+                connections: connections, events: events, destination: backup)
+            let manifest = backup.appendingPathComponent("manifest.json")
+            let alias = root.appendingPathComponent("manifest-alias")
+            try FileManager.default.linkItem(at: manifest, to: alias)
+            XCTAssertThrowsError(try HistoryBundle.inspect(backup))
+            try FileManager.default.removeItem(at: alias)
+            let payload = backup.appendingPathComponent("event-history/events.json")
+            let original = try Data(contentsOf: payload)
+            let saved = root.appendingPathComponent("payload")
+            try FileManager.default.moveItem(at: payload, to: saved)
+            try FileManager.default.createSymbolicLink(at: payload, withDestinationURL: saved)
+            XCTAssertThrowsError(try HistoryBundle.inspect(backup))
+            try FileManager.default.removeItem(at: payload)
+            XCTAssertEqual(mkfifo(payload.path, mode_t(0o600)), 0)
+            XCTAssertThrowsError(try HistoryBundle.inspect(backup))
+            XCTAssertThrowsError(try HistoryBundle.recoverCopy(from: backup, to: root.appendingPathComponent("copy")))
+            try FileManager.default.removeItem(at: payload)
+            try FileManager.default.moveItem(at: saved, to: payload)
+            XCTAssertEqual(try Data(contentsOf: payload), original)
+            XCTAssertEqual(try HistoryBundle.inspect(backup), expected)
+        }
+    }
+
     func testCorruptSourceDoesNotPublishDestination() throws {
         try fixture { root, db, process, connections, events in
             let corrupt = Data("invalid".utf8)
@@ -82,6 +110,64 @@ final class HistoryBundleTests: XCTestCase {
             XCTAssertThrowsError(try HistoryBundle.recoverCopy(from: backup, to: backup))
             XCTAssertEqual(try HistoryBundle.inspect(backup), expected)
             XCTAssertEqual(try HistoryBundle.inspect(recovery), expected)
+        }
+    }
+
+    func testRecoveryPublicationFaultAndDestinationRace() throws {
+        try fixture { root, db, process, connections, events in
+            let backup = root.appendingPathComponent("backup")
+            let summary = try HistoryBundle.create(database: db, process: process,
+                connections: connections, events: events, destination: backup)
+            let destination = root.appendingPathComponent("copy")
+            XCTAssertThrowsError(try HistoryBundle.recoverCopy(from: backup, to: destination,
+                beforePublish: { throw HistoryStoreError.invalidRecord }))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+            XCTAssertThrowsError(try HistoryBundle.recoverCopy(from: backup, to: destination,
+                beforePublish: {
+                    try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
+                    try Data("existing".utf8).write(to: destination.appendingPathComponent("sentinel"))
+                }))
+            XCTAssertEqual(try Data(contentsOf: destination.appendingPathComponent("sentinel")), Data("existing".utf8))
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: destination.path), ["sentinel"])
+            XCTAssertEqual(try HistoryBundle.inspect(backup), summary)
+            XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: root.path).contains { $0.hasPrefix(".netguard-recovery-") })
+            try FileManager.default.removeItem(at: destination)
+            XCTAssertEqual(try HistoryBundle.recoverCopy(from: backup, to: destination), summary)
+        }
+    }
+
+    func testPublishedCopySurvivesUncertainDirectoryDurability() throws {
+        try fixture { root, db, process, connections, events in
+            let backup = root.appendingPathComponent("backup")
+            let summary = try HistoryBundle.create(database: db, process: process,
+                connections: connections, events: events, destination: backup)
+            let copy = root.appendingPathComponent("copy")
+            XCTAssertThrowsError(try HistoryBundle.recoverCopy(from: backup, to: copy,
+                beforePublish: {}, syncParent: { _ in false })) { error in
+                XCTAssertEqual(error as? HistoryBundlePublicationError, .durabilityUncertain)
+            }
+            XCTAssertEqual(try HistoryBundle.inspect(copy), summary)
+            XCTAssertEqual(try HistoryBundle.inspect(backup), summary)
+            XCTAssertThrowsError(try HistoryBundle.recoverCopy(from: backup, to: copy))
+            XCTAssertEqual(try HistoryBundle.inspect(copy), summary)
+        }
+    }
+
+    func testRecoveryRejectsDanglingDestinationAndSymlinkDirectory() throws {
+        try fixture { root, db, process, connections, events in
+            let backup = root.appendingPathComponent("backup")
+            let summary = try HistoryBundle.create(database: db, process: process,
+                connections: connections, events: events, destination: backup)
+            let absent = root.appendingPathComponent("absent")
+            let destination = root.appendingPathComponent("alias")
+            try FileManager.default.createSymbolicLink(at: destination, withDestinationURL: absent)
+            XCTAssertThrowsError(try HistoryBundle.recoverCopy(from: backup, to: destination))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: absent.path))
+            XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: destination.path), absent.path)
+            let alias = root.appendingPathComponent("source-alias")
+            try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: backup)
+            XCTAssertThrowsError(try HistoryBundle.inspect(alias))
+            XCTAssertEqual(try HistoryBundle.inspect(backup), summary)
         }
     }
 

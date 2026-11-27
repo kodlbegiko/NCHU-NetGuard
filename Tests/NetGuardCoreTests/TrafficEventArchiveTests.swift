@@ -55,6 +55,16 @@ final class TrafficEventArchiveTests: XCTestCase {
             XCTAssertEqual(try Data(contentsOf: file), corrupt)
         }
     }
+    func testOversizedArchiveIsPreserved() throws {
+        try withArchive { archive in
+            try FileManager.default.createDirectory(at: archive.directory, withIntermediateDirectories: true)
+            let file = archive.directory.appendingPathComponent("events.json")
+            let original = Data(repeating: 32, count: 2 * 1024 * 1024 + 1)
+            try original.write(to: file)
+            XCTAssertThrowsError(try archive.clear())
+            XCTAssertEqual(try Data(contentsOf: file), original)
+        }
+    }
     func testDecodedInvalidEvidenceRejected() throws {
         try withArchive { archive in
             let encoded = try JSONEncoder().encode(try XCTUnwrap(events().first))

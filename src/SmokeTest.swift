@@ -1,3 +1,6 @@
+#if SWIFT_PACKAGE
+import NetGuardCore
+#endif
 import Cocoa
 import SwiftUI
 import Foundation
@@ -7,6 +10,7 @@ import Foundation
 final class NetGuardSmokeDelegate: NSObject, NSApplicationDelegate {
     private var windows: [NSWindow] = []
     private var status: NSStatusItem?
+    private var timing: [String: [String: Double]] = [:]
 
     private func fail(_ stage: String) -> Never {
         FileHandle.standardError.write(Data(("NETGUARD_SMOKE_FAIL " + stage + "\n").utf8))
@@ -14,6 +18,7 @@ final class NetGuardSmokeDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func host<V: View>(_ root: V, title: String, width: CGFloat, height: CGFloat) {
+        let started = ProcessInfo.processInfo.systemUptime
         let controller = NSHostingController(rootView: root)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
@@ -26,6 +31,7 @@ final class NetGuardSmokeDelegate: NSObject, NSApplicationDelegate {
         controller.view.frame = NSRect(x: 0, y: 0, width: width, height: height)
         window.orderFront(nil)
         windows.append(window)
+        timing[title] = ["construction_ms": (ProcessInfo.processInfo.systemUptime - started) * 1000]
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -61,7 +67,7 @@ final class NetGuardSmokeDelegate: NSObject, NSApplicationDelegate {
             sleeping: false, assessment: nil, ledger: QuotaAlertLedger(),
             day: "2026-11-25", ledgerStatus: "Fixture")
         host(ManagementView(model: management, refresh: {}, openProvider: {},
-            setAlerts: { _ in }, setFocus: { _ in }, setHistoryEnabled: { _ in }, setAgentHistoryEnabled: { _ in }, reloadAgentHistory: {}, deleteAgentHistory: {},
+            setAlerts: { _ in }, setFocus: { _ in }, saveObservationRules: { _ in }, setHistoryEnabled: { _ in }, setAgentHistoryEnabled: { _ in }, reloadAgentHistory: {}, deleteAgentHistory: {},
             setProcessBackground: { _ in }, reloadHistory: {}, testDNS: {}, measureFlow: { _ in },
             configureTrafficEvents: { _ in }, setEventNotifications: { _ in }, saveEventArchive: {}, loadEventArchive: {},
             clearEventArchive: {}, clearTrafficEvents: {}, startConnectionSession: { _, _ in },
@@ -85,8 +91,10 @@ final class NetGuardSmokeDelegate: NSObject, NSApplicationDelegate {
                 guard let view = window.contentView, let controller = window.contentViewController else {
                     self.fail("missing window content: " + window.title)
                 }
+                let started = ProcessInfo.processInfo.systemUptime
                 view.layoutSubtreeIfNeeded()
                 controller.view.layoutSubtreeIfNeeded()
+                self.timing[window.title]?["layout_ms"] = (ProcessInfo.processInfo.systemUptime - started) * 1000
                 guard view.bounds.width > 0, view.bounds.height > 0,
                       controller.view.bounds.width > 0, controller.view.bounds.height > 0 else {
                     self.fail("window layout: " + window.title)
@@ -96,6 +104,9 @@ final class NetGuardSmokeDelegate: NSObject, NSApplicationDelegate {
             if let item = self.status { NSStatusBar.system.removeStatusItem(item) }
             self.status = nil
             self.windows.removeAll()
+            guard let bytes = try? JSONSerialization.data(withJSONObject: self.timing, options: [.sortedKeys]),
+                  let json = String(data: bytes, encoding: .utf8) else { self.fail("timing evidence") }
+            FileHandle.standardOutput.write(Data(("NETGUARD_FIXTURE_TIMING " + json + "\n").utf8))
             FileHandle.standardOutput.write(Data("NETGUARD_SMOKE_OK fixture-native-views=4 status-item=1 resources=2\n".utf8))
             NSApplication.shared.terminate(nil)
         }

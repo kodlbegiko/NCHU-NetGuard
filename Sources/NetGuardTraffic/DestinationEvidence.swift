@@ -101,3 +101,73 @@ public enum DestinationFlowProjection {
         return totals
     }
 }
+
+
+/// Route evidence is supplied by an adapter at a declared measurement
+/// boundary, never inferred from a remote address. Socket and wire counters
+/// have distinct units/overheads and must not be added or reconciled silently.
+public enum FlowMeasurementBoundary: String, Codable, Sendable {
+    case socketPayload, physicalWire
+}
+public enum FlowRouteClass: String, Codable, Sendable {
+    case localNetwork, internet, unknown
+}
+public struct RouteClassifiedDelta: Sendable {
+    public let identity: String
+    public let route: FlowRouteClass
+    public let bytes: DailyScopeTotals
+    public init(identity: String, route: FlowRouteClass, bytes: DailyScopeTotals) {
+        self.identity = identity; self.route = route; self.bytes = bytes
+    }
+}
+public struct FlowPartitionReading: Equatable, Sendable {
+    public let boundary: FlowMeasurementBoundary
+    public let localNetwork: DailyScopeTotals
+    public let internet: DailyScopeTotals
+    public let unclassified: DailyScopeTotals
+    /// True only when a same-boundary independent total was supplied and
+    /// matched directionally, with all routes classified. Not a provider bill.
+    public let reconciled: Bool
+}
+public enum FlowPartitionProjection {
+    /// For a single adapter batch of non-overlapping measured deltas.
+    /// Duplicate flow identity or ambiguous arithmetic invalidates the batch.
+    /// Without a comparable total the result is partial, not full coverage.
+    public static func summarize(_ rows: [RouteClassifiedDelta],
+                                 boundary: FlowMeasurementBoundary,
+                                 comparableTotal: DailyScopeTotals? = nil) -> FlowPartitionReading? {
+        guard !rows.isEmpty, rows.count <= 4096 else { return nil }
+        var seen = Set<String>()
+        var local = DailyScopeTotals(), internet = DailyScopeTotals(), unknown = DailyScopeTotals()
+        func adding(_ a: DailyScopeTotals, _ b: DailyScopeTotals) -> DailyScopeTotals? {
+            let (rx, x) = a.received.addingReportingOverflow(b.received)
+            let (tx, y) = a.sent.addingReportingOverflow(b.sent)
+            guard !x, !y, !rx.addingReportingOverflow(tx).overflow else { return nil }
+            return .init(received: rx, sent: tx)
+        }
+        for row in rows {
+            guard !row.identity.isEmpty, row.identity.utf8.count <= 1024,
+                  seen.insert(row.identity).inserted else { return nil }
+            switch row.route {
+            case .localNetwork:
+                guard let value = adding(local, row.bytes) else { return nil }; local = value
+            case .internet:
+                guard let value = adding(internet, row.bytes) else { return nil }; internet = value
+            case .unknown:
+                guard let value = adding(unknown, row.bytes) else { return nil }; unknown = value
+            }
+        }
+        guard let classified = adding(local, internet), let total = adding(classified, unknown) else { return nil }
+        if let comparableTotal {
+            guard total.received <= comparableTotal.received, total.sent <= comparableTotal.sent,
+                  !comparableTotal.received.addingReportingOverflow(comparableTotal.sent).overflow,
+                  let remainder = adding(unknown, .init(received: comparableTotal.received - total.received,
+                                                        sent: comparableTotal.sent - total.sent)) else { return nil }
+            unknown = remainder
+        }
+        let complete = comparableTotal != nil && unknown.received == 0 && unknown.sent == 0
+            && rows.allSatisfy { $0.route != .unknown }
+        return .init(boundary: boundary, localNetwork: local, internet: internet,
+                     unclassified: unknown, reconciled: complete)
+    }
+}

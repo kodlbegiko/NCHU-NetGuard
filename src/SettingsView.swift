@@ -1,3 +1,6 @@
+#if SWIFT_PACKAGE
+import NetGuardCore
+#endif
 import SwiftUI
 
 /// Settings reflect the existing app state. This view never writes

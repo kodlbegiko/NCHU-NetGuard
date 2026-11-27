@@ -9,14 +9,35 @@ final class ContractCompatibilityTests: XCTestCase {
         let encoded = try JSONEncoder().encode(original)
         XCTAssertEqual(try T.decodeValidated(encoded), original)
         var fields = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let emitted = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertEqual(Set(emitted.keys), Set(fields.keys), "v1 wire field set changed")
+        XCTAssertEqual(emitted as NSDictionary, fields as NSDictionary, "v1 wire values changed")
         fields["futureOptionalField"] = "ignored"
         XCTAssertEqual(try T.decodeValidated(JSONSerialization.data(withJSONObject: fields)), original)
         fields["schemaVersion"] = 2
         XCTAssertThrowsError(try T.decodeValidated(JSONSerialization.data(withJSONObject: fields))) {
             XCTAssertEqual($0 as? ContractError, .unsupportedVersion)
         }
-        fields.removeValue(forKey: "schemaVersion")
-        XCTAssertThrowsError(try T.decodeValidated(JSONSerialization.data(withJSONObject: fields)))
+        // Every field in the literal fixture is required. Remove it from
+        // the original, valid fixture independently, not an invalid version.
+        let required = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        for key in required.keys {
+            var missing = required
+            missing.removeValue(forKey: key)
+            XCTAssertThrowsError(try T.decodeValidated(JSONSerialization.data(withJSONObject: missing)),
+                                 "\(T.self) accepted missing required field \(key)")
+        }
+        // Nested interface records are also required, not default-filled.
+        if let interfaces = required["interfaces"] as? [[String: Any]], let first = interfaces.first {
+            for key in first.keys {
+                var missing = required
+                var row = first
+                row.removeValue(forKey: key)
+                missing["interfaces"] = [row]
+                XCTAssertThrowsError(try T.decodeValidated(JSONSerialization.data(withJSONObject: missing)),
+                                     "\(T.self) accepted missing nested field \(key)")
+            }
+        }
     }
 
     func testTrafficSnapshotV1() throws {
@@ -66,6 +87,15 @@ final class ContractCompatibilityTests: XCTestCase {
         try ProtectedWorkflow(workflowID: id, processIdentity: "fixture", optedIn: false, expiresAt: date).validate()
         try EventRecord(eventID: id, timestamp: date, correlationID: nil, category: "fixture",
                         redactedReason: "fixture", outcome: "observed", errorCode: nil).validate()
+    }
+
+    func testCoreScopeFacadeExportsNewTrafficHelpers() throws {
+        XCTAssertEqual(InterfaceScopeEvidence.resolve(ipv4: ["140.120.1.2"],
+            hasUsableIPv6: false, isWiFi: false), .unknown)
+        let sample = ScopedInterfaceSample(counters: .init(interfaceID: "en0",
+            received: 0, sent: 0), scope: .unknown, identity: "fixture", counterGeneration: "1")
+        let selection = try XCTUnwrap(ManualScopeSelection(scope: .dorm, sample: sample))
+        XCTAssertTrue(selection.matches(sample))
     }
 
 }

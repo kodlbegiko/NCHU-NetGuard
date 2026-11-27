@@ -11,7 +11,8 @@ let package = Package(
         .library(name: "NetGuardRecovery", targets: ["NetGuardRecovery"]),
         .library(name: "NetGuardProvider", targets: ["NetGuardProvider"]),
         .library(name: "NetGuardTraffic", targets: ["NetGuardTraffic"]),
-        .library(name: "NetGuardData", targets: ["NetGuardData"])
+        .library(name: "NetGuardData", targets: ["NetGuardData"]),
+        .executable(name: "NCHUTraffic", targets: ["NetGuardApp"])
     ],
     targets: [
         .target(name: "NetGuardObservation"),
@@ -21,6 +22,7 @@ let package = Package(
         .target(name: "NetGuardTraffic"),
         .target(name: "NetGuardData", dependencies: ["NetGuardTraffic"], linkerSettings: [.linkedLibrary("sqlite3")]),
         .target(name: "NetGuardCore", dependencies: ["NetGuardObservation", "NetGuardWorkflow", "NetGuardRecovery", "NetGuardProvider", "NetGuardTraffic", "NetGuardData"]),
+        .executableTarget(name: "NetGuardApp", dependencies: ["NetGuardCore"], path: "src", exclude: ["Info.plist", "Resources"]),
         .testTarget(name: "NetGuardCoreTests", dependencies: ["NetGuardCore"]),
         .testTarget(name: "NetGuardObservationTests", dependencies: ["NetGuardObservation"]),
         .testTarget(name: "NetGuardWorkflowTests", dependencies: ["NetGuardWorkflow"]),

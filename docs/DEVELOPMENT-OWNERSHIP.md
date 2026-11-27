@@ -45,3 +45,9 @@ NetGuardTraffic owns the raw counters, sampling quality, network scope and deter
 ## Fourth module split
 
 NetGuardData owns SQLite history, scoped aggregation persistence, backup and read-only validation, legacy daily-state migration, historical period analytics, CSV and chart projection. Its sole internal dependency is NetGuardTraffic for the shared scope type. SQLite linkage now belongs to NetGuardData. The NetGuardCore aliases retain source-level compatibility; the app's flattened Makefile still compiles the original implementations. Independent tests cover the public Data module API without importing NetGuardCore. No database schema change or backup restore capability is introduced by this extraction.
+
+## Native executable linkage candidate
+
+Package.swift declares NetGuardApp as an executable target depending on NetGuardCore, with legacy resources excluded from compilation and copied into the bundle by make build-module. All app sources import the integration module when SwiftPM compiles them. ProbeRunner is package-scoped, not public. Both legacy and modular app builds and fixture smoke must pass; main/default install stays on legacy build until exact evidence. Real-device acceptance, API consumer review and owner approval remain required.
+
+Agent 8 owns scripts/acceptance/, docs/acceptance/ and tests/test_local_acceptance.py; changes to Makefile remain serialized by Agent 0. Local result directories are private and never committed.

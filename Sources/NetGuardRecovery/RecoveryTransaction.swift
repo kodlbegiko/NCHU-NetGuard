@@ -31,12 +31,22 @@ public struct RecoveryJournalEntry: Codable, Equatable, Sendable {
     public let plan: RecoveryPlan
     public var phase: RecoveryPhase
     public var applied: OwnedNetworkConfiguration?
+    /// Optional additive v1 field. Old rolledBack entries without this
+    /// evidence remain readable but cannot prove a current rollback.
+    public var restored: OwnedNetworkConfiguration?
     public init(plan: RecoveryPlan) {
         self.schemaVersion = 1
         self.plan = plan
         self.phase = .prepared
         self.applied = nil
+        self.restored = nil
     }
+}
+
+/// Persistence callbacks must distinguish a proven pre-write failure from an
+/// ambiguous result (for example, rename succeeded but directory sync failed).
+public enum RecoveryPersistenceOutcome: Equatable, Sendable {
+    case persisted, notWritten, unknown
 }
 
 public enum RecoveryOutcome: Equatable, Sendable {
@@ -74,13 +84,19 @@ public struct RecoveryTransaction: Sendable {
             return .finish(.rejected)
         }
         let entry = RecoveryJournalEntry(plan: plan)
+        guard (try? entry.validate()) != nil else { return .finish(.rejected) }
         journal = entry
         step = .preparing
         return .persist(entry)
     }
 
     public mutating func persisted(success: Bool) -> RecoveryEffect {
+        persisted(success ? .persisted : .unknown)
+    }
+
+    public mutating func persisted(_ outcome: RecoveryPersistenceOutcome) -> RecoveryEffect {
         guard let entry = journal else { return terminal(.safeMode) }
+        let success = outcome == .persisted
         switch step {
         case .preparing:
             guard success else { return terminal(.rejected) }
@@ -89,6 +105,7 @@ public struct RecoveryTransaction: Sendable {
         case .recordingApplied:
             guard let applied = entry.applied else { return terminal(.safeMode) }
             if !success {
+                guard outcome == .notWritten else { return terminal(.safeMode) }
                 step = .restoring
                 return .compareAndSwap(expected: applied, desired: entry.plan.expected.settings)
             }
@@ -96,7 +113,7 @@ public struct RecoveryTransaction: Sendable {
             return .verify(applied)
         case .committing:
             if success { return terminal(.committed) }
-            guard let applied = entry.applied else { return terminal(.safeMode) }
+            guard outcome == .notWritten, let applied = entry.applied else { return terminal(.safeMode) }
             step = .restoring
             return .compareAndSwap(expected: applied, desired: entry.plan.expected.settings)
         case .recordingRestore:
@@ -146,6 +163,7 @@ public struct RecoveryTransaction: Sendable {
         case .verifyingRestore:
             guard let restored, observed == restored else { return terminal(.safeMode) }
             entry.phase = .rolledBack
+            entry.restored = restored
             journal = entry
             step = .recordingRestore
             return .persist(entry)
@@ -172,8 +190,9 @@ public struct RecoveryTransaction: Sendable {
             step = .restoring
             return .compareAndSwap(expected: applied, desired: entry.plan.expected.settings)
         case .committed:
-            return terminal(.committed)
+            return terminal(observed == entry.applied ? .committed : .safeMode)
         case .rolledBack:
+            guard let restored = entry.restored, observed == restored else { return terminal(.safeMode) }
             return terminal(.rolledBack)
         case .safeMode:
             return terminal(.safeMode)

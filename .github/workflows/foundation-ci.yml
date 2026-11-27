@@ -1,14 +1,14 @@
 name: Foundation CI
 on:
   pull_request:
-    branches: [main]
+    branches: [main, feat/r4-bundle-v2]
   push:
-    branches: [feat/r4-foundation]
+    branches: [feat/r4-foundation, 'fix/r4-closure-*', '!fix/r4-closure-integration']
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: foundation-${{ github.ref }}
+  group: foundation-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
   foundation:
@@ -16,12 +16,25 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify tested revision
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          printf 'Tested source SHA: %s\n' "$EXPECTED_SHA"
+          printf 'Tested source SHA: `%s`\n\nHosted macOS CI; not real-device acceptance.\n' "$EXPECTED_SHA" >> "$GITHUB_STEP_SUMMARY"
       - name: Toolchain
         run: swift --version && python3 --version
       - name: Static guards and Python tests
         run: make test
       - name: Core Swift tests
-        run: swift test
+        run: swift test --enable-code-coverage
+      - name: Core line coverage evidence
+        run: |
+          python3 scripts/core_coverage.py --root "$PWD" --report "$(swift test --show-codecov-path)" --require-target
       - name: Legacy app build (no launch)
         run: make build
       - name: Verify bundle
@@ -33,6 +46,24 @@ jobs:
 
       - name: Native fixture smoke (no production startup)
         run: python3 scripts/smoke_test.py --app build/NCHUTraffic.app
+
+      - name: SwiftPM native executable and fixture smoke
+        run: make smoke-module
+
+      - name: Isolated built-bundle installation and identity checks
+        run: |
+          python3 scripts/verify_install_candidate.py --app build/NCHUTraffic.app --app build/module/NCHUTraffic.app
+
+      - name: Isolated lifecycle exchange and rollback rehearsal
+        run: python3 scripts/verify_lifecycle_candidate.py --app build/NCHUTraffic.app
+
+      - name: Exercise built QA heartbeat and local protocol fixtures
+        run: python3 scripts/acceptance/qa_preflight.py --app build/NCHUTraffic.app --app build/module/NCHUTraffic.app
+
+      - name: Record exact candidate bundle content inventory
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 scripts/candidate_inventory.py --expected-sha "$EXPECTED_SHA"
 
       - name: Host parser compatibility evidence (non-gating)
         run: |

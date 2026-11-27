@@ -44,4 +44,30 @@ final class DualStackEvidenceTests: XCTestCase {
         XCTAssertEqual(DefaultRouteParser.inspect("interface : en0\nflags: <UP,GATEWAY>").interfaceName, "en0")
     }
 
+    func testExactAbsentDefaultRouteDiagnosticIsNotMalformedOrReachable() {
+        for text in ["not in table", "route: not in table", "route: writing to routing socket: not in table\n"] {
+            XCTAssertEqual(DefaultRouteParser.inspect(text).status, .noDefaultRoute)
+            XCTAssertNil(DefaultRouteParser.interfaceName(text))
+        }
+        XCTAssertEqual(DefaultRouteParser.inspect("").status, .emptyOutput)
+        XCTAssertEqual(DefaultRouteParser.inspect("route: permission denied").status, .missingInterface)
+        XCTAssertNotEqual(DefaultRouteParser.inspect("interface: en0\nroute: not in table").status, .parsed)
+        XCTAssertNotEqual(DefaultRouteParser.inspect("unrecognized not in table").status, .noDefaultRoute)
+    }
+
+    func testRouteCandidatesRequireStableEvidenceAndMatchingInterface() {
+        let direct = RoutePathParser.inspect("interface: en0\nflags: <UP,HOST,DONE>\n")
+        let gateway = RoutePathParser.inspect("interface: en0\nflags: <UP,GATEWAY,DONE>\ngateway: 192.0.2.1\n")
+        XCTAssertEqual(direct?.kind, .directLinkCandidate)
+        XCTAssertEqual(gateway?.kind, .gatewayCandidate)
+        XCTAssertEqual(RoutePathParser.classify(before: gateway, after: gateway, flowInterface: "en0", tunnelOverlap: false), .gatewayCandidate)
+        XCTAssertEqual(RoutePathParser.classify(before: direct, after: gateway, flowInterface: "en0", tunnelOverlap: false), .unknown)
+        XCTAssertEqual(RoutePathParser.classify(before: direct, after: direct, flowInterface: "en1", tunnelOverlap: false), .unknown)
+        XCTAssertEqual(RoutePathParser.classify(before: direct, after: direct, flowInterface: "en0", tunnelOverlap: true), .unknown)
+        XCTAssertNil(RoutePathParser.inspect("interface: utun4\nflags: <UP,HOST>"))
+        XCTAssertNil(RoutePathParser.inspect("interface: en0\nflags: <UP,GATEWAY>"))
+        XCTAssertNil(RoutePathParser.inspect("interface: en0\nflags: <UP,REJECT>"))
+        XCTAssertNil(RoutePathParser.inspect("interface: en0"))
+    }
+
 }

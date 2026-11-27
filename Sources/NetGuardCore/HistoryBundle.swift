@@ -1,5 +1,12 @@
 import Foundation
 import CryptoKit
+import Darwin
+
+public enum HistoryBundlePublicationError: Error, Equatable {
+    /// The complete verified copy was published, but the parent directory
+    /// synchronization could not be confirmed. Do not delete or overwrite it.
+    case durabilityUncertain
+}
 
 public struct HistoryBundleSummary: Equatable, Sendable {
     public let version: Int
@@ -31,21 +38,108 @@ public enum HistoryBundle {
     private static func fail() -> ContractError { .invalidField("historyBundle") }
 
     private static func directory(_ url: URL) throws {
-        guard url.isFileURL, try fm.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType == .typeDirectory else { throw fail() }
+        var info = stat()
+        guard url.isFileURL, lstat(url.path, &info) == 0,
+              (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR),
+              info.st_uid == geteuid() else { throw fail() }
     }
 
     private static func write(_ data: Data, to url: URL) throws {
-        try data.write(to: url, options: .atomic)
-        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        let fd = open(url.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, mode_t(0o600))
+        guard fd >= 0 else { throw fail() }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        defer { try? handle.close() }
+        try handle.write(contentsOf: data)
+        guard fsync(fd) == 0 else { throw fail() }
+        try handle.close()
+    }
+
+    /// Sync each staged file and directory before publishing a single
+    /// directory entry. The live stores are never opened for writing here.
+    /// RENAME_EXCL makes destination existence a kernel-enforced condition.
+    /// A failure after rename is an uncertain durability outcome: leave the
+    /// complete published copy intact, never delete it or overwrite a target.
+    private static func publish(_ staged: URL, to destination: URL,
+                                version: Int, beforePublish: () throws -> Void,
+                                syncParent: (Int32) -> Bool = { fsync($0) == 0 }) throws {
+        try directory(staged)
+        let parent = destination.deletingLastPathComponent().resolvingSymlinksInPath()
+        let parentFD = open(parent.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard parentFD >= 0 else { throw fail() }
+        defer { _ = close(parentFD) }
+        let stageFD = openat(parentFD, staged.lastPathComponent, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard stageFD >= 0 else { throw fail() }
+        defer { _ = close(stageFD) }
+        var stageInfo = stat()
+        guard fstat(stageFD, &stageInfo) == 0, stageInfo.st_uid == geteuid(),
+              (stageInfo.st_mode & 0o077) == 0 else { throw fail() }
+        func syncFile(_ dir: Int32, _ name: String) throws {
+            let fd = openat(dir, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+            guard fd >= 0 else { throw fail() }
+            defer { _ = close(fd) }
+            var info = stat()
+            guard fstat(fd, &info) == 0, (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+                  info.st_uid == geteuid(), info.st_nlink == 1, fsync(fd) == 0 else { throw fail() }
+        }
+        try syncFile(stageFD, "history.sqlite")
+        try syncFile(stageFD, "manifest.json")
+        for folder in try folders(version: version) {
+            let fd = openat(stageFD, folder, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            guard fd >= 0 else { throw fail() }
+            defer { _ = close(fd) }
+            var info = stat()
+            guard fstat(fd, &info) == 0, info.st_uid == geteuid(),
+                  (info.st_mode & 0o077) == 0 else { throw fail() }
+            for name in try fm.contentsOfDirectory(atPath: staged.appendingPathComponent(folder).path) {
+                try syncFile(fd, name)
+            }
+            guard fsync(fd) == 0 else { throw fail() }
+        }
+        guard fsync(stageFD) == 0 else { throw fail() }
+        try beforePublish()
+        var current = stat()
+        guard fstatat(parentFD, staged.lastPathComponent, &current, AT_SYMLINK_NOFOLLOW) == 0,
+              current.st_dev == stageInfo.st_dev, current.st_ino == stageInfo.st_ino,
+              renameatx_np(parentFD, staged.lastPathComponent, parentFD,
+                           destination.lastPathComponent, UInt32(RENAME_EXCL)) == 0 else { throw fail() }
+        guard syncParent(parentFD) else {
+            throw HistoryBundlePublicationError.durabilityUncertain
+        }
     }
 
     private static func read(_ url: URL, max: Int) throws -> Data {
-        let attrs = try fm.attributesOfItem(atPath: url.path)
-        guard attrs[.type] as? FileAttributeType == .typeRegular,
-              let size = attrs[.size] as? NSNumber,
-              size.int64Value >= 0, size.int64Value <= Int64(max) else { throw fail() }
-        let data = try Data(contentsOf: url)
-        guard data.count <= max else { throw fail() }
+        guard url.isFileURL, (1...64 * 1024 * 1024).contains(max),
+              !url.lastPathComponent.isEmpty, url.lastPathComponent != ".", url.lastPathComponent != ".."
+        else { throw fail() }
+        // Open the parent and then the actual file, without following the
+        // final directory/file symlinks or blocking on a FIFO. This validates
+        // the opened inode rather than trusting a previous pathname stat.
+        let parent = open(url.deletingLastPathComponent().path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard parent >= 0 else { throw fail() }
+        defer { _ = close(parent) }
+        let fd = openat(parent, url.lastPathComponent, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+        guard fd >= 0 else { throw fail() }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        defer { try? handle.close() }
+        var initial = stat()
+        guard fstat(fd, &initial) == 0,
+              (initial.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+              initial.st_nlink == 1, initial.st_uid == geteuid(),
+              initial.st_size >= 0, initial.st_size <= Int64(max)
+        else { throw fail() }
+        var data = Data()
+        while data.count <= max {
+            let chunk = try handle.read(upToCount: min(65_536, max + 1 - data.count)) ?? Data()
+            if chunk.isEmpty { break }
+            data.append(chunk)
+        }
+        var final = stat()
+        guard fstat(fd, &final) == 0, final.st_size == initial.st_size,
+              final.st_nlink == 1, final.st_uid == geteuid(),
+              final.st_mtimespec.tv_sec == initial.st_mtimespec.tv_sec,
+              final.st_mtimespec.tv_nsec == initial.st_mtimespec.tv_nsec,
+              data.count <= max, Int64(data.count) == initial.st_size
+        else { throw fail() }
         return data
     }
 
@@ -124,7 +218,7 @@ public enum HistoryBundle {
         let manifest = HistoryBundleManifest(version: version, createdAt: Date(), files: entries)
         try write(encoder.encode(manifest), to: temp.appendingPathComponent("manifest.json"))
         let result = try inspect(temp)
-        try fm.moveItem(at: temp, to: destination)
+        try publish(temp, to: destination, version: version, beforePublish: {})
         return result
     }
 
@@ -132,8 +226,9 @@ public enum HistoryBundle {
     /// from the fixed directory layout, then compared to the manifest.
     public static func inspect(_ root: URL) throws -> HistoryBundleSummary {
         try directory(root)
-        let manifest = try JSONDecoder().decode(HistoryBundleManifest.self,
-            from: read(root.appendingPathComponent("manifest.json"), max: 256 * 1024))
+        let manifestURL = root.appendingPathComponent("manifest.json")
+        let manifestData = try read(manifestURL, max: 256 * 1024)
+        let manifest = try JSONDecoder().decode(HistoryBundleManifest.self, from: manifestData)
         guard [1, 2].contains(manifest.version), manifest.createdAt.timeIntervalSince1970.isFinite,
               manifest.files.count <= (manifest.version == 1 ? 369 : 735),
               manifest.files == (try inventory(root, version: manifest.version, manifestPresent: true)) else { throw fail() }
@@ -150,13 +245,29 @@ public enum HistoryBundle {
         } else { agentDays = nil }
         let connections = try ConnectionHistoryStore(directory: root.appendingPathComponent("connection-history")).read()
         let events = try TrafficEventArchive(directory: root.appendingPathComponent("event-history")).read()
+        // Reject a changed inventory after semantic reads. A copied bundle
+        // is still independently verified before publication. No claim of
+        // adversarial snapshot isolation from a same-user directory writer.
+        guard try read(manifestURL, max: 256 * 1024) == manifestData,
+              manifest.files == (try inventory(root, version: manifest.version, manifestPresent: true))
+        else { throw fail() }
         return .init(version: manifest.version, database: database, agentDays: agentDays, processDays: days.count, connectionSessions: connections.count, events: events.count)
     }
 
     /// Recover a verified copy into a NEW directory only. Never replaces the
     /// active stores. The input manifest is pinned for the whole operation.
     /// A failed copy or verification leaves no published destination.
+    /// If directory fsync fails after publication, the complete destination
+    /// is preserved and the caller receives an uncertain-durability error.
     public static func recoverCopy(from source: URL, to destination: URL) throws -> HistoryBundleSummary {
+        try recoverCopy(from: source, to: destination, beforePublish: {})
+    }
+
+    // Internal deterministic fault hook; no caller can use it to authorize
+    // an active-store replacement, even in tests.
+    static func recoverCopy(from source: URL, to destination: URL,
+                            beforePublish: () throws -> Void,
+                            syncParent: (Int32) -> Bool = { fsync($0) == 0 }) throws -> HistoryBundleSummary {
         guard source.isFileURL, destination.isFileURL,
               source.standardizedFileURL != destination.standardizedFileURL,
               !fm.fileExists(atPath: destination.path) else { throw fail() }
@@ -189,7 +300,8 @@ public enum HistoryBundle {
         try write(manifestData, to: temp.appendingPathComponent("manifest.json"))
         let summary = try inspect(temp)
         guard summary == expectedSummary else { throw fail() }
-        try fm.moveItem(at: temp, to: destination)
+        try publish(temp, to: destination, version: manifest.version,
+                    beforePublish: beforePublish, syncParent: syncParent)
         return summary
     }
 

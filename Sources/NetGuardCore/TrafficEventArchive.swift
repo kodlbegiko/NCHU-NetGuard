@@ -1,7 +1,7 @@
 import Foundation
 
 /// Manual local event archive, isolated from the quota ledger.
-/// Requires a single serial caller. No addresses or process identity.
+/// Cooperating writer lock. No addresses or process identity.
 public struct TrafficEventArchive: Sendable {
     public let directory: URL
     private var file: URL { directory.appendingPathComponent("events.json") }
@@ -9,19 +9,11 @@ public struct TrafficEventArchive: Sendable {
     public init(directory: URL) { self.directory = directory }
 
     public func read() throws -> [TrafficObservationEvent] {
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: directory.path) else { return [] }
-        guard try fm.attributesOfItem(atPath: directory.path)[.type] as? FileAttributeType == .typeDirectory else {
-            throw ContractError.invalidField("eventArchive")
-        }
-        guard fm.fileExists(atPath: file.path) else { return [] }
-        let attrs = try fm.attributesOfItem(atPath: file.path)
-        guard attrs[.type] as? FileAttributeType == .typeRegular,
-              let size = attrs[.size] as? NSNumber, size.intValue <= maxBytes else {
-            throw ContractError.invalidField("eventArchive")
-        }
-        let data = try Data(contentsOf: file)
-        guard data.count <= maxBytes else { throw ContractError.invalidField("eventArchive") }
+        try decode(HistoryFileAccess.read(file, limit: maxBytes))
+    }
+
+    private func decode(_ data: Data?) throws -> [TrafficObservationEvent] {
+        guard let data else { return [] }
         let rows = try JSONDecoder().decode([TrafficObservationEvent].self, from: data)
         guard rows.count <= 1000, Set(rows.map(\.id)).count == rows.count,
               rows.allSatisfy(\.isValid) else { throw ContractError.invalidField("eventArchive") }
@@ -31,27 +23,30 @@ public struct TrafficEventArchive: Sendable {
     public func save(_ events: [TrafficObservationEvent]) throws {
         guard events.count <= 100, Set(events.map(\.id)).count == events.count,
               events.allSatisfy(\.isValid) else { throw ContractError.invalidField("eventArchive") }
-        var rows = Dictionary(uniqueKeysWithValues: try read().map { ($0.id, $0) })
-        for event in events {
-            if let prior = rows[event.id], prior != event { throw ContractError.invalidField("eventArchive") }
-            rows[event.id] = event
+        try HistoryFileAccess.withWriteLock(directory: directory) {
+            let expected = try HistoryFileAccess.read(file, limit: maxBytes)
+            var rows = Dictionary(uniqueKeysWithValues: try decode(expected).map { ($0.id, $0) })
+            for event in events {
+                if let prior = rows[event.id], prior != event { throw ContractError.invalidField("eventArchive") }
+                rows[event.id] = event
+            }
+            guard rows.count <= 1000 else { throw ContractError.invalidField("eventArchive") }
+            try write(Array(rows.values), expected: expected)
         }
-        guard rows.count <= 1000 else { throw ContractError.invalidField("eventArchive") }
-        try write(Array(rows.values))
     }
 
     public func clear() throws {
         // Validate before overwriting; preserve corrupted or unrecognized files.
-        _ = try read()
-        try write([])
+        try HistoryFileAccess.withWriteLock(directory: directory) {
+            let expected = try HistoryFileAccess.read(file, limit: maxBytes)
+            _ = try decode(expected)
+            try write([], expected: expected)
+        }
     }
 
-    private func write(_ rows: [TrafficObservationEvent]) throws {
+    private func write(_ rows: [TrafficObservationEvent], expected: Data?) throws {
         let data = try JSONEncoder().encode(rows)
         guard data.count <= maxBytes else { throw ContractError.invalidField("eventArchive") }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700])
-        try data.write(to: file, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        try HistoryFileAccess.replaceIfUnchanged(file, expected: expected, data: data, limit: maxBytes)
     }
 }

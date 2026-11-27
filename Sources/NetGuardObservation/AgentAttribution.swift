@@ -15,18 +15,21 @@ public enum AgentAttribution {
         guard output.utf8.count <= 1_048_576 else { return [:] }
         var nodes: [Int: ProcessTreeNode] = [:]
         var duplicates = Set<Int>()
+        var seen = Set<Int>()
         for line in output.split(whereSeparator: \.isNewline) {
             let f = line.split(maxSplits: 7, whereSeparator: \.isWhitespace)
-            guard f.count == 8, let pid = Int(f[0]), pid > 0,
-                  let parent = Int(f[1]), parent >= 0,
-                  f[5].range(of: #"^\d{2}:\d{2}:\d{2}$"#, options: .regularExpression) != nil,
-                  Int(f[6]) != nil, f[7].utf8.count <= 4096,
+            guard let first = f.first, let pid = Int(first), pid > 0 else { continue }
+            if !seen.insert(pid).inserted { duplicates.insert(pid) }
+            guard seen.count <= 8192 else { return [:] }
+            guard f.count == 8, let parent = Int(f[1]), parent >= 0, parent != pid,
+                  let start = ProcessStartEvidence.validate(Array(f[2...6])),
+                  f[7].utf8.count <= 4096,
                   !f[7].unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
             else { continue }
             let executable = String(f[7]).trimmingCharacters(in: .whitespaces)
             guard !executable.isEmpty else { continue }
             let node = ProcessTreeNode(pid: pid, parent: parent,
-                                       start: f[2...6].joined(separator: " "), executable: executable)
+                                       start: start, executable: executable)
             if nodes.updateValue(node, forKey: pid) != nil { duplicates.insert(pid) }
             if nodes.count > 8192 { return [:] }
         }
@@ -39,6 +42,7 @@ public enum AgentAttribution {
         let name = (executable as NSString).lastPathComponent.lowercased()
         switch name {
         case "codex": return "Codex"
+        case "chatgpt": return "ChatGPT"
         case "claude", "claude code": return "Claude / Claude Code"
         case "cursor": return "Cursor"
         case "ollama": return "Ollama"
@@ -55,7 +59,18 @@ public enum AgentAttribution {
             guard current > 0, visited.insert(current).inserted, let node = tree[current] else { return nil }
             chain.append(node)
             // Nearest recognized ancestor wins. A child contributes to one group only.
-            if let workload = label(node.executable) { return (workload, chain) }
+            if let workload = label(node.executable) {
+                // Reject a visible cyclic ancestry, including a recognized root.
+                var ancestor = node.parent
+                var checked = visited
+                for _ in 0..<32 {
+                    guard ancestor > 0 else { return (workload, chain) }
+                    guard checked.insert(ancestor).inserted else { return nil }
+                    guard let parent = tree[ancestor] else { return (workload, chain) }
+                    ancestor = parent.parent
+                }
+                return nil
+            }
             current = node.parent
         }
         return nil

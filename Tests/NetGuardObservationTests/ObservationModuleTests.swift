@@ -12,6 +12,33 @@ final class ObservationModuleTests: XCTestCase {
         XCTAssertEqual(window.state(at: 3), .responsive)
     }
 
+    func testVerifiedLifetimeRejectsAmbiguityAndOverflow() throws {
+        func row(_ pid: Int, _ name: String, _ received: UInt64, _ sent: UInt64 = 0) -> ProcessCounter {
+            .init(pid: pid, name: name, start: "fixture", received: received, sent: sent)
+        }
+        XCTAssertNil(AppTrafficParser.verifiedLifetime(nil))
+        XCTAssertNil(AppTrafficParser.verifiedLifetime([]))
+        XCTAssertNil(AppTrafficParser.verifiedLifetime([row(1, "A", 5), row(1, "A", 7)]))
+        XCTAssertNil(AppTrafficParser.verifiedLifetime([row(1, "A", .max, 1)]))
+        XCTAssertNil(AppTrafficParser.verifiedLifetime([row(1, "A", .max), row(2, "A", 1)]))
+        XCTAssertNil(AppTrafficParser.verifiedLifetime([row(1, "A\n", 5)]))
+        XCTAssertEqual(AppTrafficParser.verifiedLifetime([row(1, "A", 5), row(2, "A", 7)]),
+                       [.init(name: "A", bytes: 12)])
+    }
+    func testMalformedDuplicateCannotRetainProcessBaseline() {
+        var accumulator = ProcessUsageAccumulator()
+        func row(_ bytes: UInt64, name: String = "A") -> ProcessCounter {
+            .init(pid: 1, name: name, start: "fixture", received: bytes, sent: 0)
+        }
+        accumulator.ingest([row(10)], uptime: 1)
+        accumulator.ingest([row(20), row(30, name: "")], uptime: 2)
+        XCTAssertTrue(accumulator.report().rows.isEmpty)
+        accumulator.ingest([row(40)], uptime: 3)
+        XCTAssertTrue(accumulator.report().rows.isEmpty)
+        accumulator.ingest([row(50)], uptime: 4)
+        XCTAssertEqual(accumulator.report().rows.first?.received, 10)
+    }
+
     func testLatencyMedianAndMeanConsecutiveChange() throws {
         var window = NetworkQualityWindow()
         for (index, value) in [10.0, 30.0, 20.0, 40.0].enumerated() {

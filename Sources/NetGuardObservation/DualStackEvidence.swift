@@ -1,7 +1,7 @@
 import Foundation
 
 public enum DefaultRouteParseStatus: String, Equatable, Sendable {
-    case parsed, emptyOutput, missingInterface, ambiguousInterface, invalidInterface, outputLimit, invalidRouteFlags
+    case parsed, noDefaultRoute, emptyOutput, missingInterface, ambiguousInterface, invalidInterface, outputLimit, invalidRouteFlags
 }
 public struct DefaultRouteParseResult: Equatable, Sendable {
     public let status: DefaultRouteParseStatus
@@ -13,7 +13,18 @@ public enum DefaultRouteParser {
             .init(status: status, interfaceName: nil)
         }
         guard output.utf8.count <= 65_536 else { return failure(.outputLimit) }
-        guard !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return failure(.emptyOutput) }
+        let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedOutput.isEmpty else { return failure(.emptyOutput) }
+        // Only an exact diagnostic from the bounded, C-locale default-route
+        // query establishes absence. Empty output alone remains unknown.
+        if ["not in table", "route: not in table",
+            "route: writing to routing socket: not in table"].contains(trimmedOutput) {
+            return failure(.noDefaultRoute)
+        }
+        // Do not accept a contradictory route plus a no-route diagnostic.
+        if trimmedOutput.split(whereSeparator: \.isNewline).contains(where: {
+            $0.trimmingCharacters(in: .whitespaces).hasSuffix("not in table")
+        }) { return failure(.missingInterface) }
         var values: [String] = []
         for line in output.split(whereSeparator: \.isNewline) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -93,5 +104,53 @@ public struct InterfaceAddressEvidence: Equatable, Sendable {
         let v6 = hasNonLinkLocalIPv6 ? "非 link-local IPv6 位址已觀測" :
             (hasIPv6 ? "僅觀測到 link-local IPv6" : "IPv6 未確認")
         return v4 + " · " + v6
+    }
+}
+
+
+/// A route-table candidate, not proof of where a packet went or its billing scope.
+public enum ObservedRouteKind: String, CaseIterable, Sendable {
+    case directLinkCandidate, gatewayCandidate, unknown
+}
+
+public struct RoutePathEvidence: Equatable, Sendable {
+    public let interfaceName: String
+    public let kind: ObservedRouteKind
+    // Ephemeral next hop only; do not encode, log or display it.
+    fileprivate let nextHop: String?
+}
+
+public enum RoutePathParser {
+    public static func inspect(_ output: String) -> RoutePathEvidence? {
+        guard let name = DefaultRouteParser.interfaceName(output),
+              name != "lo0", !TunnelEvidence.isTunnelCandidate(name) else { return nil }
+        var flagRows: [Set<String>] = []
+        var gateways: [String] = []
+        for line in output.split(whereSeparator: \.isNewline) {
+            let value = line.trimmingCharacters(in: .whitespaces)
+            if value.hasPrefix("flags:") {
+                flagRows.append(Set(value.dropFirst(6).split(whereSeparator: {
+                    $0 == "<" || $0 == ">" || $0 == "," || $0.isWhitespace
+                }).map(String.init)))
+            } else if value.hasPrefix("gateway:") {
+                gateways.append(String(value.dropFirst(8)).trimmingCharacters(in: .whitespaces))
+            }
+        }
+        guard flagRows.count == 1, let flags = flagRows.first, flags.contains("UP"),
+              flags.isDisjoint(with: ["REJECT", "BLACKHOLE", "LOCAL", "LLINFO", "MULTICAST", "BROADCAST"]),
+              gateways.count <= 1 else { return nil }
+        let hop = gateways.first
+        if flags.contains("GATEWAY") {
+            guard let hop, !hop.isEmpty, hop.utf8.count <= 128 else { return nil }
+            return .init(interfaceName: name, kind: .gatewayCandidate, nextHop: hop)
+        }
+        return .init(interfaceName: name, kind: .directLinkCandidate, nextHop: hop)
+    }
+
+    public static func classify(before: RoutePathEvidence?, after: RoutePathEvidence?,
+                                flowInterface: String, tunnelOverlap: Bool) -> ObservedRouteKind {
+        guard !tunnelOverlap, let before, let after, before == after,
+              before.interfaceName == flowInterface else { return .unknown }
+        return before.kind
     }
 }

@@ -1,3 +1,6 @@
+#if SWIFT_PACKAGE
+import NetGuardCore
+#endif
 import Cocoa
 import Foundation
 import WebKit
@@ -6,6 +9,7 @@ import IOKit
 import SystemConfiguration
 import Network
 import UserNotifications
+import Darwin
 
 // MARK: - 歷史紀錄模型與管理器
 struct DayTrafficRecord {
@@ -33,10 +37,11 @@ class TrafficHistoryManager {
             let database = try HistoryStore(url: directory.appendingPathComponent("history.sqlite"))
             let legacy = home.appendingPathComponent(".nchu_traffic_history.json")
             // Keep legacy source intact. Import cannot overwrite newer SQLite rows.
-            if FileManager.default.fileExists(atPath: legacy.path) {
-                do { try database.importLegacy(Data(contentsOf: legacy)) }
-                catch { healthy = false }
-            }
+            do {
+                if let data = try HistoryFileAccess.read(legacy, limit: 4 * 1024 * 1024) {
+                    try database.importLegacy(data)
+                }
+            } catch { healthy = false }
             store = database
             try refreshCache()
         } catch {
@@ -146,8 +151,163 @@ class ScriptHandler: NSObject, WKScriptMessageHandler {
     }
 }
 
+// Explicit local QA session only. No network identity, names, addresses, or
+// command lines are exported. The private live heartbeat includes PID so the
+// observer can bind it to the selected process; archived samples remove it.
+private final class QAHealthReporter {
+    private let directory: URL
+    private let directoryDevice: dev_t
+    private let directoryInode: ino_t
+    private let destination: URL
+    private var expected: Data?
+    private var lastPublish: TimeInterval?
+    private var lastTick: TimeInterval?
+    private var tickCount: UInt64 = 0
+    private var sampleCount: UInt64 = 0
+    private var measuredCount: UInt64 = 0
+    private var saveCount: UInt64 = 0
+    private var lastSave: TimeInterval?
+    private var maxTickGap: TimeInterval = 0
+    private var maxTickDuration: TimeInterval = 0
+    private var maxSampleAge: TimeInterval = 0
+    private var maxSaveGap: TimeInterval = 0
+    private var safetyHoldTicks: UInt64 = 0
+    private var visibleTicks: UInt64 = 0
+    private var busySince: [String: TimeInterval] = [:]
+    private var maxBusy: [String: TimeInterval] = [:]
+    private var disabled = false
+
+    static func requested() -> QAHealthReporter? {
+        let args = CommandLine.arguments
+        guard let index = args.firstIndex(of: "--netguard-qa-health-dir"),
+              args.indices.contains(index + 1),
+              args[index + 1].hasPrefix("/") else { return nil }
+        return QAHealthReporter(directory: URL(fileURLWithPath: args[index + 1], isDirectory: true))
+    }
+
+    private init?(directory: URL) {
+        var info = stat()
+        guard directory.lastPathComponent == "health",
+              directory.deletingLastPathComponent().lastPathComponent.hasPrefix("unattended-"),
+              lstat(directory.path, &info) == 0,
+              info.st_mode & mode_t(S_IFMT) == mode_t(S_IFDIR),
+              info.st_uid == geteuid(), info.st_mode & 0o077 == 0 else { return nil }
+        self.directory = directory
+        directoryDevice = info.st_dev
+        directoryInode = info.st_ino
+        destination = directory.appendingPathComponent("heartbeat.json")
+        // Never adopt an existing heartbeat, including a dangling alias.
+        var existing = stat()
+        guard lstat(destination.path, &existing) != 0, errno == ENOENT else { return nil }
+    }
+
+    // A dedicated pre-AppKit entrypoint exercises the real writer with
+    // synthetic values only, in the test runner's private temporary folder.
+    static func fixture() -> Int32 {
+        guard let reporter = requested() else { return 2 }
+        func emit(_ value: UInt64, blocked: Bool = false) {
+            reporter.sampled(measured: true)
+            reporter.saved()
+            let now = ProcessInfo.processInfo.systemUptime
+            reporter.lastPublish = nil
+            reporter.tick(start: now, sampleUptime: now, day: "2026-11-28",
+                          received: value, sent: 20, sleeping: false, clockHeld: false,
+                          persistenceBlocked: blocked, accountingOverflow: false, historyHealthy: true,
+                          routeBusy: false, appsBusy: false, pingBusy: false, providerBusy: false, dnsBusy: false, uiVisible: false)
+        }
+        emit(100)
+        guard let first = reporter.expected, !reporter.disabled else { return 1 }
+        emit(110)
+        guard let second = reporter.expected, second != first, !reporter.disabled else { return 1 }
+        // The consumer must reject a recovered safety hold, even when the
+        // current persistence flag is healthy. Never exercise live storage.
+        emit(120, blocked: true)
+        emit(130)
+        guard let fourth = reporter.expected, fourth != second, !reporter.disabled else { return 1 }
+        print("NETGUARD_HEARTBEAT_FIXTURE_OK")
+        return 0
+    }
+
+    func sampled(measured: Bool) {
+        sampleCount &+= 1
+        if measured { measuredCount &+= 1 }
+    }
+
+    func saved() {
+        saveCount &+= 1
+        let uptime = ProcessInfo.processInfo.systemUptime
+        if let lastSave { maxSaveGap = max(maxSaveGap, uptime - lastSave) }
+        lastSave = uptime
+    }
+
+    func tick(start: TimeInterval, sampleUptime: TimeInterval?, day: String,
+              received: UInt64, sent: UInt64, sleeping: Bool, clockHeld: Bool,
+              persistenceBlocked: Bool, accountingOverflow: Bool, historyHealthy: Bool,
+              routeBusy: Bool, appsBusy: Bool, pingBusy: Bool,
+              providerBusy: Bool, dnsBusy: Bool, uiVisible: Bool) {
+        guard !disabled else { return }
+        let uptime = ProcessInfo.processInfo.systemUptime
+        tickCount &+= 1
+        if uiVisible { visibleTicks &+= 1 }
+        if let lastTick { maxTickGap = max(maxTickGap, start - lastTick) }
+        lastTick = start
+        maxTickDuration = max(maxTickDuration, uptime - start)
+        if let sampleUptime { maxSampleAge = max(maxSampleAge, uptime - sampleUptime) }
+        if let lastSave { maxSaveGap = max(maxSaveGap, uptime - lastSave) }
+        if sleeping || clockHeld || persistenceBlocked || accountingOverflow || !historyHealthy {
+            safetyHoldTicks &+= 1
+        }
+        var ages: [String: Double] = [:]
+        for (name, busy) in [("route", routeBusy), ("apps", appsBusy), ("ping", pingBusy),
+                             ("provider", providerBusy), ("dns", dnsBusy)] {
+            if busy {
+                if busySince[name] == nil { busySince[name] = uptime }
+                ages[name] = uptime - (busySince[name] ?? uptime)
+            } else {
+                if let since = busySince[name] {
+                    maxBusy[name] = max(maxBusy[name] ?? 0, uptime - since)
+                }
+                busySince[name] = nil
+                ages[name] = 0
+            }
+            maxBusy[name] = max(maxBusy[name] ?? 0, ages[name] ?? 0)
+        }
+        guard lastPublish.map({ uptime - $0 >= 5 }) ?? true else { return }
+        var info = stat()
+        guard lstat(directory.path, &info) == 0,
+              info.st_dev == directoryDevice, info.st_ino == directoryInode,
+              info.st_uid == geteuid(), info.st_mode & mode_t(S_IFMT) == mode_t(S_IFDIR),
+              info.st_mode & 0o077 == 0 else { disabled = true; return }
+        let payload: [String: Any] = [
+            "schema_version": 1, "pid": Int(ProcessInfo.processInfo.processIdentifier),
+            "wall_seconds": Date().timeIntervalSince1970,
+            "tick_count": tickCount, "sample_cycles": sampleCount, "measured_cycles": measuredCount,
+            "save_successes": saveCount, "max_tick_gap_seconds": maxTickGap,
+            "max_tick_duration_seconds": maxTickDuration,
+            "max_sample_age_seconds": maxSampleAge, "max_save_gap_seconds": maxSaveGap,
+            "safety_hold_ticks": safetyHoldTicks, "max_busy_seconds": maxBusy,
+            "visible_ticks": visibleTicks, "ui_visible": uiVisible,
+            "sample_age_seconds": sampleUptime.map { NSNumber(value: uptime - $0) } as Any? ?? NSNull(),
+            "save_age_seconds": lastSave.map { NSNumber(value: uptime - $0) } as Any? ?? NSNull(),
+            "day": day, "received": received, "sent": sent,
+            "sleeping": sleeping, "clock_held": clockHeld,
+            "persistence_blocked": persistenceBlocked, "accounting_overflow": accountingOverflow,
+            "history_healthy": historyHealthy, "busy_seconds": ages
+        ]
+        do {
+            let bytes = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+            try HistoryFileAccess.replaceIfUnchanged(destination, expected: expected, data: bytes, limit: 16_384)
+            expected = bytes
+            lastPublish = uptime
+        } catch {
+            // No retry storm or alternative path; the observer detects stale data.
+            disabled = true
+        }
+    }
+}
+
 // MARK: - 主應用程式
-class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
+class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var statusItem: NSStatusItem!
     var popover: NSPopover!
     var webView: WKWebView!
@@ -159,6 +319,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     let managementModel = ManagementModel()
     let settingsModel = NetGuardSettingsModel()
     var activeSpeedMeasured = false
+    private let qaHealth = QAHealthReporter.requested()
     
     var secondTimer: Timer?
     var serverSyncTimer: Timer?
@@ -167,38 +328,50 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     
     // 跨日追蹤狀態（獨立分開統計：1.有線宿網、2.興大校園Wi-Fi、3.外部網路/熱點，三者互不干擾污染）
     var currentDateString: String = ""
-    var dormTodayInBytes: Double = 0.0
-    var dormTodayOutBytes: Double = 0.0
-    var wifiTodayInBytes: Double = 0.0
-    var wifiTodayOutBytes: Double = 0.0
-    var extTodayInBytes: Double = 0.0
-    var extTodayOutBytes: Double = 0.0
+    private var trafficLedger = DailyTrafficLedger()
+    private var accountingOverflow = false
+    private var dailyScopeCoverage = DailyScopeCoverage()
+    private var clockHeld = false
+
+    private func hasLocalScopeEvidence(_ scope: NetworkScope) -> Bool {
+        !clockHeld && currentDateString == getTodayString() && !accountingOverflow &&
+        !persistenceBlocked && scopedHistoryEligible && measuredSampleCount > 0 &&
+        dailyScopeCoverage.observed(scope)
+    }
+    var dormTodayInBytes: Double { Double(trafficLedger.totals(for: .dorm).received) }
+    var dormTodayOutBytes: Double { Double(trafficLedger.totals(for: .dorm).sent) }
+    var wifiTodayInBytes: Double { Double(trafficLedger.totals(for: .campusWifi).received) }
+    var wifiTodayOutBytes: Double { Double(trafficLedger.totals(for: .campusWifi).sent) }
+    var extTodayInBytes: Double { Double(trafficLedger.totals(for: .external).received) }
+    var extTodayOutBytes: Double { Double(trafficLedger.totals(for: .external).sent) }
     
     // 向後相容屬性
     var todayInBytes: Double {
         get { return isCampusWifi ? wifiTodayInBytes : dormTodayInBytes }
-        set { if isCampusWifi { wifiTodayInBytes = newValue } else { dormTodayInBytes = newValue } }
     }
     var todayOutBytes: Double {
         get { return isCampusWifi ? wifiTodayOutBytes : dormTodayOutBytes }
-        set { if isCampusWifi { wifiTodayOutBytes = newValue } else { dormTodayOutBytes = newValue } }
     }
     
     // 網路環境模式 (0: 自動偵測, 1: 強制興大有線宿網, 2: 強制興大校園Wi-Fi, 3: 強制外部網路/自由模式)
-    var networkModeOverride: Int = 0
+    private var manualScopeSelection: ManualScopeSelection?
+    var networkModeOverride: Int {
+        switch manualScopeSelection?.scope {
+        case .dorm: return 1
+        case .campusWifi: return 2
+        case .external: return 3
+        default: return 0
+        }
+    }
     
     // 是否為興大校園無線網路 (NCHU Wi-Fi: 每日下載上限 10GB / 上傳 5GB / 總額 15GB，超量限速不斷網)
     var isCampusWifi: Bool {
-        if networkModeOverride == 2 { return true }
-        if networkModeOverride != 0 { return false }
-        return sampledScopes[activeInterface] == .campusWifi
+        return isConnected && sampledScopes[activeInterface] == .campusWifi
     }
     
-    // 是否為興大二村有線宿網 (每日下載上限 7GB / 上傳 4GB / 總額 11GB，超量斷網鎖卡)
+    // Estimated wired dorm scope, not a verified provider classification or block status.
     var isDormNetwork: Bool {
-        if networkModeOverride == 1 { return true }
-        if networkModeOverride != 0 { return false }
-        return sampledScopes[activeInterface] == .dorm
+        return isConnected && sampledScopes[activeInterface] == .dorm
     }
     
     // 是否屬於受興大流量配額管控之網路 (有線宿網或校園Wi-Fi)
@@ -233,13 +406,11 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     
     var networkTypeName: String {
         if isCampusWifi {
-            return "興大校園 Wi-Fi (NCHU)"
+            return "興大校園 Wi-Fi（本機判定）"
         } else if isDormNetwork {
-            return "興大二村 宿網 (有線)"
-        } else if currentIP.hasPrefix("172.20.10.") {
-            return "iPhone 個人熱點"
+            return "興大宿網（手動選擇）"
         } else {
-            return sampledScopes[activeInterface] == .external ? "外部網路（估計）" : "網路歸屬未確認"
+            return isConnected && sampledScopes[activeInterface] == .external ? "外部網路（估計）" : "網路歸屬未確認"
         }
     }
     
@@ -325,8 +496,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var scopedAccumulator = ScopedCounterAccumulator()
     var lastSampleUptime: TimeInterval?
     var sampledScopes: [String: NetworkScope] = [:]
-    var unattributedInBytes: Double = 0
-    var unattributedOutBytes: Double = 0
+    var unattributedInBytes: Double { Double(trafficLedger.totals(for: .unknown).received) }
+    var unattributedOutBytes: Double { Double(trafficLedger.totals(for: .unknown).sent) }
     var sampleGapCount: Int = 0
     var measuredSampleCount: UInt64 = 0
     // Legacy daily files may have different attribution semantics.
@@ -336,15 +507,49 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     var predictionScope: NetworkScope = .unknown
     var predictionIdentity = Set<String>()
     var quotaAlertLedger = QuotaAlertLedger()
+    private var observationRules: ObservationRuleSet? = ObservationRuleSet(rules: [])
+    private var observationRuleBytes: Data?
+    private var observationRuleStatus = "尚未讀取規則"
+    private var observationRuleURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/NCHU-NetGuard/automation-rules.json")
+    }
+
+    private func loadObservationRules() {
+        do {
+            let data = try HistoryFileAccess.read(observationRuleURL, limit: 65_536)
+            observationRuleBytes = data
+            observationRules = try data.map { try ObservationRuleSet.decode($0) } ?? ObservationRuleSet(rules: [])
+            observationRuleStatus = data == nil ? "尚未設定規則；僅供預覽" : "已載入本機規則；僅供預覽"
+        } catch {
+            observationRules = nil
+            observationRuleStatus = "規則檔無法驗證；保留原檔，停用編輯"
+        }
+    }
+
+    private func saveObservationRules(_ rules: ObservationRuleSet) {
+        guard observationRules != nil else { return }
+        do {
+            try rules.validate()
+            let data = try JSONEncoder().encode(rules)
+            try HistoryFileAccess.replaceIfUnchanged(observationRuleURL, expected: observationRuleBytes,
+                data: data, limit: 65_536)
+            observationRuleBytes = data
+            observationRules = rules
+            observationRuleStatus = "已儲存本機規則；沒有執行動作"
+        } catch {
+            observationRules = nil
+            observationRuleStatus = "規則寫入失敗或衝突；保留資料，停用編輯"
+        }
+        syncManagementModel()
+    }
     var alertLedgerBlockedDay: String?
     var currentDownSpeed: Double = 0
     var currentUpSpeed: Double = 0
     
     var topAppConsumers: [(name: String, bytes: Double)] = []
     var providerObservation: ProviderObservation?
-    var providerRequestID = UUID()
-    var providerLastAttempt: Date?
-    var providerRequestInFlight = false
+    var providerPollGate = ProviderPollGate()
     var providerStatusText: String {
         guard isDormNetwork, isConnected else { return "校方榜單不適用或網路未確認" }
         guard let observation = providerObservation else { return "校方資料尚未確認" }
@@ -414,84 +619,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         return false
     }
 
-    // 發送 macOS 系統底層「播放/暫停」多媒體鍵 (Key Code 16)，直接硬體級暫停 YouTube / Chrome / Spotify / Safari，完全無需瀏覽器 JS 權限
-    func sendSystemMediaPause() {
-        func postKey(down: Bool) {
-            let flags: UInt = down ? 0xa00 : 0xb00
-            let data1 = Int((16 << 16) | ((down ? 0xa : 0xb) << 8))
-            if let ev = NSEvent.otherEvent(
-                with: .systemDefined,
-                location: .zero,
-                modifierFlags: NSEvent.ModifierFlags(rawValue: flags),
-                timestamp: 0,
-                windowNumber: 0,
-                context: nil,
-                subtype: 8,
-                data1: data1,
-                data2: -1
-            )?.cgEvent {
-                ev.post(tap: .cghidEventTap)
-            }
-        }
-        postKey(down: true)
-        postKey(down: false)
-    }
-
-    // 檢查系統當前是否正有任何音訊核心持鎖（例如 YouTube 播放、音樂串流阻止休眠）
-    func isAudioPlaying() -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
-        process.arguments = ["-g", "assertions"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        try? process.run()
-        process.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        if let out = String(data: data, encoding: .utf8) {
-            return out.contains("coreaudiod") && (out.contains("preventuseridlesleep") || out.contains("preventuseridledisplaysleep"))
-        }
-        return false
-    }
-
     // 取得使用者距離上次敲擊鍵盤或移動滑鼠/觸控板的閒置秒數
     func getSystemIdleSeconds() -> Double {
         return CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
-    }
-
-    // 偵測 Codex 及其電腦操控代理 (SkyComputerUseService / cua_node / CodexBrowser) 是否正在運行
-    func isCodexEcosystemActive() -> Bool {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-        p.arguments = ["-f", "Codex|SkyComputerUseService|cua_node|cua-repl"]
-        let pipe = Pipe()
-        p.standardOutput = pipe
-        try? p.run()
-        p.waitUntilExit()
-        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        return !out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    // 判斷程序是否享有 Codex 及開發/操控生態系豁免權 (絕不凍結、絕不中斷)
-    func isExemptProcessForCodex(cmdOut: String) -> Bool {
-        let lower = cmdOut.lowercased()
-        let exemptKeywords = [
-            "leadops", "ai.leadops",
-            "codex", "skycomputeruseservice", "cua_node", "cua-repl", "chatgpt",
-            "antigravity", "cursor", "visual studio code", "code helper",
-            "node", "python", "git", "gh", "ssh", "docker", "orbstack",
-            "playwright", "puppeteer", "chromedriver", "webdriver", "remote-debugging"
-        ]
-        for kw in exemptKeywords {
-            if lower.contains(kw) {
-                return true
-            }
-        }
-        return false
-    }
-
-    // 設定 Codex 與受控開發工具的「有線宿網 VIP 豁免靜態路由」
-    func applyCodexWiredExemptionRoutes(wiredService: String, gateway: String) {
-        // Disabled until transactional routing and authorization are implemented.
     }
 
     func activateLidGuard(reason: String, freezeRenderers: Bool = false) {
@@ -510,58 +640,6 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     func deactivateIdleGuard(reason: String) {
         guard !isLidCurrentlyClosed else { return }
         deactivateLidGuard(reason: reason)
-    }
-
-    // 動態解析有線網卡對應的 macOS 網路服務名稱 (例如: "USB 10/100/1000 LAN")
-    func getWiredServiceName() -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-        process.arguments = ["-listnetworkserviceorder"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        try? process.run()
-        process.waitUntilExit()
-        
-        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        let targetDev = self.activeInterface.hasPrefix("en") ? self.activeInterface : "en6"
-        
-        // 解析格式: (1) USB 10/100/1000 LAN \n (Hardware Port: ..., Device: en6)
-        let lines = out.components(separatedBy: .newlines)
-        for i in 0..<lines.count {
-            if lines[i].contains("Device: \(targetDev)") || lines[i].contains("Device: en6") {
-                if i > 0 {
-                    let prevLine = lines[i - 1]
-                    if let parenIdx = prevLine.range(of: ") ") {
-                        let name = String(prevLine[parenIdx.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !name.isEmpty && !name.contains("Wi-Fi") {
-                            return name
-                        }
-                    }
-                }
-            }
-        }
-        return self.disabledWiredServiceName
-    }
-
-    // 取得所有網路服務名稱清單
-    func getAllNetworkServices() -> [String] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-        process.arguments = ["-listallnetworkservices"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        try? process.run()
-        process.waitUntilExit()
-        
-        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        var services: [String] = []
-        for line in out.components(separatedBy: .newlines) {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty && !trimmed.starts(with: "An asterisk") {
-                services.append(trimmed)
-            }
-        }
-        return services
     }
 
     // 免拔線自動避難切換：切換至校園 Wi-Fi，同時為 Codex 及受控開發軟體保留有線專線豁免權！
@@ -587,30 +665,6 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         if popover != nil && popover.isShown { pushDataToWebUI() }
     }
 
-    func getServiceGatewayIP(service: String, fallback: String) -> String {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-        p.arguments = ["-getinfo", service]
-        let pipe = Pipe()
-        p.standardOutput = pipe
-        try? p.run()
-        p.waitUntilExit()
-        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        for line in out.components(separatedBy: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.lowercased().hasPrefix("router:") {
-                let parts = trimmed.components(separatedBy: ":")
-                if parts.count >= 2 {
-                    let gw = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !gw.isEmpty && gw != "none" && gw != "null" {
-                        return gw
-                    }
-                }
-            }
-        }
-        return fallback
-    }
-
     // 探測單一網卡介面的即時延遲 (ms) 與有效傳輸速率 (Mbps)
     // Legacy speed-race controls are unavailable pending a verified, consented
     // interface-specific benchmark. Ordinary latency probes remain available.
@@ -621,48 +675,19 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    func getWiredGatewayIP(service: String) -> String {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-        p.arguments = ["-getinfo", service]
-        let pipe = Pipe()
-        p.standardOutput = pipe
-        try? p.run()
-        p.waitUntilExit()
-        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        for line in out.components(separatedBy: .newlines) {
-            if line.hasPrefix("Router:") {
-                let r = line.replacingOccurrences(of: "Router:", with: "").trimmingCharacters(in: .whitespaces)
-                if !r.isEmpty && r != "none" {
-                    return r
-                }
-            }
-        }
-        
-        let pRoute = Process()
-        pRoute.executableURL = URL(fileURLWithPath: "/sbin/route")
-        pRoute.arguments = ["-n", "get", "default"]
-        let rPipe = Pipe()
-        pRoute.standardOutput = rPipe
-        try? pRoute.run()
-        pRoute.waitUntilExit()
-        let rOut = String(data: rPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        for line in rOut.components(separatedBy: .newlines) {
-            if line.contains("gateway:") {
-                let parts = line.components(separatedBy: ":")
-                if parts.count >= 2 {
-                    let gw = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !gw.isEmpty && gw.hasPrefix("140.120.") {
-                        return gw
-                    }
-                }
-            }
-        }
-        return "140.120.251.126"
-    }
-
     // MARK: - 方向 2: 違規風險防禦與計中黑名單主動預警 (NCHU Security & Blacklist)
+    private var lastP2PScanUptime: TimeInterval?
+    private var lastPeriodicSaveUptime: TimeInterval?
+
     func checkP2PHazard() {
+        guard isDormNetwork || processObservationVisible else {
+            isP2PDetected = false
+            p2pAppName = ""
+            hasAlertedCurrentP2P = false
+            lastP2PScanUptime = nil
+            return
+        }
+        lastP2PScanUptime = ProcessInfo.processInfo.systemUptime
         let p2pKeywords = ["qbittorrent", "transmission", "bitcomet", "thunder", "xunlei", "folx", "deluge", "utorrent", "bittorrent", "webtorrent", "aria2c", "motrix", "biglybt"]
         var foundP2PName: String? = nil
         
@@ -719,6 +744,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     @objc func systemWillSleep() {
         guard workflowPowerGuard.systemSleep() else { return }
+        interfaceMetadataCache.invalidate()
+        clearManualScope()
+        sampledScopes.removeAll()
+        isConnected = false
         observationSchedule.reset()
         observedInterfaceRates = [:]
         observedTunnelCandidates = []
@@ -734,15 +763,14 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         appProbeTimestamp = nil
         topAppConsumers = []
         breakProcessContinuity()
-        sampleGapCount += 1
+        sampleGapCount = min(sampleGapCount + 1, Int(DailyTrafficLedger.maximumTotal))
         savePersistedState()
         scopedAccumulator.reset()
         predictionEngine.reset()
         lastSampleUptime = nil
         pingLatencyMs = -1
         providerObservation = nil
-        providerRequestID = UUID()
-        providerRequestInFlight = false
+        providerPollGate.invalidate()
     }
 
     @objc func screensDidSleep() {
@@ -760,18 +788,23 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             appProbeTimestamp = nil
             topAppConsumers = []
         }
-        providerRequestID = UUID()
-        providerRequestInFlight = false
+        providerPollGate.invalidate()
         if popover != nil && popover.isShown { pushDataToWebUI() }
     }
 
-    func getTodayString() -> String {
+    // Fixed policy timezone; reuse the immutable configuration, not the
+    // date value. Clock changes and midnight remain visible on every call.
+    private let policyDayFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.timeZone = TimeZone(identifier: "Asia/Taipei")
         formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: Date())
+        return formatter
+    }()
+
+    func getTodayString() -> String {
+        policyDayFormatter.string(from: Date())
     }
 
     func getRelativeDateLabel(targetDateStr: String) -> String {
@@ -807,13 +840,14 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         }
         detectActiveNetworkSync()
         loadPersistedState()
+        loadObservationRules()
         initHardwareCounters()
         
         setupPopoverUI()
         startPathObservation()
         syncWithTop100Server()
-        measurePingLatency()
-        inspectTopAppConsumers()
+        // Optional process/latency probes start only when their visibility
+        // or explicit background-consent policy permits them.
         checkIpBlocklist()
         checkP2PHazard()
         
@@ -843,16 +877,19 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         )
         
         secondTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.tickRealtime()
+            autoreleasepool { self?.tickRealtime() }
         }
+        secondTimer?.tolerance = 0.1
         
         serverSyncTimer = Timer.scheduledTimer(withTimeInterval: 180.0, repeats: true) { [weak self] _ in
-            self?.syncWithTop100Server()
+            autoreleasepool { self?.syncWithTop100Server() }
         }
+        serverSyncTimer?.tolerance = 5
         
         blacklistCheckTimer = Timer.scheduledTimer(withTimeInterval: 300.0, repeats: true) { [weak self] _ in
-            self?.checkIpBlocklist()
+            autoreleasepool { self?.checkIpBlocklist() }
         }
+        blacklistCheckTimer?.tolerance = 10
         
 
     }
@@ -864,6 +901,15 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.routeEventToken = UUID()
+                self.interfaceMetadataCache.invalidate()
+                self.clearManualScope()
+                self.sampledScopes.removeAll()
+                self.scopedAccumulator.reset()
+                self.lastSampleUptime = nil
+                self.observedInterfaceRates = [:]
+                self.currentDownSpeed = 0
+                self.currentUpSpeed = 0
+                self.predictionEngine.reset()
                 self.connectionSession.stop()
                 self.lastConnectionSamples = []
                 self.dualStackEvidence = nil
@@ -878,9 +924,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 self.lastPingUptime = nil
                 self.pingLatencyMs = -1
                 self.providerObservation = nil
-                self.providerRequestID = UUID()
-                self.providerLastAttempt = nil
-                self.providerRequestInFlight = false
+                self.providerPollGate.invalidate()
             }
         }
         pathMonitor = monitor
@@ -897,6 +941,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         processHistoryLastDate = nil
         processHistoryLastUptime = nil
         processObservationToken = UUID()
+        appProbeTimestamp = nil
+        topAppConsumers = []
     }
 
     private func setProcessHistoryEnabled(_ enabled: Bool) {
@@ -1153,12 +1199,28 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         }
     }
 
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        let bundled = Bundle.main.url(forResource: "popover", withExtension: "html")?.standardizedFileURL
+        let requested = navigationAction.request.url?.standardizedFileURL
+        decisionHandler(navigationAction.targetFrame?.isMainFrame == true &&
+                        requested?.isFileURL == true && requested == bundled ? .allow : .cancel)
+    }
+
     func setupPopoverUI() {
         popover = NSPopover()
         let availableHeight = NSScreen.main?.visibleFrame.height ?? 650
         let panelHeight = max(280, min(570, availableHeight - 70))
         popover.contentSize = NSSize(width: 380, height: panelHeight)
         popover.behavior = .transient
+        webView = nil
+        // Defer both panel implementations until the first user opening.
+        // Background traffic accounting does not require a renderer.
+    }
+
+    private func preparePopoverContent() {
+        guard popover.contentViewController == nil else { return }
+        let panelHeight = popover.contentSize.height
         if nativePanelEnabled {
             webView = nil
             popover.contentViewController = NSHostingController(rootView: QuickPanel(
@@ -1178,9 +1240,11 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         let controller = WKUserContentController()
         controller.add(ScriptHandler(app: self), name: "nativeApp")
         config.userContentController = controller
+        config.websiteDataStore = .nonPersistent()
         
         let vc = NSViewController()
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 380, height: panelHeight), configuration: config)
+        webView.navigationDelegate = self
         webView.setValue(false, forKey: "drawsBackground")
         vc.view = webView
         popover.contentViewController = vc
@@ -1189,7 +1253,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             webView.loadHTMLString("<p>NetGuard: missing bundled interface.</p>", baseURL: nil)
             return
         }
-        webView.loadFileURL(htmlURL, allowingReadAccessTo: htmlURL.deletingLastPathComponent())
+        webView.loadFileURL(htmlURL, allowingReadAccessTo: htmlURL)
     }
 
     func updateQuickPanel() {
@@ -1201,7 +1265,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             connected: isConnected, scope: scope,
             persistenceHealthy: !persistenceBlocked && TrafficHistoryManager.shared.healthy && !persistenceStatus.contains("失敗"),
             sampleGapCount: sampleGapCount,
-            providerFresh: providerObservation?.isFresh(for: getTodayString(), now: Date()) == true && providerObservation?.status == .listed
+            providerFresh: providerObservation?.isUsableRanking(for: getTodayString(), now: Date()) == true
         )).first?.summary ?? "狀態未知"
         let now = ProcessInfo.processInfo.systemUptime
         let fresh = lastSampleUptime.map { now >= $0 && now - $0 <= 5 } ?? false
@@ -1209,7 +1273,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             ? "↓ " + formatSpeed(currentDownSpeed) + "   ↑ " + formatSpeed(currentUpSpeed) : "未量測"
         let state = QuickPanelState(networkName: scope == .unknown ? "網路歸屬未確認" : networkTypeName,
             connectionKnown: isConnected && workflowPowerGuard.allowsSampling,
-            scope: compatible ? scope : .unknown,
+            scope: compatible && hasLocalScopeEvidence(scope) ? scope : .unknown,
             received: dl, sent: ul, receiveLimit: dlQuotaBytes, sendLimit: ulQuotaBytes,
             speedText: speed, diagnostic: diagnostic, forecast: forecastPresentation().message,
             provider: providerStatusText, focusEnabled: workflowPowerGuard.focusEnabled, alertsEnabled: isAlertEnabled,
@@ -1222,9 +1286,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         popover?.performClose(nil)
         nativePanelEnabled = native
         setupPopoverUI()
-        pushDataToWebUI()
         syncSettingsModel()
         if show, let button = statusItem.button {
+            preparePopoverContent()
+            pushDataToWebUI()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
     }
@@ -1454,7 +1519,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         let now = ProcessInfo.processInfo.systemUptime
         let connected = isConnected && workflowPowerGuard.allowsSampling
         let scope = sampledScopes[activeInterface] ?? .unknown
-        let rows = topAppConsumers.compactMap { item -> ProcessSampleRow? in
+        let rows = (processObservationAllowed ? topAppConsumers : []).compactMap { item -> ProcessSampleRow? in
             guard let bytes = UInt64(exactly: item.bytes) else { return nil }
             return ProcessSampleRow(name: item.name, bytes: bytes)
         }
@@ -1462,7 +1527,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         let input = DiagnosticInput(connected: connected, scope: scope,
             persistenceHealthy: !persistenceBlocked && TrafficHistoryManager.shared.healthy && !persistenceStatus.contains("失敗"),
             sampleGapCount: sampleGapCount,
-            providerFresh: providerObservation?.isFresh(for: getTodayString(), now: Date()) == true && providerObservation?.status == .listed)
+            providerFresh: providerObservation?.isUsableRanking(for: getTodayString(), now: Date()) == true)
         let latency = networkQuality.summary(at: now)
         let latencyStatus = latency.map { String(format: "延遲中位數 %.1f ms · 相鄰探測平均變動 %.1f ms（%d 筆）", $0.medianMilliseconds, $0.meanChangeMilliseconds, $0.sampleCount) } ?? networkQuality.state(at: now).description
         let echo = connected ? echoWindow.summary(at: now) : nil
@@ -1497,10 +1562,16 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         } else {
             ledgerStatus = "提醒等級隨每日紀錄保存；不是通知送達證明"
         }
+        let ruleInput = ObservationRuleInput(
+            scope: connected && scope != .unknown ? scope : nil,
+            quotaTier: localQuotaAssessment()?.tier,
+            connected: connected ? true : nil, focusEnabled: workflowPowerGuard.focusEnabled)
+        let preview = observationRules.map { ObservationRuleEngine.preview($0, input: ruleInput) }
         let automation = AutomationSnapshot(alertsEnabled: isAlertEnabled,
             focusEnabled: workflowPowerGuard.focusEnabled, sleeping: workflowPowerGuard.systemSleeping,
             assessment: localQuotaAssessment(), ledger: quotaAlertLedger,
-            day: currentDateString, ledgerStatus: ledgerStatus)
+            day: currentDateString, ledgerStatus: ledgerStatus,
+            rules: observationRules, rulePreview: preview, ruleStorageStatus: observationRuleStatus)
         if managementModel.automation != automation { managementModel.automation = automation }
     }
 
@@ -1554,6 +1625,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                     self.toggleFocusMode()
                     self.syncManagementModel()
                 },
+                saveObservationRules: { [weak self] rules in self?.saveObservationRules(rules) },
                 setHistoryEnabled: { [weak self] in self?.setProcessHistoryEnabled($0) },
                 setAgentHistoryEnabled: { [weak self] in self?.setAgentHistoryEnabled($0) },
                 reloadAgentHistory: { [weak self] in self?.agentHistoryOperation() },
@@ -1632,6 +1704,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 let summary = try HistoryBundle.create(database: source, process: process,
                     connections: connections, events: events, agents: agents, destination: destination)
                 status = "備份已建立：" + Self.bundleSummary(summary)
+            } catch HistoryBundlePublicationError.durabilityUncertain {
+                status = "備份副本已建立，但落盤狀態未確認；請保留副本並重新預檢，勿覆寫"
             } catch {
                 status = "完整歷史備份失敗；未覆寫既有目的地"
             }
@@ -1692,8 +1766,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             do {
                 let summary = try HistoryBundle.recoverCopy(from: source, to: destination)
                 status = "隔離復原完成：" + Self.bundleSummary(summary) + "；未取代使用中的資料"
+            } catch HistoryBundlePublicationError.durabilityUncertain {
+                status = "復原副本已建立，但落盤狀態未確認；請保留並重新預檢，未取代使用中的資料"
             } catch {
-                status = "隔離復原失敗；未發布復原副本或覆寫既有目的地"
+                status = "隔離復原失敗；未覆寫既有目的地或使用中的資料"
             }
             DispatchQueue.main.async {
                 self?.settingsModel.backupBusy = false
@@ -1787,8 +1863,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     private func personalBudgetReading() -> PersonalBudgetReading? {
-        guard let budget = personalBudget, !persistenceBlocked, scopedHistoryEligible,
-              measuredSampleCount > 0, currentDateString == getTodayString() else { return nil }
+        guard let budget = personalBudget, hasLocalScopeEvidence(budget.scope) else { return nil }
         let pair: (Double, Double)
         switch budget.scope {
         case .dorm: pair = (dormTodayInBytes, dormTodayOutBytes)
@@ -1796,10 +1871,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         case .external: pair = (extTodayInBytes, extTodayOutBytes)
         case .unknown: return nil
         }
-        // Global coverage does not establish that a particular scope was observed.
-        // Until per-scope coverage is recorded, an all-zero category stays unknown.
-        guard let received = UInt64(exactly: pair.0), let sent = UInt64(exactly: pair.1),
-              received > 0 || sent > 0 else { return nil }
+        // Per-scope measured intervals establish zero versus absence, not
+        // a complete accounting day or official provider balance.
+        guard let received = UInt64(exactly: pair.0), let sent = UInt64(exactly: pair.1) else { return nil }
         return budget.evaluate(received: received, sent: sent, observed: true)
     }
 
@@ -1891,6 +1965,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         if popover.isShown {
             popover.performClose(sender)
         } else {
+            preparePopoverContent()
             pushDataToWebUI()
             popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
             // 打開面板時立即採樣最新的最耗流量 App 與 Ping 延遲，零延遲呈現
@@ -1900,6 +1975,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     func pushDataToWebUI() {
+        guard popover?.contentViewController != nil else { return }
         if nativePanelEnabled {
             updateQuickPanel()
             return
@@ -1918,208 +1994,83 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         let ulPct = min(max((ulUsed / ulQuotaBytes) * 100.0, 0.0), 100.0)
         
         var appsArray: [[String: String]] = []
-        let appSampleFresh = appProbeTimestamp.map { ProcessInfo.processInfo.systemUptime - $0 <= 30 } ?? false
+        let appNow = ProcessInfo.processInfo.systemUptime
+        let appSampleFresh = processObservationAllowed &&
+            (appProbeTimestamp.map { appNow >= $0 && appNow - $0 <= 30 } ?? false)
         for item in (appSampleFresh ? topAppConsumers : []).prefix(4) {
             appsArray.append(["name": item.name, "bytes": formatBytes(item.bytes)])
         }
 
-        // 構建極致清楚的歷史對比清單 (包含今天 + 過去數日)
+        // Only observed scope rows belong in the local history list. The
+        // aggregate daily history spans scopes and is not a campus quota.
         var histArray: [[String: String]] = []
         let todayShortDate = String(currentDateString.suffix(5))
-        
-        if isDormNetwork {
-            histArray.append([
-                "label": "今日 (宿網有線)",
-                "date": todayShortDate,
-                "total": formatBytes(dormTodayInBytes + dormTodayOutBytes),
-                "dl": formatBytes(dormTodayInBytes),
-                "ul": formatBytes(dormTodayOutBytes),
-                "pct": String(format: "%.1f%%", min((dormTodayInBytes / (7.0 * 1024 * 1024 * 1024)) * 100.0, 100.0))
-            ])
-            if (wifiTodayInBytes + wifiTodayOutBytes) > 0 {
-                histArray.append([
-                    "label": "今日 (校園 Wi-Fi)",
-                    "date": todayShortDate,
-                    "total": formatBytes(wifiTodayInBytes + wifiTodayOutBytes),
-                    "dl": formatBytes(wifiTodayInBytes),
-                    "ul": formatBytes(wifiTodayOutBytes),
-                    "pct": String(format: "%.1f%%", min((wifiTodayInBytes / (10.0 * 1024 * 1024 * 1024)) * 100.0, 100.0))
-                ])
-            }
-        } else if isCampusWifi {
-            histArray.append([
-                "label": "今日 (校園 Wi-Fi)",
-                "date": todayShortDate,
-                "total": formatBytes(wifiTodayInBytes + wifiTodayOutBytes),
-                "dl": formatBytes(wifiTodayInBytes),
-                "ul": formatBytes(wifiTodayOutBytes),
-                "pct": String(format: "%.1f%%", min((wifiTodayInBytes / (10.0 * 1024 * 1024 * 1024)) * 100.0, 100.0))
-            ])
-            if (dormTodayInBytes + dormTodayOutBytes) > 0 {
-                histArray.append([
-                    "label": "今日 (宿網有線)",
-                    "date": todayShortDate,
-                    "total": formatBytes(dormTodayInBytes + dormTodayOutBytes),
-                    "dl": formatBytes(dormTodayInBytes),
-                    "ul": formatBytes(dormTodayOutBytes),
-                    "pct": String(format: "%.1f%%", min((dormTodayInBytes / (7.0 * 1024 * 1024 * 1024)) * 100.0, 100.0))
-                ])
-            }
-        } else {
-            let extTotal = extTodayInBytes + extTodayOutBytes
-            histArray.append([
-                "label": "今日 (非宿網/熱點)",
-                "date": todayShortDate,
-                "total": formatBytes(extTotal),
-                "dl": formatBytes(extTodayInBytes),
-                "ul": formatBytes(extTodayOutBytes),
-                "pct": "自由"
-            ])
-            if (dormTodayInBytes + dormTodayOutBytes) > 0 {
-                histArray.append([
-                    "label": "今日 (宿網有線)",
-                    "date": todayShortDate,
-                    "total": formatBytes(dormTodayInBytes + dormTodayOutBytes),
-                    "dl": formatBytes(dormTodayInBytes),
-                    "ul": formatBytes(dormTodayOutBytes),
-                    "pct": String(format: "%.1f%%", min((dormTodayInBytes / (7.0 * 1024 * 1024 * 1024)) * 100.0, 100.0))
-                ])
-            }
+        let todayObserved = !clockHeld && !persistenceBlocked && !accountingOverflow &&
+            currentDateString == getTodayString() && measuredSampleCount > 0
+        for (scope, label) in [(NetworkScope.dorm, "宿網"), (.campusWifi, "校園 Wi-Fi"), (.external, "外部網路")] {
+            guard hasLocalScopeEvidence(scope) else { continue }
+            let totals = trafficLedger.totals(for: scope)
+            let rx = Double(totals.received), tx = Double(totals.sent)
+            histArray.append(["label": "今日 " + label + "（已觀測）", "date": todayShortDate,
+                "total": formatBytes(rx + tx), "dl": formatBytes(rx), "ul": formatBytes(tx), "pct": "本機紀錄"])
         }
-        
-        // 2. 過去歷史紀錄 (按日期降序)
         let history = TrafficHistoryManager.shared.loadHistory()
-        for d in history.keys.filter({ $0 != self.currentDateString }).sorted().suffix(5).reversed() {
-            if let rec = history[d] {
-                let shortDate = String(d.suffix(5))
-                let relLabel = getRelativeDateLabel(targetDateStr: d)
-                let pct = min(max((rec.total / totalQuotaBytes) * 100.0, 0.0), 100.0)
-                histArray.append([
-                    "label": relLabel,
-                    "date": shortDate,
-                    "total": formatBytes(rec.total),
-                    "dl": rec.dl.map { formatBytes($0) } ?? "未知",
-                    "ul": rec.ul.map { formatBytes($0) } ?? "未知",
-                    "pct": String(format: "%.1f%%", pct)
-                ])
-            }
+        for day in history.keys.filter({ $0 < currentDateString }).sorted().suffix(5).reversed() {
+            guard let record = history[day] else { continue }
+            histArray.append(["label": getRelativeDateLabel(targetDateStr: day), "date": String(day.suffix(5)),
+                "total": formatBytes(record.total), "dl": record.dl.map { formatBytes($0) } ?? "未知",
+                "ul": record.ul.map { formatBytes($0) } ?? "未知", "pct": "跨範圍合計"])
         }
-        
-        // 3. 構建近 7 日趨勢柱狀圖與統計分析資料 (由 6 天前到今天)
-        var chartDays: [[String: Any]] = []
-        let cal = Calendar.current
+
+        // Use the same calendar as the accepted daily accounting boundary.
+        // Chart height is relative to observed bytes, never to a campus quota.
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "Asia/Taipei")!
         let dateFormatter = DateFormatter()
+        dateFormatter.calendar = cal
+        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dateFormatter.timeZone = cal.timeZone
         dateFormatter.dateFormat = "yyyy-MM-dd"
-        
         let weekdaySymbols = ["日", "一", "二", "三", "四", "五", "六"]
         let todayDate = dateFormatter.date(from: currentDateString) ?? Date()
-        var total7DayBytes: Double = 0
-        var yesterdayTotalBytes: Double = 0
-        var todayCombinedBytes: Double = 0
-        var maxBytesVal: Double = 0
-        var maxBytesDateLabel: String = ""
-        
+        var chartDays: [[String: Any]] = []
+        var observedTotals: [Double] = []
+        var peak = 0.0
         for i in (0...6).reversed() {
-            guard let d = cal.date(byAdding: .day, value: -i, to: todayDate) else { continue }
-            let dateStr = dateFormatter.string(from: d)
-            let shortDate = String(dateStr.suffix(5))
-            let weekdayIndex = cal.component(.weekday, from: d) - 1
-            let weekdayStr = (weekdayIndex >= 0 && weekdayIndex < 7) ? weekdaySymbols[weekdayIndex] : ""
-            
-            let isToday = (i == 0)
-            let dayLabel: String
-            if isToday {
-                dayLabel = "今天"
-            } else if i == 1 {
-                dayLabel = "昨天"
-            } else {
-                dayLabel = "\(weekdayStr)"
-            }
-            
-            let dayTotal: Double
-            let dayDl: Double?
-            let dayUl: Double?
-            
-            if isToday {
-                let rx = dormTodayInBytes + wifiTodayInBytes + extTodayInBytes + unattributedInBytes
-                let tx = dormTodayOutBytes + wifiTodayOutBytes + extTodayOutBytes + unattributedOutBytes
-                dayDl = rx
-                dayUl = tx
-                dayTotal = rx + tx
-                todayCombinedBytes = dayTotal
-            } else {
-                if let rec = history[dateStr] {
-                    dayTotal = rec.total
-                    dayDl = rec.dl
-                    dayUl = rec.ul
-                } else {
-                    dayTotal = 0
-                    dayDl = nil
-                    dayUl = nil
-                }
-                if i == 1 {
-                    yesterdayTotalBytes = dayTotal
-                }
-            }
-            
-            total7DayBytes += dayTotal
-            if dayTotal > maxBytesVal {
-                maxBytesVal = dayTotal
-                maxBytesDateLabel = isToday ? "今天" : (i == 1 ? "昨天" : shortDate)
-            }
-            
-            let pctOfQuota = (totalQuotaBytes > 0) ? (dayTotal / totalQuotaBytes) * 100.0 : 0.0
-            let statusLevel: String
-            if pctOfQuota >= 85.0 {
-                statusLevel = "danger"
-            } else if pctOfQuota >= 60.0 {
-                statusLevel = "warning"
-            } else {
-                statusLevel = "safe"
-            }
-            
-            chartDays.append([
-                "date": dateStr,
-                "shortDate": shortDate,
-                "dayLabel": dayLabel,
-                "weekday": weekdayStr,
-                "totalBytes": dayTotal,
-                "totalGB": String(format: "%.2f", dayTotal / (1024 * 1024 * 1024)),
-                "dlStr": dayDl.map { formatBytes($0) } ?? "未知",
-                "ulStr": dayUl.map { formatBytes($0) } ?? "未知",
-                "totalStr": (isToday || history[dateStr] != nil) ? formatBytes(dayTotal) : "無紀錄",
-                "pctOfQuota": String(format: "%.1f", min(pctOfQuota, 140.0)),
-                "statusLevel": statusLevel,
-                "isToday": isToday
-            ])
+            guard let date = cal.date(byAdding: .day, value: -i, to: todayDate) else { continue }
+            let day = dateFormatter.string(from: date)
+            let weekday = weekdaySymbols[cal.component(.weekday, from: date) - 1]
+            let isToday = i == 0
+            let observed = isToday ? todayObserved : history[day] != nil
+            let rx = isToday ? (observed ? Double(trafficLedger.aggregate.received) : nil) : history[day]?.dl
+            let tx = isToday ? (observed ? Double(trafficLedger.aggregate.sent) : nil) : history[day]?.ul
+            let total = isToday ? (observed ? Double(trafficLedger.aggregate.received) + Double(trafficLedger.aggregate.sent) : 0) : (history[day]?.total ?? 0)
+            if observed { observedTotals.append(total); peak = max(peak, total) }
+            chartDays.append(["date": day, "shortDate": String(day.suffix(5)),
+                "dayLabel": isToday ? "本日帳本" : (i == 1 ? "前一日" : weekday), "weekday": weekday,
+                "totalBytes": total, "dlStr": rx.map { formatBytes($0) } ?? "未知",
+                "ulStr": tx.map { formatBytes($0) } ?? "未知",
+                "totalStr": observed ? formatBytes(total) : "無紀錄",
+                "observed": observed, "statusLevel": "unknown", "isToday": isToday])
         }
-        
-        let recordedDays = chartDays.filter { ($0["totalStr"] as? String) != "無紀錄" }.count
-        let avg7DayGB = (total7DayBytes / Double(max(1, recordedDays))) / (1024 * 1024 * 1024)
-        var diffVsYesterdayPct = 0.0
-        var diffTrend = "flat"
-        if yesterdayTotalBytes > 0 {
-            diffVsYesterdayPct = ((todayCombinedBytes - yesterdayTotalBytes) / yesterdayTotalBytes) * 100.0
-            if diffVsYesterdayPct > 5.0 {
-                diffTrend = "up"
-            } else if diffVsYesterdayPct < -5.0 {
-                diffTrend = "down"
-            }
+        for index in chartDays.indices {
+            let total = chartDays[index]["totalBytes"] as? Double ?? 0
+            chartDays[index]["relativeHeight"] = peak > 0 ? total / peak : 0
         }
-        
-        let diffSign = diffVsYesterdayPct >= 0 ? "+" : ""
+        let average = observedTotals.isEmpty ? "無紀錄" : formatBytes(observedTotals.reduce(0, +) / Double(observedTotals.count))
         let chartData: [String: Any] = [
-            "days": chartDays,
-            "avg7DayStr": String(format: "%.1f GB（有紀錄日）", avg7DayGB),
-            "diffVsYesterdayStr": yesterdayTotalBytes > 0 ? String(format: "%@%.0f%%", diffSign, diffVsYesterdayPct) : "無法比較",
-            "diffTrend": diffTrend,
-            "maxWeekStr": String(format: "%.1f GB (%@)", maxBytesVal / (1024 * 1024 * 1024), maxBytesDateLabel),
-            "quotaGBStr": String(format: "%.0f GB", totalQuotaBytes / (1024 * 1024 * 1024))
+            "days": chartDays, "avg7DayStr": average + "（有紀錄日）",
+            "diffVsYesterdayStr": "不同觀測時段，未直接比較", "diffTrend": "flat",
+            "maxWeekStr": observedTotals.isEmpty ? "無紀錄" : formatBytes(peak),
+            "quotaGBStr": "跨範圍用量，非配額"
         ]
-        
+
         let pingFresh = lastPingUptime.map { ProcessInfo.processInfo.systemUptime - $0 <= 120 } ?? false
         let pingStr = isConnected && pingFresh && pingLatencyMs >= 0 ? String(format: "%.1f ms", pingLatencyMs) : "未量測"
-        let speedStr = String(format: "↓ %@   ↑ %@", formatSpeed(currentDownSpeed), formatSpeed(currentUpSpeed))
+        let nowUptime = ProcessInfo.processInfo.systemUptime
+        let rateFresh = lastSampleUptime.map { nowUptime >= $0 && nowUptime - $0 <= 5 } ?? false
+        let speedStr = activeSpeedMeasured && rateFresh && !clockHeld && workflowPowerGuard.allowsSampling
+            ? String(format: "↓ %@   ↑ %@", formatSpeed(currentDownSpeed), formatSpeed(currentUpSpeed)) : "未量測"
         let extTotal = extTodayInBytes + extTodayOutBytes
         
         let forecast = forecastPresentation()
@@ -2130,6 +2081,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             "isDorm": isDormNetwork,
             "isCampusWifi": isCampusWifi,
             "isQuotaRestricted": isQuotaRestricted,
+            "localEstimateAvailable": localQuotaAssessment() != nil,
+            "externalUsageAvailable": !isQuotaRestricted && hasLocalScopeEvidence(.external),
             "networkTypeName": networkTypeName,
             "providerStatus": providerStatusText,
             "focusEnabled": workflowPowerGuard.focusEnabled,
@@ -2146,7 +2099,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 connected: isConnected, scope: sampledScopes[activeInterface] ?? .unknown,
                 persistenceHealthy: !persistenceBlocked && TrafficHistoryManager.shared.healthy && !persistenceStatus.contains("失敗"),
                 sampleGapCount: sampleGapCount,
-                providerFresh: providerObservation?.isFresh(for: getTodayString(), now: Date()) == true && providerObservation?.status == .listed
+                providerFresh: providerObservation?.isUsableRanking(for: getTodayString(), now: Date()) == true
             )).first?.summary ?? "狀態未知",
             "observedInterfaces": sampledScopes.keys.sorted().joined(separator: ", "),
             "date": currentDateString,
@@ -2163,15 +2116,15 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             "remUlStr": String(format: "%.2f", remUlGB),
             "ulPctStr": String(format: "%.1f%%", ulPct),
             "usedUlStr": formatBytes(ulUsed),
-            "dormDlStr": formatBytes(dormTodayInBytes),
-            "dormUlStr": formatBytes(dormTodayOutBytes),
-            "dormTotalStr": formatBytes(dormTodayInBytes + dormTodayOutBytes),
-            "wifiDlStr": formatBytes(wifiTodayInBytes),
-            "wifiUlStr": formatBytes(wifiTodayOutBytes),
-            "wifiTotalStr": formatBytes(wifiTodayInBytes + wifiTodayOutBytes),
-            "extTotalStr": formatBytes(extTotal),
-            "extDlStr": formatBytes(extTodayInBytes),
-            "extUlStr": formatBytes(extTodayOutBytes),
+            "dormDlStr": hasLocalScopeEvidence(.dorm) ? formatBytes(dormTodayInBytes) : "未量測",
+            "dormUlStr": hasLocalScopeEvidence(.dorm) ? formatBytes(dormTodayOutBytes) : "未量測",
+            "dormTotalStr": hasLocalScopeEvidence(.dorm) ? formatBytes(dormTodayInBytes + dormTodayOutBytes) : "未量測",
+            "wifiDlStr": hasLocalScopeEvidence(.campusWifi) ? formatBytes(wifiTodayInBytes) : "未量測",
+            "wifiUlStr": hasLocalScopeEvidence(.campusWifi) ? formatBytes(wifiTodayOutBytes) : "未量測",
+            "wifiTotalStr": hasLocalScopeEvidence(.campusWifi) ? formatBytes(wifiTodayInBytes + wifiTodayOutBytes) : "未量測",
+            "extTotalStr": hasLocalScopeEvidence(.external) ? formatBytes(extTotal) : "未量測",
+            "extDlStr": hasLocalScopeEvidence(.external) ? formatBytes(extTodayInBytes) : "未量測",
+            "extUlStr": hasLocalScopeEvidence(.external) ? formatBytes(extTodayOutBytes) : "未量測",
             "isLidGuardEnabled": isLidGuardEnabled,
             "isIdleGuardEnabled": isIdleGuardEnabled,
             "isAutoWifiFailoverEnabled": isAutoWifiFailoverEnabled,
@@ -2203,11 +2156,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             "chartData": chartData
         ]
         
-        if let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: []),
-           let jsonStr = String(data: jsonData, encoding: .utf8) {
-            let js = "if (window.updateStats) { window.updateStats(\(jsonStr)); }"
-            webView?.evaluateJavaScript(js, completionHandler: nil)
-        }
+        webView?.callAsyncJavaScript("if (window.updateStats) { window.updateStats(stats); }",
+                                     arguments: ["stats": payload], in: nil, in: .page,
+                                     completionHandler: nil)
     }
 
     @objc func systemDidWake() {
@@ -2224,7 +2175,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                   self.workflowPowerGuard.allowsSampling else { return }
             self.detectActiveNetwork {
                 self.syncWithTop100Server()
-                self.measurePingLatency()
+                if self.processObservationVisible { self.measurePingLatency() }
                 self.inspectTopAppConsumers()
             }
         }
@@ -2232,16 +2183,17 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     var persistenceStatus = "尚未載入"
     var persistenceBlocked = false
+    private var expectedDailyStateBytes: Data?
 
     func loadPersistedState() {
         let today = getTodayString()
         let url = URL(fileURLWithPath: stateFilePath)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            persistenceStatus = "新紀錄"
-            return
-        }
         do {
-            let data = try Data(contentsOf: url)
+            guard let data = try HistoryFileAccess.read(url, limit: 1_048_576) else {
+                persistenceStatus = "新紀錄"
+                return
+            }
+            expectedDailyStateBytes = data
             let usage = try UsageMigration.decode(data)
             guard usage.date <= today else { throw UsageMigrationError.invalidDate }
             let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
@@ -2252,18 +2204,28 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             isAlertEnabled = json["alert_enabled"] as? Bool ?? true
             isLidGuardEnabled = json["lid_guard_enabled"] as? Bool ?? true
             isIdleGuardEnabled = json["idle_guard_enabled"] as? Bool ?? true
+            var restored = DailyTrafficLedger()
+            for (scope, dl, ul) in [
+                (NetworkScope.dorm, usage.dormIn, usage.dormOut),
+                (.campusWifi, usage.wifiIn, usage.wifiOut),
+                (.external, usage.externalIn, usage.externalOut),
+                (.unknown, usage.unattributedIn, usage.unattributedOut)
+            ] {
+                guard restored.add(scope: scope, received: dl, sent: ul) else {
+                    throw UsageMigrationError.invalidCounter
+                }
+            }
+            let restoredCoverage: DailyScopeCoverage? = usage.measuredSampleCount > 0
+                ? (json["observed_scopes"] as? [String]).flatMap(DailyScopeCoverage.restore)
+                : nil
             if usage.date == today {
-                dormTodayInBytes = Double(usage.dormIn)
-                dormTodayOutBytes = Double(usage.dormOut)
-                wifiTodayInBytes = Double(usage.wifiIn)
-                wifiTodayOutBytes = Double(usage.wifiOut)
-                extTodayInBytes = Double(usage.externalIn)
-                extTodayOutBytes = Double(usage.externalOut)
-                unattributedInBytes = Double(usage.unattributedIn)
-                unattributedOutBytes = Double(usage.unattributedOut)
+                trafficLedger = restored
+                accountingOverflow = json["accounting_overflow"] as? Bool == true
                 sampleGapCount = Int(usage.sampleGapCount)
                 measuredSampleCount = usage.measuredSampleCount
                 scopedHistoryEligible = json["scoped_history_eligible"] as? Bool == true
+                // Legacy files have no affirmative per-scope observation marker.
+                if let coverage = restoredCoverage { dailyScopeCoverage = coverage }
                 if json["alert_ledger_valid"] as? Bool == false {
                     alertLedgerBlockedDay = today
                 } else if let raw = json["alert_ledger"] {
@@ -2278,13 +2240,17 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 // Preserve the complete original file before replacing a prior day.
                 let backup = url.deletingLastPathComponent().appendingPathComponent(
                     ".nchu_traffic_archive-" + usage.date + "-" + UUID().uuidString + ".json")
-                try FileManager.default.copyItem(at: url, to: backup)
+                try HistoryFileAccess.replaceIfUnchanged(backup, expected: nil, data: data, limit: 1_048_576)
                 let dl = Double(usage.dormIn) + Double(usage.wifiIn) +
                     Double(usage.externalIn) + Double(usage.unattributedIn)
                 let ul = Double(usage.dormOut) + Double(usage.wifiOut) +
                     Double(usage.externalOut) + Double(usage.unattributedOut)
-                if dl + ul > 0 || usage.measuredSampleCount > 0 {
-                    guard TrafficHistoryManager.shared.recordDay(date: usage.date, dl: dl, ul: ul, preserveExisting: true) else {
+                if json["accounting_overflow"] as? Bool != true && (dl + ul > 0 || usage.measuredSampleCount > 0) {
+                    var scopes: [NetworkScope: HistoryDay]?
+                    if json["scoped_history_eligible"] as? Bool == true, let coverage = restoredCoverage {
+                        scopes = try ScopedHistoryDay.project(day: usage.date, ledger: restored, coverage: coverage).scopes
+                    }
+                    guard TrafficHistoryManager.shared.recordDay(date: usage.date, dl: dl, ul: ul, preserveExisting: true, scopes: scopes) else {
                         throw HistoryStoreError.database("previous day history unavailable")
                     }
                 }
@@ -2298,24 +2264,29 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    func savePersistedState() {
-        guard !persistenceBlocked else { return }
+    @discardableResult
+    func savePersistedState(allowFinalizingPriorDay: Bool = false) -> Bool {
+        let today = getTodayString()
+        guard !persistenceBlocked, !clockHeld,
+              currentDateString == today || (allowFinalizingPriorDay && currentDateString < today) else { return false }
         let dict: [String: Any] = [
             "schema_version": 1,
             "date": currentDateString,
-            "dorm_in": dormTodayInBytes,
-            "dorm_out": dormTodayOutBytes,
-            "wifi_in": wifiTodayInBytes,
-            "wifi_out": wifiTodayOutBytes,
-            "ext_in": extTodayInBytes,
-            "ext_out": extTodayOutBytes,
-            "unattributed_in": unattributedInBytes,
-            "unattributed_out": unattributedOutBytes,
+            "dorm_in": NSNumber(value: trafficLedger.totals(for: .dorm).received),
+            "dorm_out": NSNumber(value: trafficLedger.totals(for: .dorm).sent),
+            "wifi_in": NSNumber(value: trafficLedger.totals(for: .campusWifi).received),
+            "wifi_out": NSNumber(value: trafficLedger.totals(for: .campusWifi).sent),
+            "ext_in": NSNumber(value: trafficLedger.totals(for: .external).received),
+            "ext_out": NSNumber(value: trafficLedger.totals(for: .external).sent),
+            "unattributed_in": NSNumber(value: trafficLedger.totals(for: .unknown).received),
+            "unattributed_out": NSNumber(value: trafficLedger.totals(for: .unknown).sent),
             "sample_gap_count": sampleGapCount,
             "measured_sample_count": NSNumber(value: measuredSampleCount),
             "scoped_history_eligible": scopedHistoryEligible,
-            "today_in": dormTodayInBytes,
-            "today_out": dormTodayOutBytes,
+            "observed_scopes": dailyScopeCoverage.persisted,
+            "today_in": NSNumber(value: trafficLedger.totals(for: .dorm).received),
+            "today_out": NSNumber(value: trafficLedger.totals(for: .dorm).sent),
+            "accounting_overflow": accountingOverflow,
             "network_mode_override": networkModeOverride,
             "display_mode": displayMode,
             "alert_enabled": isAlertEnabled,
@@ -2334,20 +2305,26 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             "is_dorm": isDormNetwork,
             "is_campus_wifi": isCampusWifi
         ]
-        if let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted]) {
-            do {
-                try data.write(to: URL(fileURLWithPath: stateFilePath), options: .atomic)
-                persistenceStatus = "本機紀錄已儲存"
-            } catch {
-                persistenceStatus = "本機紀錄寫入失敗"
-            }
+        do {
+            let data = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])
+            try HistoryFileAccess.replaceIfUnchanged(URL(fileURLWithPath: stateFilePath),
+                expected: expectedDailyStateBytes, data: data, limit: 1_048_576)
+            expectedDailyStateBytes = data
+            persistenceStatus = "本機紀錄已儲存"
+            qaHealth?.saved()
+            return true
+        } catch {
+            persistenceBlocked = true
+            scopedHistoryEligible = false
+            persistenceStatus = "本機紀錄寫入失敗或衝突；已停止寫入"
+            return false
         }
     }
 
     var isDetectingNetwork: Bool = false
     
     private static func discoverDefaultRoute(ipv6: Bool) -> String? {
-        guard case .success(let output) = ProbeRunner.run("/sbin/route",
+        guard case .success(let output) = ProbeRunner.runApproved("/sbin/route",
             ["-n", "get", ipv6 ? "-inet6" : "-inet", "default"], timeout: 2, maxBytes: 65536)
         else { return nil }
         return DefaultRouteParser.interfaceName(output)
@@ -2355,7 +2332,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     private static func discoverDefaultIPv4() -> (interface: String, ip: String) {
         guard let name = discoverDefaultRoute(ipv6: false) else { return ("", "") }
-        guard case .success(let address) = ProbeRunner.run("/usr/sbin/ipconfig", ["getifaddr", name], timeout: 2)
+        guard case .success(let address) = ProbeRunner.runApproved("/usr/sbin/ipconfig", ["getifaddr", name], timeout: 2)
         else { return (name, "") }
         let ip = address.trimmingCharacters(in: .whitespacesAndNewlines)
         var parsed = in_addr()
@@ -2365,6 +2342,15 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     private func applyDiscoveredNetwork(interface: String, ip: String) {
         if activeInterface != interface || currentIP != ip {
+            clearManualScope()
+            sampledScopes.removeAll()
+            scopedAccumulator.reset()
+            lastSampleUptime = nil
+            activeSpeedMeasured = false
+            observedInterfaceRates = [:]
+            currentDownSpeed = 0
+            currentUpSpeed = 0
+            predictionEngine.reset()
             connectionSession.stop()
             lastConnectionSamples = []
             networkQuality.reset()
@@ -2374,9 +2360,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             lastPingUptime = nil
             pingLatencyMs = -1
             providerObservation = nil
-            providerRequestID = UUID()
-            providerRequestInFlight = false
-            providerLastAttempt = nil
+            providerPollGate.invalidate()
         }
         activeInterface = interface
         currentIP = ip
@@ -2416,43 +2400,51 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     func getInterfaceBytes(name: String) -> (ibytes: UInt64, obytes: UInt64)? {
-        var ifap: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifap) == 0, let first = ifap else { return nil }
-        defer { freeifaddrs(ifap) }
-        
-        for ptr in sequence(first: first, next: { $0.pointee.ifa_next }) {
-            let ifa = ptr.pointee
-            let ifaName = String(cString: ifa.ifa_name)
-            if ifaName == name, let address = ifa.ifa_addr, address.pointee.sa_family == UInt8(AF_LINK), let raw = ifa.ifa_data {
-                let data = raw.assumingMemoryBound(to: if_data.self)
-                return (UInt64(data.pointee.ifi_ibytes), UInt64(data.pointee.ifi_obytes))
-            }
-        }
-        return nil
+        guard let reading = InterfaceMIBReader.read(name) else { return nil }
+        return (reading.counters.received, reading.counters.sent)
     }
 
     // Read physical Ethernet/Wi-Fi counters only. No VPN/loopback double counting.
     // Interface traffic includes link-local/LAN bytes, not authoritative campus quota.
+    private var interfaceMetadataCache = InterfaceMetadataCache()
+
     func readScopedInterfaces() -> [ScopedInterfaceSample] {
         observedTunnelCandidates = []
         observedAddressEvidence = [:]
-        let devices = SCNetworkInterfaceCopyAll() as NSArray
-        var types: [String: String] = [:]
-        for item in devices {
-            let interface = item as! SCNetworkInterface
-            if let name = SCNetworkInterfaceGetBSDName(interface) as String?,
-               let kind = SCNetworkInterfaceGetInterfaceType(interface) as String? {
-                if kind == (kSCNetworkInterfaceTypeEthernet as String) ||
-                    kind == (kSCNetworkInterfaceTypeIEEE80211 as String) {
-                    types[name] = kind
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0, let first = list else {
+            interfaceMetadataCache.invalidate()
+            clearManualScope()
+            return []
+        }
+        defer { freeifaddrs(list) }
+        // Fresh kernel link inventory on every tick. Only the relatively
+        // expensive SystemConfiguration kind lookup is cached, never counters
+        // or addresses. Reject ambiguous or invalid link generations.
+        var inventory: [String: UInt32] = [:]
+        var ambiguous = Set<String>()
+        if let offset = MemoryLayout<sockaddr_dl>.offset(of: \.sdl_index) {
+            for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
+                let item = pointer.pointee
+                guard let address = item.ifa_addr, address.pointee.sa_family == UInt8(AF_LINK) else { continue }
+                let name = String(cString: item.ifa_name)
+                guard Int(address.pointee.sa_len) >= offset + MemoryLayout<UInt16>.size else {
+                    ambiguous.insert(name)
+                    continue
                 }
+                let index = UInt32(UnsafeRawPointer(address).loadUnaligned(fromByteOffset: offset, as: UInt16.self))
+                if index == 0 || inventory.updateValue(index, forKey: name) != nil { ambiguous.insert(name) }
             }
         }
-        var list: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&list) == 0, let first = list else { return [] }
-        defer { freeifaddrs(list) }
+        for name in ambiguous { inventory.removeValue(forKey: name) }
+        let types = interfaceMetadataCache.resolve(inventory: inventory,
+            now: ProcessInfo.processInfo.systemUptime) {
+            Self.readPhysicalInterfaceKinds()
+        }
         var addresses: [String: [String]] = [:]
-        var counters: [String: InterfaceCounters] = [:]
+        var linkNames = Set<String>()
+        var ambiguousLinks = Set<String>()
+        var usableIPv6Names = Set<String>()
         var tunnels = Set<String>()
         var familyEvidence: [String: InterfaceAddressEvidence] = [:]
         for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
@@ -2464,7 +2456,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             guard types[name] != nil, let address = item.ifa_addr else { continue }
             if address.pointee.sa_family == UInt8(AF_INET) || address.pointee.sa_family == UInt8(AF_INET6) {
                 var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-                if getnameinfo(address, socklen_t(address.pointee.sa_len), &host,
+                if (item.ifa_flags & UInt32(IFF_UP)) != 0,
+                   getnameinfo(address, socklen_t(address.pointee.sa_len), &host,
                                socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 {
                     let ip = String(cString: host)
                     addresses[name, default: []].append(ip)
@@ -2480,43 +2473,64 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                                 let bytes = withUnsafeBytes(of: &parsed) { Array($0) }
                                 let linkLocal = bytes.count >= 2 && bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80
                                 familyEvidence[name, default: InterfaceAddressEvidence()].observeIPv6(linkLocal: linkLocal)
+                                if bytes.count == 16, !linkLocal, bytes[0] != 0xff,
+                                   !bytes.allSatisfy({ $0 == 0 }),
+                                   !(bytes.dropLast().allSatisfy({ $0 == 0 }) && bytes.last == 1) {
+                                    usableIPv6Names.insert(name)
+                                }
                             }
                         }
                     }
                 }
-            } else if address.pointee.sa_family == UInt8(AF_LINK), let raw = item.ifa_data {
-                let data = raw.assumingMemoryBound(to: if_data.self).pointee
-                counters[name] = InterfaceCounters(interfaceID: name,
-                    received: UInt64(data.ifi_ibytes), sent: UInt64(data.ifi_obytes))
+            } else if address.pointee.sa_family == UInt8(AF_LINK) {
+                if !linkNames.insert(name).inserted { ambiguousLinks.insert(name) }
             }
         }
         observedTunnelCandidates = tunnels.sorted()
         observedAddressEvidence = familyEvidence
-        return counters.keys.sorted().compactMap { name in
-            guard let counter = counters[name], let kind = types[name] else { return nil }
-            let ips = addresses[name, default: []].sorted()
-            let campus = ips.contains { $0.hasPrefix("140.120.") }
-            let hotspot = ips.contains { $0.hasPrefix("172.20.10.") }
-            var scope: NetworkScope = .unknown
-            // Explicit overrides affect only the currently selected interface.
-            if name == activeInterface && networkModeOverride != 0 && !ips.isEmpty {
-                switch networkModeOverride {
-                case 1: scope = .dorm
-                case 2: scope = .campusWifi
-                case 3: scope = .external
-                default: break
+        let samples: [ScopedInterfaceSample] = linkNames.subtracting(ambiguousLinks).sorted().compactMap { name in
+            guard let reading = InterfaceMIBReader.read(name), let kind = types[name],
+                  inventory[name] == reading.index else { return nil }
+            let ips = Set(addresses[name, default: []]).sorted()
+            let identity = ips.isEmpty ? "" : kind + "|" + ips.joined(separator: ",")
+            let candidate = ScopedInterfaceSample(counters: reading.counters, scope: .unknown,
+                identity: identity, counterGeneration: String(reading.index))
+            // A local selection applies only while this exact sampled identity remains.
+            let explicit = name == activeInterface && isConnected &&
+                manualScopeSelection?.matches(candidate) == true ? manualScopeSelection?.scope : nil
+            let scope = InterfaceScopeEvidence.resolve(ipv4: ips.filter { !$0.contains(":") },
+                hasUsableIPv6: usableIPv6Names.contains(name),
+                isWiFi: kind == (kSCNetworkInterfaceTypeIEEE80211 as String), explicit: explicit)
+            return ScopedInterfaceSample(counters: reading.counters, scope: scope,
+                identity: identity, counterGeneration: String(reading.index))
+        }
+        if let selection = manualScopeSelection,
+           !samples.contains(where: { $0.counters.interfaceID == activeInterface &&
+               isConnected && selection.matches($0) && $0.scope == selection.scope }) {
+            clearManualScope()
+        }
+        return samples
+    }
+
+    private static func readPhysicalInterfaceKinds() -> [String: String] {
+        autoreleasepool {
+            let devices = SCNetworkInterfaceCopyAll() as NSArray
+            var result: [String: String] = [:]
+            for item in devices {
+                let interface = item as! SCNetworkInterface
+                if let name = SCNetworkInterfaceGetBSDName(interface) as String?,
+                   let kind = SCNetworkInterfaceGetInterfaceType(interface) as String?,
+                   kind == (kSCNetworkInterfaceTypeEthernet as String) ||
+                       kind == (kSCNetworkInterfaceTypeIEEE80211 as String) {
+                    result[name] = kind
                 }
-            } else if campus {
-                scope = kind == (kSCNetworkInterfaceTypeIEEE80211 as String) ? .campusWifi : .dorm
-            } else if hotspot {
-                scope = .external
             }
-            return ScopedInterfaceSample(counters: counter, scope: scope,
-                identity: kind + "|" + ips.joined(separator: ","))
+            return result
         }
     }
 
     func initHardwareCounters() {
+        interfaceMetadataCache.invalidate()
         predictionEngine.reset()
         predictionScope = .unknown
         predictionIdentity = []
@@ -2556,7 +2570,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         let generation = workflowPowerGuard.generation
         syncManagementModel()
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let outcome = ProbeRunner.run("/usr/bin/dig", ["-r", "+time=2", "+tries=1", "+noall", "+comments", "+stats", "example.com.", "A"], timeout: 4, maxBytes: 65536)
+            let outcome = ProbeRunner.runApproved("/usr/bin/dig", ["-r", "+time=2", "+tries=1", "+noall", "+comments", "+stats", "example.com.", "A"], timeout: 4, maxBytes: 65536)
             let reading: DNSProbeReading?
             if case .success(let raw) = outcome { reading = DNSProbeParser.parse(raw) }
             else { reading = nil }
@@ -2593,7 +2607,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             echoTarget = target
         }
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let outcome = ProbeRunner.run("/sbin/ping", ["-c", "2", "-t", "3", target], timeout: 5, maxBytes: 65536, acceptedExitCodes: [0, 2])
+            let outcome = ProbeRunner.runApproved("/sbin/ping", ["-c", "2", "-t", "3", target], timeout: 5, maxBytes: 65536, acceptedExitCodes: [0, 2])
             let reading: EchoProbeReading?
             if case .success(let raw) = outcome { reading = EchoProbeParser.parse(raw, expectedCount: 2) }
             else { reading = nil }
@@ -2614,87 +2628,122 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     func inspectTopAppConsumers() {
-        guard workflowPowerGuard.allowsOptionalProbes, !appProbeInFlight else { return }
+        guard processObservationAllowed, !appProbeInFlight else { return }
         appProbeInFlight = true
         let generation = workflowPowerGuard.generation
         let collectSession = processObservationAllowed
         let token = processObservationToken
         DispatchQueue.global(qos: .background).async { [weak self] in
             let before: [Int: ProcessTreeNode]?
-            if collectSession, case .success(let raw) = ProbeRunner.run("/bin/ps", ["-ax", "-o", "pid=,ppid=,lstart=,comm="], timeout: 2) {
+            if collectSession, case .success(let raw) = ProbeRunner.runApproved("/bin/ps", ["-ax", "-o", "pid=,ppid=,lstart=,comm="], timeout: 2) {
                 let parsed = AgentAttribution.parseTree(raw)
                 before = parsed.isEmpty ? nil : parsed
             } else { before = nil }
-            let outcome = ProbeRunner.run("/usr/bin/nettop", ["-P", "-L", "1", "-J", "bytes_in,bytes_out"], timeout: 5)
+            let outcome = ProbeRunner.runApproved("/usr/bin/nettop", ["-P", "-L", "1", "-J", "bytes_in,bytes_out"], timeout: 10)
             let sampledAt = ProcessInfo.processInfo.systemUptime
             let sampledDate = Date()
             let counters: [ProcessCounter]?
             let attributed: [ProcessCounter]?
             if let before, case .success(let raw) = outcome,
-               case .success(let afterOutput) = ProbeRunner.run("/bin/ps", ["-ax", "-o", "pid=,ppid=,lstart=,comm="], timeout: 2) {
+               case .success(let afterOutput) = ProbeRunner.runApproved("/bin/ps", ["-ax", "-o", "pid=,ppid=,lstart=,comm="], timeout: 2) {
                 let after = AgentAttribution.parseTree(afterOutput)
                 counters = after.isEmpty ? nil : ProcessCounterParser.parse(raw, before: before.mapValues { $0.start }, after: after.mapValues { $0.start })
                 attributed = AgentAttribution.attributed(counters, before: before, after: after)
             } else { counters = nil; attributed = nil }
-            let observations: [AppTrafficObservation]?
-            if case .success(let out) = outcome {
-                observations = AppTrafficParser.parse(out)
-            } else { observations = nil }
+            let observations = AppTrafficParser.verifiedLifetime(counters)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.appProbeInFlight = false
-                guard self.workflowPowerGuard.generation == generation else { return }
-                if collectSession && self.processObservationAllowed && self.processObservationToken == token {
-                    self.processUsage.ingest(counters, uptime: sampledAt)
-                    self.agentUsage.ingest(attributed, uptime: sampledAt)
-                    self.recordAgentHistory(attributed, date: sampledDate, uptime: sampledAt)
-                    self.recordProcessHistory(counters, date: sampledDate, uptime: sampledAt)
-                }
+                let deliveredAt = ProcessInfo.processInfo.systemUptime
+                guard self.workflowPowerGuard.generation == generation,
+                      collectSession, self.processObservationAllowed,
+                      self.processObservationToken == token,
+                      deliveredAt >= sampledAt, deliveredAt - sampledAt <= 30 else { return }
+                self.processUsage.ingest(counters, uptime: sampledAt)
+                self.agentUsage.ingest(attributed, uptime: sampledAt)
+                self.recordAgentHistory(attributed, date: sampledDate, uptime: sampledAt)
+                self.recordProcessHistory(counters, date: sampledDate, uptime: sampledAt)
                 self.topAppConsumers = (observations ?? []).map { (name: $0.name, bytes: Double($0.bytes)) }
-                self.appProbeTimestamp = observations == nil ? nil : ProcessInfo.processInfo.systemUptime
+                self.appProbeTimestamp = observations == nil ? nil : sampledAt
                 if self.popover.isShown { self.pushDataToWebUI() }
             }
         }
     }
 
     func scopedHistoryRows() -> [NetworkScope: HistoryDay]? {
-        guard scopedHistoryEligible, !persistenceBlocked else { return nil }
-        let values: [(NetworkScope, Double, Double)] = [
-            (.dorm, dormTodayInBytes, dormTodayOutBytes),
-            (.campusWifi, wifiTodayInBytes, wifiTodayOutBytes),
-            (.external, extTodayInBytes, extTodayOutBytes),
-            (.unknown, unattributedInBytes, unattributedOutBytes)
-        ]
-        var rows: [NetworkScope: HistoryDay] = [:]
-        for (scope, rx, tx) in values {
-            guard let dl = UInt64(exactly: rx), let ul = UInt64(exactly: tx) else { return nil }
-            let (total, overflow) = dl.addingReportingOverflow(ul)
-            guard !overflow else { return nil }
-            if total == 0 { continue }
-            guard let row = try? HistoryDay(day: currentDateString, total: total, download: dl, upload: ul) else { return nil }
-            rows[scope] = row
-        }
-        return rows
+        guard scopedHistoryEligible, !persistenceBlocked, !accountingOverflow else { return nil }
+        return try? ScopedHistoryDay.project(day: currentDateString, ledger: trafficLedger,
+                                            coverage: dailyScopeCoverage).scopes
     }
 
     func tickRealtime() {
+        let qaStart = qaHealth.map { _ in ProcessInfo.processInfo.systemUptime }
+        defer {
+            if let qaHealth, let qaStart {
+                let total = trafficLedger.aggregate
+                qaHealth.tick(start: qaStart, sampleUptime: lastSampleUptime, day: currentDateString,
+                    received: total.received, sent: total.sent,
+                    sleeping: workflowPowerGuard.systemSleeping, clockHeld: clockHeld,
+                    persistenceBlocked: persistenceBlocked, accountingOverflow: accountingOverflow,
+                    historyHealthy: TrafficHistoryManager.shared.healthy,
+                    routeBusy: isDetectingNetwork, appsBusy: appProbeInFlight, pingBusy: pingInFlight,
+                    providerBusy: providerPollGate.isInFlight, dnsBusy: dnsInFlight,
+                    uiVisible: popover?.isShown == true || historyWindowController?.window?.isVisible == true ||
+                        settingsWindowController?.window?.isVisible == true ||
+                        managementWindowController?.window?.isVisible == true)
+            }
+        }
         guard workflowPowerGuard.allowsSampling else { return }
         let todayStr = getTodayString()
-        if todayStr != currentDateString {
+        let transition = LocalDayTransition.evaluate(previous: currentDateString, observed: todayStr)
+        if transition == .backward {
+            if !clockHeld {
+                clockHeld = true
+                sampleGapCount = min(sampleGapCount + 1, 9_007_199_254_740_991)
+                scopedAccumulator.reset()
+                predictionEngine.reset()
+                throughputWindow.reset()
+                trafficEventDetector.resetContinuity()
+                connectionSession.stop()
+                lastConnectionSamples = []
+                lastSampleUptime = nil
+                activeSpeedMeasured = false
+                observedInterfaceRates = [:]
+                currentDownSpeed = 0
+                currentUpSpeed = 0
+                providerObservation = nil
+                providerPollGate.invalidate()
+                persistenceStatus = "系統日期倒退；保留原帳本，暫停計量"
+            }
+            updateStatusBar()
+            if settingsWindowController?.window?.isVisible == true { syncSettingsModel() }
+            if managementWindowController?.window?.isVisible == true { syncManagementModel() }
+            if popover?.isShown == true { pushDataToWebUI() }
+            return
+        }
+        if clockHeld {
+            clockHeld = false
+            persistenceStatus = "日期已恢復；重新建立計量基準"
+            scopedAccumulator.reset()
+            lastSampleUptime = nil
+        }
+        if transition == .forward {
             if !currentDateString.isEmpty {
                 let totalDl = dormTodayInBytes + wifiTodayInBytes + extTodayInBytes + unattributedInBytes
                 let totalUl = dormTodayOutBytes + wifiTodayOutBytes + extTodayOutBytes + unattributedOutBytes
                 if totalDl + totalUl > 0 || measuredSampleCount > 0 {
-                    if !TrafficHistoryManager.shared.recordDay(date: currentDateString, dl: totalDl, ul: totalUl, scopes: scopedHistoryRows()) {
-                        savePersistedState()
-                        if persistenceStatus != "本機紀錄已儲存" { persistenceBlocked = true }
-                        // Preserve the existing daily file when history cannot be saved.
+                    if persistenceBlocked || accountingOverflow || !TrafficHistoryManager.shared.recordDay(date: currentDateString, dl: totalDl, ul: totalUl, preserveExisting: true, scopes: scopedHistoryRows()) {
+                        if !savePersistedState(allowFinalizingPriorDay: true) { persistenceBlocked = true }
+                        // Archive the exact bytes we successfully wrote, not an
+                        // independently replaceable pathname.
                         let url = URL(fileURLWithPath: stateFilePath)
                         do {
-                            guard FileManager.default.fileExists(atPath: url.path) else {
+                            guard !persistenceBlocked, let bytes = expectedDailyStateBytes else {
                                 throw HistoryStoreError.database("missing daily backup")
                             }
-                            try FileManager.default.copyItem(at: url, to: url.deletingLastPathComponent().appendingPathComponent(".nchu_traffic_archive-" + currentDateString + "-" + UUID().uuidString + ".json"))
+                            try HistoryFileAccess.replaceIfUnchanged(
+                                url.deletingLastPathComponent().appendingPathComponent(".nchu_traffic_archive-" + currentDateString + "-" + UUID().uuidString + ".json"),
+                                expected: nil, data: bytes, limit: 1_048_576)
                         } catch { persistenceBlocked = true }
                     }
                 }
@@ -2702,14 +2751,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             connectionSession.stop()
             lastConnectionSamples = []
             currentDateString = todayStr
-            dormTodayInBytes = 0.0
-            dormTodayOutBytes = 0.0
-            wifiTodayInBytes = 0.0
-            wifiTodayOutBytes = 0.0
-            extTodayInBytes = 0.0
-            extTodayOutBytes = 0.0
-            unattributedInBytes = 0
-            unattributedOutBytes = 0
+            trafficLedger = DailyTrafficLedger()
+            dailyScopeCoverage = DailyScopeCoverage()
+            accountingOverflow = false
             sampleGapCount = 0
             measuredSampleCount = 0
             scopedHistoryEligible = !persistenceBlocked
@@ -2721,6 +2765,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             throughputWindow.reset()
             trafficEventDetector.resetContinuity()
             providerObservation = nil
+            providerPollGate.invalidate()
             alertTierSent = 0
             if isWiredTemporarilyDisabled {
                 restoreWiredNetwork(reason: "每日 00:00 額度重設")
@@ -2735,7 +2780,6 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             }
         }
         
-        let now = Date().timeIntervalSince1970
         // 盒蓋動態偵測 (防止接外接螢幕或 displaysleep 0 時背景持續串流)
         if isLidGuardEnabled {
             let lidClosed = isLidClosed()
@@ -2749,7 +2793,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         }
         
         // 離座閒置動態偵測 (防止人離開座位未盒蓋，而背景被串流或下載暗中掏空流量)
-        if isIdleGuardEnabled && !isLidCurrentlyClosed {
+        // The idle reading cannot affect either transition unless a reminder
+        // is active or its existing traffic/focus precondition is satisfied.
+        if isIdleGuardEnabled && !isLidCurrentlyClosed &&
+            (isUserCurrentlyIdle || (!workflowPowerGuard.focusEnabled && currentDownSpeed > 150 * 1024)) {
             let idleSecs = getSystemIdleSeconds()
             if idleSecs >= 600.0 && !isUserCurrentlyIdle { // 閒置超過 10 分鐘
                 if !workflowPowerGuard.focusEnabled && currentDownSpeed > 150 * 1024 {
@@ -2764,30 +2811,19 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         
         // Path events and periodic fallback are handled by ObservationSchedule.
         
-        // 每 5 秒自動掃描 P2P 違規風險（宿網防鎖孔）
-        if Int(now) % 5 == 0 {
+        // A monotonic deadline is not tied to a particular wall-clock second.
+        // Outside the dorm/visible UI, there is no reason to scan every app.
+        let probeUptime = ProcessInfo.processInfo.systemUptime
+        if isDormNetwork || processObservationVisible {
+            if lastP2PScanUptime.map({ probeUptime < $0 || probeUptime - $0 >= 5 }) ?? true {
+                checkP2PHazard()
+            }
+        } else if lastP2PScanUptime != nil || isP2PDetected {
             checkP2PHazard()
         }
         
-        // 00:00 換日大檔排程檢查 (00:05 額度重置後自動啟動千兆通道)
-        let cal = Calendar.current
-        let nowComp = cal.dateComponents([.hour, .minute], from: Date())
-        let hour = nowComp.hour ?? 0
-        let minute = nowComp.minute ?? 0
-        if hour == 0 && minute >= 5 && minute <= 10 {
-            if isMidnightScheduleEnabled && !hasTriggeredMidnightToday {
-                hasTriggeredMidnightToday = true
-                if isWiredTemporarilyDisabled {
-                    restoreWiredNetwork(reason: "午夜 00:05 大檔排程啟動")
-                }
-                sendSystemNotification(
-                    title: "🎉 興大宿網換日配額已就緒！",
-                    body: "7GB 下載額度已充飽！午夜大檔極速通道已啟動。"
-                )
-            }
-        } else if hour > 0 {
-            hasTriggeredMidnightToday = false
-        }
+        // Local day rollover is not a provider-confirmed quota reset.
+        // Legacy midnight scheduling remains inactive in observation-only mode.
         
         let samples = readScopedInterfaces()
         sampledScopes = InterfaceScopeProjection.scopes(samples)
@@ -2802,9 +2838,11 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         activeSpeedMeasured = false
         observedInterfaceRates = [:]
         if samples.isEmpty || deltas.values.contains(where: { $0.delta.quality != .measured }) {
-            sampleGapCount += 1
+            sampleGapCount = min(sampleGapCount + 1, Int(DailyTrafficLedger.maximumTotal))
         }
-        if deltas.values.contains(where: { $0.delta.quality == .measured }) {
+        let measuredCycle = deltas.values.contains(where: { $0.delta.quality == .measured })
+        qaHealth?.sampled(measured: measuredCycle)
+        if measuredCycle {
             measuredSampleCount = min(measuredSampleCount + 1, 9_007_199_254_740_991)
         }
         for (name, value) in deltas where value.delta.quality == .measured {
@@ -2818,11 +2856,13 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                 currentDownSpeed = rx / elapsed
                 currentUpSpeed = tx / elapsed
             }
-            switch value.scope {
-            case .dorm: dormTodayInBytes += rx; dormTodayOutBytes += tx
-            case .campusWifi: wifiTodayInBytes += rx; wifiTodayOutBytes += tx
-            case .external: extTodayInBytes += rx; extTodayOutBytes += tx
-            case .unknown: unattributedInBytes += rx; unattributedOutBytes += tx
+            if !trafficLedger.add(scope: value.scope, received: value.delta.received, sent: value.delta.sent) {
+                accountingOverflow = true
+                scopedHistoryEligible = false
+                sampleGapCount = min(sampleGapCount + 1, 9_007_199_254_740_991)
+                predictionEngine.reset()
+            } else {
+                dailyScopeCoverage.observe(value)
             }
         }
 
@@ -2844,8 +2884,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         scheduleObservations(at: uptime)
         updateForecast(samples: samples, deltas: deltas, elapsed: elapsed)
 
-        if Int(now) % 10 == 0 {
-            savePersistedState()
+        if lastPeriodicSaveUptime.map({ uptime < $0 || uptime - $0 >= 10 }) ?? true {
+            lastPeriodicSaveUptime = uptime
+            if !persistenceBlocked { savePersistedState() }
         }
         
         // 興大網路環境 (宿網或校園 Wi-Fi) 下啟用流量預警推播與急停防護
@@ -2899,7 +2940,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     private func localQuotaAssessment() -> LocalQuotaAssessment? {
         let scope = sampledScopes[activeInterface] ?? .unknown
-        guard isConnected, isQuotaRestricted,
+        guard isConnected, isQuotaRestricted, hasLocalScopeEvidence(scope),
               (scope == .dorm && isDormNetwork) || (scope == .campusWifi && isCampusWifi) else { return nil }
         let (_, dl, ul) = getEffectiveUsedBytes()
         guard let received = UInt64(exactly: dl), let sent = UInt64(exactly: ul) else { return nil }
@@ -2916,23 +2957,23 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     func forecastPresentation() -> (message: String, level: String) {
-        guard let assessment = localQuotaAssessment() else { return ("配額未確認，暫不預測", "unknown") }
-        let level = assessment.tier >= .high ? "danger" : (assessment.tier == .warning ? "warning" : "unknown")
-        let (_, dl, ul) = getEffectiveUsedBytes()
-        let label = budgetLabel(assessment.limitingBudget)
-        let status = "本機估計：\(label)已用 \(Int(min(assessment.usageRatio * 100, 999)))%"
-        guard !persistenceBlocked, sampleGapCount == 0,
-              predictionScope == sampledScopes[activeInterface],
-              let f = predictionEngine.forecast(receiveRemaining: UInt64(max(0, dlQuotaBytes - dl)),
+        let assessment = localQuotaAssessment()
+        let now = ProcessInfo.processInfo.systemUptime
+        // A baseline gap is unavoidable after launch. Forecast only the
+        // observed local counter, using a fresh, continuous recent window.
+        // Missing historical bytes remain explicitly excluded.
+        var forecast: QuotaForecast?
+        if assessment != nil, workflowPowerGuard.allowsSampling, activeSpeedMeasured,
+           let last = lastSampleUptime, now >= last, now - last <= 5,
+           predictionScope == sampledScopes[activeInterface] {
+            let (_, dl, ul) = getEffectiveUsedBytes()
+            forecast = predictionEngine.forecast(receiveRemaining: UInt64(max(0, dlQuotaBytes - dl)),
                                                  sendRemaining: UInt64(max(0, ulQuotaBytes - ul)),
                                                  totalRemaining: UInt64(max(0, totalQuotaBytes - dl - ul)))
-        else { return (status + "；暫無可靠耗盡預測", level) }
-        if f.latestSeconds == 0 {
-            return ("本機估計\(budgetLabel(f.limitingBudget))已達設定上限", "danger")
         }
-        let low = max(1, Int(floor(f.earliestSeconds / 60)))
-        let high = max(low, Int(ceil(f.latestSeconds / 60)))
-        return ("若近期速率持續，\(budgetLabel(f.limitingBudget))約 \(low)–\(high) 分鐘達設定上限（估計）", level)
+        return LocalForecastPresentation.describe(assessment: assessment, forecast: forecast,
+                                                  hasGaps: sampleGapCount > 0,
+                                                  hasUnattributedTraffic: unattributedInBytes > 0 || unattributedOutBytes > 0)
     }
 
     func checkAndSendSmartAlerts() {
@@ -2943,7 +2984,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
                  tier: assessment.tier, enabled: isAlertEnabled) else { return }
         // Reserve the attempt before dispatch. A crash may omit delivery, but
         // a successful state write prevents duplicate attempts after restart.
-        savePersistedState()
+        guard savePersistedState() else {
+            alertLedgerBlockedDay = currentDateString
+            return
+        }
         sendSystemNotification(title: "NetGuard 本機用量提醒",
             body: "本機估計\(budgetLabel(assessment.limitingBudget))已達 \(assessment.tier.rawValue == 3 ? "95" : assessment.tier.rawValue == 2 ? "85" : "70")% 設定額度。請核對實際配額，無自動斷網或停止程式。",
             isCritical: true, quotaAlert: true)
@@ -2958,7 +3002,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             lastCriticalNotificationTime = now
         }
         DispatchQueue.global(qos: .utility).async {
-            _ = ProbeRunner.run("/usr/bin/osascript", ["-e", "on run argv", "-e",
+            _ = ProbeRunner.runApproved("/usr/bin/osascript", ["-e", "on run argv", "-e",
                 "display notification (item 2 of argv) with title (item 1 of argv)",
                 "-e", "end run", "--", title, body], timeout: 5)
         }
@@ -2970,11 +3014,11 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     func formatBytes(_ b: Double) -> String {
         if b >= 1024 * 1024 * 1024 {
-            return String(format: "%.2f GB", b / (1024 * 1024 * 1024))
+            return String(format: "%.2f GiB", b / (1024 * 1024 * 1024))
         } else if b >= 1024 * 1024 {
-            return String(format: "%.1f MB", b / (1024 * 1024))
+            return String(format: "%.1f MiB", b / (1024 * 1024))
         } else if b >= 1024 {
-            return String(format: "%.0f KB", b / 1024)
+            return String(format: "%.0f KiB", b / 1024)
         } else {
             return String(format: "%.0f B", b)
         }
@@ -2990,13 +3034,28 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 
     func updateStatusBar() {
         guard let button = statusItem.button else { return }
+        func setTitle(_ title: String) {
+            if button.title != title { button.title = title }
+        }
         
+        if clockHeld {
+            setTitle("日期異常 · 暫停計量")
+            return
+        }
         if !isConnected {
-            button.title = "⚠️ 網路斷線"
+            setTitle("網路未確認")
             return
         }
         
+        if accountingOverflow {
+            setTitle("流量紀錄不完整")
+            return
+        }
         if isQuotaRestricted {
+            guard localQuotaAssessment() != nil else {
+                setTitle("配額未確認")
+                return
+            }
             let (totalUsed, dlUsed, ulUsed) = getEffectiveUsedBytes()
             let remTotalGB = max(0, totalQuotaBytes - totalUsed) / (1024 * 1024 * 1024)
             let remDlGB = max(0, dlQuotaBytes - dlUsed) / (1024 * 1024 * 1024)
@@ -3024,76 +3083,75 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
             
             switch displayMode {
             case 0:
-                button.title = String(format: "%@ %.2fG", statusIcon, displayGB)
+                setTitle(String(format: "%@ %.2f GiB", statusIcon, displayGB))
             case 1:
-                button.title = String(format: "%@ 剩 %.2fG", statusIcon, displayGB)
+                setTitle(String(format: "%@ 剩 %.2f GiB", statusIcon, displayGB))
             case 2:
-                button.title = String(format: "%@ ↓%@ ↑%@", statusIcon, formatSpeed(currentDownSpeed), formatSpeed(currentUpSpeed))
+                setTitle(String(format: "%@ ↓%@ ↑%@", statusIcon, formatSpeed(currentDownSpeed), formatSpeed(currentUpSpeed)))
             case 3:
-                button.title = String(format: "%@ %.2fG", dotIcon, displayGB)
+                setTitle(String(format: "%@ %.2f GiB", dotIcon, displayGB))
             case 4:
-                button.title = String(format: "%.2fG", displayGB)
+                setTitle(String(format: "%.2f GiB", displayGB))
             default:
-                button.title = String(format: "%@ %.2fG", statusIcon, displayGB)
+                setTitle(String(format: "%@ %.2f GiB", statusIcon, displayGB))
             }
         } else {
             // 非宿網 / 外部網路模式 (無配額限制，暢連無負擔)
+            guard hasLocalScopeEvidence(.external) else {
+                setTitle("流量未確認")
+                return
+            }
             let extTotalBytes = extTodayInBytes + extTodayOutBytes
             let extTotalStr = formatBytes(extTotalBytes)
             let statusIcon = "⚡"
             
             switch displayMode {
             case 0:
-                button.title = String(format: "%@ %@", statusIcon, extTotalStr)
+                setTitle(String(format: "%@ %@", statusIcon, extTotalStr))
             case 1:
-                button.title = String(format: "%@ 已用 %@", statusIcon, extTotalStr)
+                setTitle(String(format: "%@ 已用 %@", statusIcon, extTotalStr))
             case 2:
-                button.title = String(format: "%@ ↓%@ ↑%@", statusIcon, formatSpeed(currentDownSpeed), formatSpeed(currentUpSpeed))
+                setTitle(String(format: "%@ ↓%@ ↑%@", statusIcon, formatSpeed(currentDownSpeed), formatSpeed(currentUpSpeed)))
             case 3:
-                button.title = String(format: "🟢 %@", extTotalStr)
+                setTitle(String(format: "🟢 %@", extTotalStr))
             case 4:
-                button.title = extTotalStr
+                setTitle(extTotalStr)
             default:
-                button.title = String(format: "%@ %@", statusIcon, extTotalStr)
+                setTitle(String(format: "%@ %@", statusIcon, extTotalStr))
             }
         }
     }
 
     func syncWithTop100Server() {
-        guard workflowPowerGuard.allowsOptionalProbes else { return }
+        guard workflowPowerGuard.allowsOptionalProbes, !clockHeld else { return }
         guard isDormNetwork, isConnected, !currentIP.isEmpty else {
             providerObservation = nil
-            providerRequestID = UUID()
-            providerRequestInFlight = false
+            providerPollGate.invalidate()
             return
         }
-        guard !providerRequestInFlight,
-              providerLastAttempt.map({ Date().timeIntervalSince($0) >= 60 }) ?? true else { return }
+        guard let requestID = providerPollGate.begin(at: ProcessInfo.processInfo.systemUptime) else { return }
         let expectedIP = currentIP
         let expectedDay = getTodayString()
-        let requestID = UUID()
-        providerRequestID = requestID
-        providerLastAttempt = Date()
-        providerRequestInFlight = true
         DispatchQueue.global(qos: .background).async { [weak self] in
             guard let self = self else { return }
             var result: ProviderObservation?
             defer {
                 let observation = result
                 DispatchQueue.main.async {
-                    guard self.providerRequestID == requestID else { return }
-                    self.providerRequestInFlight = false
-                    guard self.isConnected, self.isDormNetwork,
-                          self.currentIP == expectedIP, self.getTodayString() == expectedDay else {
-                        self.providerObservation = nil
-                        return
-                    }
+                    let applicable = self.isConnected && self.isDormNetwork &&
+                        self.currentIP == expectedIP && self.getTodayString() == expectedDay &&
+                        self.workflowPowerGuard.allowsOptionalProbes
+                    if !applicable { self.providerPollGate.invalidate() }
+                    let usable = observation?.isUsableRanking(for: expectedDay, now: Date()) == true
+                    // A valid absent ranking is an observation, not a safe state.
+                    let observedAbsent = observation?.isRecognizedAbsence(for: expectedDay, now: Date()) == true
+                    guard self.providerPollGate.finish(requestID, usable: usable || observedAbsent) else { return }
                     self.providerObservation = observation
                     if self.popover != nil && self.popover.isShown { self.pushDataToWebUI() }
                 }
             }
             guard let scriptPath = Bundle.main.url(forResource: "traffic_monitor", withExtension: "py")?.path else { return }
-            guard case .success(let output) = ProbeRunner.run("/usr/bin/python3", [scriptPath, "--json"], timeout: 15),
+            guard case .success(let output) = ProbeRunner.runApproved("/usr/bin/python3", [scriptPath, "--json"], timeout: 15),
                   let data = output.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   json["schema_version"] as? Int == 1,
@@ -3106,41 +3164,39 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    func isLaunchAtLoginEnabled() -> Bool {
-        let launchAgentPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/LaunchAgents/tw.edu.nchu.dorm.traffic.plist").path
-        return FileManager.default.fileExists(atPath: launchAgentPath)
+    private var loginItemURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents/" + LoginItemConfiguration.label + ".plist")
+    }
+
+    private enum LoginItemState { case absent, configured, unknown }
+    private func loginItemState() -> LoginItemState {
+        guard let executable = Bundle.main.executableURL?.path else { return .unknown }
+        do {
+            guard let data = try HistoryFileAccess.read(loginItemURL, limit: LoginItemConfiguration.maximumBytes)
+            else { return .absent }
+            return LoginItemConfiguration.matches(data, executable: executable) ? .configured : .unknown
+        } catch { return .unknown }
     }
 
     func toggleLaunchAtLogin() {
-        let launchAgentPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/LaunchAgents/tw.edu.nchu.dorm.traffic.plist").path
-        
-        if isLaunchAtLoginEnabled() {
-            try? FileManager.default.removeItem(atPath: launchAgentPath)
-        } else {
-            guard let appPath = Bundle.main.executableURL?.path else { return }
-            try? FileManager.default.createDirectory(at: URL(fileURLWithPath: launchAgentPath).deletingLastPathComponent(), withIntermediateDirectories: true)
-            let escapedAppPath = appPath.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
-            let plistContent = """
-            <?xml version="1.0" encoding="UTF-8"?>
-            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-            <plist version="1.0">
-            <dict>
-                <key>Label</key>
-                <string>tw.edu.nchu.dorm.traffic</string>
-                <key>ProgramArguments</key>
-                <array>
-                    <string>\(escapedAppPath)</string>
-                </array>
-                <key>RunAtLoad</key>
-                <true/>
-                <key>ProcessType</key>
-                <string>Interactive</string>
-            </dict>
-            </plist>
-            """
-            try? plistContent.write(toFile: launchAgentPath, atomically: true, encoding: .utf8)
+        guard let executable = Bundle.main.executableURL?.path else { return }
+        do {
+            let url = loginItemURL
+            let limit = LoginItemConfiguration.maximumBytes
+            if let existing = try HistoryFileAccess.read(url, limit: limit) {
+                guard LoginItemConfiguration.matches(existing, executable: executable)
+                else { throw HistoryStoreError.invalidRecord }
+                try HistoryFileAccess.removeIfUnchanged(url, expected: existing, limit: limit)
+            } else {
+                try HistoryFileAccess.replaceIfUnchanged(url, expected: nil,
+                    data: LoginItemConfiguration.encode(executable: executable), limit: limit)
+            }
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "登入啟動設定無法安全變更"
+            alert.informativeText = "設定可能不屬於目前版本、已變更或寫入結果不明。請在系統設定中確認；本程式不會強制覆寫。"
+            alert.runModal()
         }
     }
 
@@ -3165,20 +3221,25 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
         
         let netModeMenu = NSMenu()
+        netModeMenu.autoenablesItems = false
+        let canSelectScope = manualScopeCandidate() != nil
         let nAuto = NSMenuItem(title: "自動偵測 (目前: \(networkTypeName))", action: #selector(setNetModeAuto), keyEquivalent: "")
         nAuto.target = self; nAuto.state = (networkModeOverride == 0) ? .on : .off
         netModeMenu.addItem(nAuto)
         
-        let nDorm = NSMenuItem(title: "強制興大宿網模式 (11GB 配額限制 / 鎖卡)", action: #selector(setNetModeDorm), keyEquivalent: "")
+        let nDorm = NSMenuItem(title: "指定宿網觀測範圍（本機估計）", action: #selector(setNetModeDorm), keyEquivalent: "")
         nDorm.target = self; nDorm.state = (networkModeOverride == 1) ? .on : .off
+        nDorm.isEnabled = canSelectScope
         netModeMenu.addItem(nDorm)
         
-        let nWifi = NSMenuItem(title: "強制興大校園 Wi-Fi (15GB 配額 / 超量限速不斷網)", action: #selector(setNetModeWifi), keyEquivalent: "")
+        let nWifi = NSMenuItem(title: "指定校園 Wi-Fi 觀測範圍（本機估計）", action: #selector(setNetModeWifi), keyEquivalent: "")
         nWifi.target = self; nWifi.state = (networkModeOverride == 2) ? .on : .off
+        nWifi.isEnabled = canSelectScope
         netModeMenu.addItem(nWifi)
         
-        let nExt = NSMenuItem(title: "強制非宿網/自由模式 (無上限)", action: #selector(setNetModeExt), keyEquivalent: "")
+        let nExt = NSMenuItem(title: "指定外部網路觀測範圍（配額未確認）", action: #selector(setNetModeExt), keyEquivalent: "")
         nExt.target = self; nExt.state = (networkModeOverride == 3) ? .on : .off
+        nExt.isEnabled = canSelectScope
         netModeMenu.addItem(nExt)
         
         let netModeParent = NSMenuItem(title: "🌐 網路環境模式: \(networkTypeName)", action: nil, keyEquivalent: "")
@@ -3186,9 +3247,11 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         menu.addItem(netModeParent)
         menu.addItem(NSMenuItem.separator())
         
-        let autoLaunchItem = NSMenuItem(title: "🚀 開機自動啟動", action: #selector(handleToggleAutoLaunch), keyEquivalent: "")
+        let loginState = loginItemState()
+        let autoLaunchItem = NSMenuItem(title: loginState == .unknown ? "登入啟動設定未確認" : "下次登入自動啟動設定", action: #selector(handleToggleAutoLaunch), keyEquivalent: "")
         autoLaunchItem.target = self
-        autoLaunchItem.state = isLaunchAtLoginEnabled() ? .on : .off
+        autoLaunchItem.state = loginState == .configured ? .on : (loginState == .unknown ? .mixed : .off)
+        autoLaunchItem.isEnabled = loginState != .unknown
         menu.addItem(autoLaunchItem)
         
         let alertToggleItem = NSMenuItem(title: "🔔 啟用流量預警推播 (宿網 & 校園 Wi-Fi)", action: #selector(handleToggleAlert), keyEquivalent: "")
@@ -3196,51 +3259,51 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         alertToggleItem.state = isAlertEnabled ? .on : .off
         menu.addItem(alertToggleItem)
         
-        let lidGuardToggleItem = NSMenuItem(title: "🛡️ 盒蓋/睡眠防偷跑守護 (暫停串流與同步)", action: #selector(handleToggleLidGuard), keyEquivalent: "")
+        let lidGuardToggleItem = NSMenuItem(title: "盒蓋／睡眠背景傳輸提醒", action: #selector(handleToggleLidGuard), keyEquivalent: "")
         lidGuardToggleItem.target = self
         lidGuardToggleItem.state = isLidGuardEnabled ? .on : .off
         menu.addItem(lidGuardToggleItem)
         
-        let idleGuardToggleItem = NSMenuItem(title: "🚶 離座閒置防偷跑守護 (10分鐘無操作暫停)", action: #selector(handleToggleIdleGuard), keyEquivalent: "")
+        let idleGuardToggleItem = NSMenuItem(title: "離座背景傳輸提醒（10 分鐘）", action: #selector(handleToggleIdleGuard), keyEquivalent: "")
         idleGuardToggleItem.target = self
         idleGuardToggleItem.state = isIdleGuardEnabled ? .on : .off
         menu.addItem(idleGuardToggleItem)
         
-        let failoverItem = NSMenuItem(title: "🔀 宿網耗盡自動切換 Wi-Fi (免拔線避難)", action: #selector(handleToggleWifiFailover), keyEquivalent: "")
+        let failoverItem = NSMenuItem(title: "自動換網（尚未開放）", action: nil, keyEquivalent: "")
         failoverItem.target = self
         failoverItem.state = isAutoWifiFailoverEnabled ? .on : .off
         menu.addItem(failoverItem)
         
-        let splitItem = NSMenuItem(title: "🔀 興大校內/外雙軌智慧分流", action: #selector(handleToggleSplitRouting), keyEquivalent: "")
+        let splitItem = NSMenuItem(title: "智慧分流（尚未開放）", action: nil, keyEquivalent: "")
         splitItem.target = self
         splitItem.state = isSplitRoutingEnabled ? .on : .off
         menu.addItem(splitItem)
         
-        let midnightItem = NSMenuItem(title: "🌙 00:00 換日大檔排程 (00:05 重置啟動)", action: #selector(handleToggleMidnightSchedule), keyEquivalent: "")
+        let midnightItem = NSMenuItem(title: "換日自動排程（尚未開放）", action: nil, keyEquivalent: "")
         midnightItem.target = self
         midnightItem.state = isMidnightScheduleEnabled ? .on : .off
         menu.addItem(midnightItem)
         
-        let p2pShieldItem = NSMenuItem(title: "🛡️ 興大宿網 P2P 違規攔截盾 (自動防禦)", action: #selector(handleToggleP2PShield), keyEquivalent: "")
+        let p2pShieldItem = NSMenuItem(title: "P2P 風險提示（不會終止程序）", action: #selector(handleToggleP2PShield), keyEquivalent: "")
         p2pShieldItem.target = self
         p2pShieldItem.state = isP2PShieldAutoKillEnabled ? .on : .off
         menu.addItem(p2pShieldItem)
         
-        let blocklistItem = NSMenuItem(title: "🔍 興大計中黑名單即時診斷", action: #selector(handleCheckBlocklistNow), keyEquivalent: "")
+        let blocklistItem = NSMenuItem(title: "校方鎖卡狀態（需官方核對）", action: #selector(handleCheckBlocklistNow), keyEquivalent: "")
         blocklistItem.target = self
         menu.addItem(blocklistItem)
         
         if isWiredTemporarilyDisabled {
-            let restoreItem = NSMenuItem(title: "🔌 立即恢復有線宿網 (目前處於 Wi-Fi 避難)", action: #selector(handleRestoreWired), keyEquivalent: "")
+            let restoreItem = NSMenuItem(title: "有線復原（尚未開放）", action: nil, keyEquivalent: "")
             restoreItem.target = self
             menu.addItem(restoreItem)
         } else if isDormNetwork {
-            let switchWifiItem = NSMenuItem(title: "🔀 立即切換為校園 Wi-Fi (免拔線避難)", action: #selector(handleManualSwitchToWifi), keyEquivalent: "")
+            let switchWifiItem = NSMenuItem(title: "手動換網（尚未開放）", action: nil, keyEquivalent: "")
             switchWifiItem.target = self
             menu.addItem(switchWifiItem)
         }
         
-        let panicTitle = pausedPIDs.isEmpty ? "⚡ 一鍵急救省流 (立即暫停串流與同步)" : "▶️ 解除省流 (恢復背景串流與同步)"
+        let panicTitle = pausedPIDs.isEmpty ? "背景流量檢查提醒" : "背景流量檢查提醒"
         let panicItem = NSMenuItem(title: panicTitle, action: #selector(handlePanicFreeze), keyEquivalent: "p")
         panicItem.target = self
         menu.addItem(panicItem)
@@ -3258,7 +3321,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         m2.target = self; m2.state = (displayMode == 2) ? .on : .off
         modeMenu.addItem(m2)
         
-        let m3 = NSMenuItem(title: "狀態安全燈 + 容量 (例如: 🟢 10.7G)", action: #selector(setMode3), keyEquivalent: "")
+        let m3 = NSMenuItem(title: "本機估計等級＋容量", action: #selector(setMode3), keyEquivalent: "")
         m3.target = self; m3.state = (displayMode == 3) ? .on : .off
         modeMenu.addItem(m3)
         
@@ -3272,7 +3335,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         
         menu.addItem(NSMenuItem.separator())
         
-        let resetItem = NSMenuItem(title: "🧹 重置今日統計 (歸零)", action: #selector(manualResetToday), keyEquivalent: "")
+        let resetItem = NSMenuItem(title: "重設採樣基準（保留今日紀錄）", action: #selector(manualResetToday), keyEquivalent: "")
         resetItem.target = self
         menu.addItem(resetItem)
         
@@ -3287,10 +3350,51 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
         statusItem.menu = nil
     }
 
-    @objc func setNetModeAuto() { networkModeOverride = 0; savePersistedState(); updateStatusBar(); pushDataToWebUI() }
-    @objc func setNetModeDorm() { networkModeOverride = 1; savePersistedState(); updateStatusBar(); pushDataToWebUI() }
-    @objc func setNetModeWifi() { networkModeOverride = 2; savePersistedState(); updateStatusBar(); pushDataToWebUI() }
-    @objc func setNetModeExt() { networkModeOverride = 3; savePersistedState(); updateStatusBar(); pushDataToWebUI() }
+    private func clearManualScope() {
+        guard manualScopeSelection != nil else { return }
+        manualScopeSelection = nil
+        sampledScopes.removeValue(forKey: activeInterface)
+        activeSpeedMeasured = false
+        predictionEngine.reset()
+        providerObservation = nil
+        providerPollGate.invalidate()
+    }
+
+    private func manualScopeCandidate() -> ScopedInterfaceSample? {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard isConnected, workflowPowerGuard.allowsSampling,
+              let last = lastSampleUptime, now >= last, now - last <= 5 else { return nil }
+        let candidates = lastConnectionSamples.filter { $0.counters.interfaceID == activeInterface }
+        guard candidates.count == 1, let sample = candidates.first,
+              ManualScopeSelection(scope: .dorm, sample: sample) != nil else { return nil }
+        return sample
+    }
+
+    private func setManualScope(_ scope: NetworkScope?) {
+        let next: ManualScopeSelection?
+        if let scope {
+            guard let sample = manualScopeCandidate(),
+                  let selection = ManualScopeSelection(scope: scope, sample: sample) else { return }
+            next = selection
+        } else {
+            next = nil
+        }
+        clearManualScope()
+        manualScopeSelection = next
+        sampledScopes.removeValue(forKey: activeInterface)
+        activeSpeedMeasured = false
+        predictionEngine.reset()
+        providerObservation = nil
+        providerPollGate.invalidate()
+        savePersistedState()
+        updateStatusBar()
+        pushDataToWebUI()
+    }
+
+    @objc func setNetModeAuto() { setManualScope(nil) }
+    @objc func setNetModeDorm() { setManualScope(.dorm) }
+    @objc func setNetModeWifi() { setManualScope(.campusWifi) }
+    @objc func setNetModeExt() { setManualScope(.external) }
 
     @objc func handleToggleAutoLaunch() { toggleLaunchAtLogin() }
     @objc func handleToggleAlert() { isAlertEnabled = !isAlertEnabled; savePersistedState() }
@@ -3387,23 +3491,10 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     @objc func manualResetToday() {
-        if isCampusWifi {
-            wifiTodayInBytes = 0.0
-            wifiTodayOutBytes = 0.0
-            alertTierSent = 0
-        } else if isDormNetwork {
-            dormTodayInBytes = 0.0
-            dormTodayOutBytes = 0.0
-            alertTierSent = 0
-        } else {
-            extTodayInBytes = 0.0
-            extTodayOutBytes = 0.0
-        }
-        if isWiredTemporarilyDisabled {
-            restoreWiredNetwork(reason: "今日流量重置歸零")
-        }
+        // Reset sampling continuity, never erase observed bytes or imply a
+        // provider quota reset.
         initHardwareCounters()
-        sampleGapCount += 1
+        sampleGapCount = min(sampleGapCount + 1, Int(DailyTrafficLedger.maximumTotal))
         savePersistedState()
         updateStatusBar()
         pushDataToWebUI()
@@ -3416,9 +3507,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
     }
 
     @objc func openIPMS() {
-        if let url = URL(string: "http://140.120.4.13/apply.php") {
-            NSWorkspace.shared.open(url)
-        }
+        sendSystemNotification(title: "官方申請網址未確認", body: "舊版 HTTP 位址未驗證；請由學校計中官方網站尋找申請入口。", isCritical: false)
     }
 
     @objc func quitApp() {
@@ -3429,6 +3518,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate {
 }
 
 // Local compatibility check exits before constructing AppKit or the production delegate.
+if CommandLine.arguments.dropFirst().contains("--netguard-qa-heartbeat-fixture") {
+    exit(QAHealthReporter.fixture())
+}
 if CommandLine.arguments.dropFirst().contains("--netguard-udp-check") {
     exit(HostProbeCheck.runFlowCheck(transport: .udp))
 }

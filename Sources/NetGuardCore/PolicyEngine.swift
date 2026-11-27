@@ -62,9 +62,12 @@ public struct QuotaAlertLedger: Codable, Equatable, Sendable {
     /// Disabling alerts does not consume a notification tier.
     public mutating func shouldNotify(day: String, scope: NetworkScope,
                                       tier: LocalQuotaTier, enabled: Bool) -> Bool {
+        // Never reopen an older ledger after a clock rollback. Invalid or
+        // disabled observations cannot advance the current notification day.
+        guard enabled, !day.isEmpty, scope == .dorm || scope == .campusWifi,
+              tier > .normal, self.day.map({ day >= $0 }) ?? true else { return false }
         if self.day != day { self.day = day; notified = [:] }
-        guard enabled, scope == .dorm || scope == .campusWifi,
-              tier > .normal, tier > (notified[scope] ?? .normal) else { return false }
+        guard tier > (notified[scope] ?? .normal) else { return false }
         notified[scope] = tier
         return true
     }
@@ -127,5 +130,101 @@ public enum RateDisplayUnit: String, CaseIterable, Sendable {
             if bits >= 1000 { return String(format: "%.0f kbps", bits / 1000) }
             return String(format: "%.0f bps", bits)
         }
+    }
+}
+
+
+/// Versioned, read-only automation preview. No rule can authorize or perform
+/// a host mutation. Unknown evidence blocks a potentially higher-priority rule.
+public enum ObservationRuleAction: String, Codable, Sendable { case observe, notify, deferAction }
+public struct ObservationRule: Codable, Equatable, Sendable {
+    public let id: UUID
+    public let priority: Int
+    public let scope: NetworkScope?
+    public let minimumQuotaTier: LocalQuotaTier?
+    public let connected: Bool?
+    public let focusEnabled: Bool?
+    public let action: ObservationRuleAction
+    public init(id: UUID = UUID(), priority: Int, scope: NetworkScope? = nil,
+                minimumQuotaTier: LocalQuotaTier? = nil, connected: Bool? = nil,
+                focusEnabled: Bool? = nil, action: ObservationRuleAction) {
+        self.id = id; self.priority = priority; self.scope = scope
+        self.minimumQuotaTier = minimumQuotaTier; self.connected = connected
+        self.focusEnabled = focusEnabled; self.action = action
+    }
+}
+public struct ObservationRuleSet: Codable, Equatable, Sendable {
+    public let schemaVersion: Int
+    public let rules: [ObservationRule]
+    public init(rules: [ObservationRule]) { schemaVersion = 1; self.rules = rules }
+    public func validate() throws {
+        guard schemaVersion == 1 else { throw ContractError.unsupportedVersion }
+        guard rules.count <= 128, Set(rules.map(\.id)).count == rules.count,
+              rules.allSatisfy({ (0...1000).contains($0.priority) && $0.scope != .unknown &&
+                  ($0.scope != nil || $0.minimumQuotaTier != nil || $0.connected != nil || $0.focusEnabled != nil) })
+        else { throw ContractError.invalidField("observationRules") }
+    }
+    public func replacing(_ rule: ObservationRule) throws -> Self {
+        try validate()
+        var updated = rules.filter { $0.id != rule.id }
+        updated.append(rule)
+        let result = Self(rules: updated)
+        try result.validate()
+        return result
+    }
+    public func removing(_ id: UUID) throws -> Self {
+        try validate()
+        let result = Self(rules: rules.filter { $0.id != id })
+        try result.validate()
+        return result
+    }
+    public static func decode(_ data: Data) throws -> Self {
+        guard data.count <= 65_536 else { throw ContractError.oversizedDocument }
+        let value = try JSONDecoder().decode(Self.self, from: data)
+        try value.validate()
+        return value
+    }
+}
+public struct ObservationRuleInput: Sendable {
+    public let scope: NetworkScope?
+    public let quotaTier: LocalQuotaTier?
+    public let connected: Bool?
+    public let focusEnabled: Bool?
+    public init(scope: NetworkScope?, quotaTier: LocalQuotaTier?, connected: Bool?, focusEnabled: Bool?) {
+        self.scope = scope; self.quotaTier = quotaTier; self.connected = connected; self.focusEnabled = focusEnabled
+    }
+}
+public enum ObservationRuleStatus: String, Sendable { case invalid, unknown, noMatch, conflict, matched }
+public struct ObservationRulePreview: Equatable, Sendable {
+    public let status: ObservationRuleStatus
+    public let action: ObservationRuleAction?
+    public let ruleIDs: [UUID]
+}
+public enum ObservationRuleEngine {
+    public static func preview(_ set: ObservationRuleSet, input: ObservationRuleInput) -> ObservationRulePreview {
+        guard (try? set.validate()) != nil else { return .init(status: .invalid, action: nil, ruleIDs: []) }
+        // False takes precedence over unknown within an AND rule. Unknown
+        // otherwise prevents a lower or tied priority from winning.
+        var matches: [ObservationRule] = [], uncertain: [ObservationRule] = []
+        for rule in set.rules {
+            var conditions: [Bool?] = []
+            if let expected = rule.scope { conditions.append(input.scope.flatMap { $0 == .unknown ? nil : $0 == expected }) }
+            if let expected = rule.minimumQuotaTier { conditions.append(input.quotaTier.map { $0 >= expected }) }
+            if let expected = rule.connected { conditions.append(input.connected.map { $0 == expected }) }
+            if let expected = rule.focusEnabled { conditions.append(input.focusEnabled.map { $0 == expected }) }
+            if conditions.contains(false) { continue }
+            if conditions.contains(nil) { uncertain.append(rule) }
+            else { matches.append(rule) }
+        }
+        let best = matches.map(\.priority).max()
+        let unresolved = uncertain.filter { rule in best.map { rule.priority >= $0 } ?? true }
+        func ids(_ rows: [ObservationRule]) -> [UUID] { rows.map(\.id).sorted { $0.uuidString < $1.uuidString } }
+        if !unresolved.isEmpty { return .init(status: .unknown, action: nil, ruleIDs: ids(unresolved)) }
+        guard let best else { return .init(status: .noMatch, action: nil, ruleIDs: []) }
+        let winners = matches.filter { $0.priority == best }
+        guard let action = winners.first?.action, winners.allSatisfy({ $0.action == action }) else {
+            return .init(status: .conflict, action: nil, ruleIDs: ids(winners))
+        }
+        return .init(status: .matched, action: action, ruleIDs: ids(winners))
     }
 }

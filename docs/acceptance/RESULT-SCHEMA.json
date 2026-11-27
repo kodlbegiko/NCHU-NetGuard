@@ -1,0 +1,232 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NetGuard local automatic acceptance report v2",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "kind",
+    "started_at",
+    "commit_sha",
+    "clean_at_start",
+    "clean_at_end",
+    "same_revision_at_end",
+    "environment",
+    "profile",
+    "steps",
+    "manual_gates",
+    "full_device_acceptance",
+    "automatic_exit_code",
+    "options",
+    "planned_steps"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "kind": {
+      "const": "local_automatic"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "commit_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "clean_at_start": {
+      "type": "boolean"
+    },
+    "clean_at_end": {
+      "type": "boolean"
+    },
+    "same_revision_at_end": {
+      "type": "boolean"
+    },
+    "environment": {
+      "type": "object",
+      "required": [
+        "os",
+        "os_version",
+        "architecture",
+        "python",
+        "hardware_model"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "os": {
+          "type": "string"
+        },
+        "os_version": {
+          "type": "string"
+        },
+        "architecture": {
+          "type": "string"
+        },
+        "python": {
+          "type": "string"
+        },
+        "hardware_model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "profile": {
+      "enum": [
+        "core",
+        "host"
+      ]
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "reason"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pass",
+              "fail",
+              "inconclusive",
+              "skipped",
+              "blocked"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "duration_seconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "log": {
+            "type": "string",
+            "pattern": "^logs/[a-z_]+\\.log$"
+          },
+          "log_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "metrics": {
+            "type": [
+              "object",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "manual_gates": {
+      "type": "array",
+      "minItems": 15,
+      "maxItems": 15,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "enum": [
+              "traffic_accuracy",
+              "vpn_deduplication",
+              "dual_stack",
+              "network_switching",
+              "sleep_wake",
+              "workflow_identity",
+              "provider_accounting",
+              "security_review",
+              "recovery",
+              "performance_idle",
+              "accessibility",
+              "novice_ux",
+              "lifecycle",
+              "soak_168h",
+              "extension"
+            ]
+          },
+          "status": {
+            "enum": [
+              "review_required",
+              "blocked"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "full_device_acceptance": {
+      "const": false
+    },
+    "automatic_exit_code": {
+      "enum": [
+        0,
+        1,
+        2
+      ]
+    },
+    "options": {
+      "type": "object",
+      "required": [
+        "performance",
+        "traffic"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "performance": {
+          "type": "boolean"
+        },
+        "traffic": {
+          "type": "boolean"
+        }
+      }
+    },
+    "planned_steps": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 14,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "preflight",
+          "toolchain",
+          "python_tests",
+          "swift_tests",
+          "coverage",
+          "legacy_build",
+          "module_build",
+          "legacy_smoke",
+          "module_smoke",
+          "host_compatibility",
+          "tcp_observation",
+          "udp_observation",
+          "performance",
+          "traffic_numeric"
+        ]
+      }
+    }
+  },
+  "additionalProperties": false
+}
