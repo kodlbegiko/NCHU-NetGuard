@@ -59,7 +59,7 @@ def main():
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--require-target", action="store_true",
-                        help="Fail when complete production-source coverage >=90% is not demonstrated")
+                        help="Fail when complete production-source coverage of at least 90 percent is not demonstrated")
     args = parser.parse_args()
     try:
         if args.report.stat().st_size > 256 * 1024 * 1024:
