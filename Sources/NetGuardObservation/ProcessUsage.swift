@@ -127,11 +127,17 @@ public struct ProcessUsageAccumulator: Sendable {
             breakContinuity(); return
         }
         var current: [Int: ProcessCounter] = [:]
+        var seen = Set<Int>()
         var ambiguous = Set<Int>()
         for counter in counters {
-            guard counter.pid > 0, !counter.start.isEmpty, !counter.name.isEmpty,
-                  counter.name.utf8.count <= 128 else { continue }
-            if current.updateValue(counter, forKey: counter.pid) != nil { ambiguous.insert(counter.pid) }
+            guard counter.pid > 0 else { continue }
+            if !seen.insert(counter.pid).inserted { ambiguous.insert(counter.pid) }
+            guard !counter.start.isEmpty, counter.start.utf8.count <= 128,
+                  !counter.start.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
+                  !counter.name.isEmpty, counter.name.utf8.count <= 128,
+                  !counter.name.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+            else { continue }
+            current[counter.pid] = counter
         }
         for pid in ambiguous { current.removeValue(forKey: pid) }
         defer { previous = current; last = uptime }

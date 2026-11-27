@@ -7,6 +7,29 @@ public struct AppTrafficObservation: Equatable, Sendable {
 }
 
 public enum AppTrafficParser {
+    /// Only PID/start matched observations from the bracketed process parser
+    /// may reach the production lifetime display. This is still incomplete
+    /// process-lifetime evidence, never daily or route-specific accounting.
+    public static func verifiedLifetime(_ counters: [ProcessCounter]?) -> [AppTrafficObservation]? {
+        guard let counters, !counters.isEmpty, counters.count <= 4096 else { return nil }
+        var seen = Set<Int>()
+        var byName: [String: UInt64] = [:]
+        for row in counters {
+            guard row.pid > 0, seen.insert(row.pid).inserted,
+                  !row.start.isEmpty, row.start.utf8.count <= 128,
+                  !row.name.isEmpty, row.name.utf8.count <= 128,
+                  !row.name.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+            else { return nil }
+            let (total, overflow) = row.received.addingReportingOverflow(row.sent)
+            let (sum, aggregateOverflow) = (byName[row.name] ?? 0).addingReportingOverflow(total)
+            guard !overflow, !aggregateOverflow else { return nil }
+            byName[row.name] = sum
+        }
+        return byName.map { AppTrafficObservation(name: $0.key, bytes: $0.value) }
+            .filter { $0.bytes > 0 }
+            .sorted { $0.bytes == $1.bytes ? $0.name < $1.name : $0.bytes > $1.bytes }
+    }
+
     /// One nettop snapshot of process-lifetime counters. Not a daily total or
     /// per-interface attribution. Unrecognized rows are excluded, never guessed.
     public static func parse(_ output: String) -> [AppTrafficObservation] {

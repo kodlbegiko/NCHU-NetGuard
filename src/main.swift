@@ -784,6 +784,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         processHistoryLastDate = nil
         processHistoryLastUptime = nil
         processObservationToken = UUID()
+        appProbeTimestamp = nil
+        topAppConsumers = []
     }
 
     private func setProcessHistoryEnabled(_ enabled: Bool) {
@@ -1360,7 +1362,7 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         let now = ProcessInfo.processInfo.systemUptime
         let connected = isConnected && workflowPowerGuard.allowsSampling
         let scope = sampledScopes[activeInterface] ?? .unknown
-        let rows = topAppConsumers.compactMap { item -> ProcessSampleRow? in
+        let rows = (processObservationAllowed ? topAppConsumers : []).compactMap { item -> ProcessSampleRow? in
             guard let bytes = UInt64(exactly: item.bytes) else { return nil }
             return ProcessSampleRow(name: item.name, bytes: bytes)
         }
@@ -1835,7 +1837,9 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
         let ulPct = min(max((ulUsed / ulQuotaBytes) * 100.0, 0.0), 100.0)
         
         var appsArray: [[String: String]] = []
-        let appSampleFresh = appProbeTimestamp.map { ProcessInfo.processInfo.systemUptime - $0 <= 30 } ?? false
+        let appNow = ProcessInfo.processInfo.systemUptime
+        let appSampleFresh = processObservationAllowed &&
+            (appProbeTimestamp.map { appNow >= $0 && appNow - $0 <= 30 } ?? false)
         for item in (appSampleFresh ? topAppConsumers : []).prefix(4) {
             appsArray.append(["name": item.name, "bytes": formatBytes(item.bytes)])
         }
@@ -2488,22 +2492,21 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                 counters = after.isEmpty ? nil : ProcessCounterParser.parse(raw, before: before.mapValues { $0.start }, after: after.mapValues { $0.start })
                 attributed = AgentAttribution.attributed(counters, before: before, after: after)
             } else { counters = nil; attributed = nil }
-            let observations: [AppTrafficObservation]?
-            if case .success(let out) = outcome {
-                observations = AppTrafficParser.parse(out)
-            } else { observations = nil }
+            let observations = AppTrafficParser.verifiedLifetime(counters)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.appProbeInFlight = false
-                guard self.workflowPowerGuard.generation == generation else { return }
-                if collectSession && self.processObservationAllowed && self.processObservationToken == token {
-                    self.processUsage.ingest(counters, uptime: sampledAt)
-                    self.agentUsage.ingest(attributed, uptime: sampledAt)
-                    self.recordAgentHistory(attributed, date: sampledDate, uptime: sampledAt)
-                    self.recordProcessHistory(counters, date: sampledDate, uptime: sampledAt)
-                }
+                let deliveredAt = ProcessInfo.processInfo.systemUptime
+                guard self.workflowPowerGuard.generation == generation,
+                      collectSession, self.processObservationAllowed,
+                      self.processObservationToken == token,
+                      deliveredAt >= sampledAt, deliveredAt - sampledAt <= 30 else { return }
+                self.processUsage.ingest(counters, uptime: sampledAt)
+                self.agentUsage.ingest(attributed, uptime: sampledAt)
+                self.recordAgentHistory(attributed, date: sampledDate, uptime: sampledAt)
+                self.recordProcessHistory(counters, date: sampledDate, uptime: sampledAt)
                 self.topAppConsumers = (observations ?? []).map { (name: $0.name, bytes: Double($0.bytes)) }
-                self.appProbeTimestamp = observations == nil ? nil : ProcessInfo.processInfo.systemUptime
+                self.appProbeTimestamp = observations == nil ? nil : sampledAt
                 if self.popover.isShown { self.pushDataToWebUI() }
             }
         }
