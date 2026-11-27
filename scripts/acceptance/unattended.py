@@ -19,7 +19,7 @@ from types import SimpleNamespace
 from run_all import (ROOT, BLOCKED_IDS, CORE_STEPS, MANUAL_IDS, environment,
                      execute, new_run, now, revision, run_step, write_json,
                      performance_metrics, LIMIT)
-from verify_report import verify, read_private, strict_json
+from verify_report import verify, read_private, strict_json, owned_directory, timestamp
 from soak_test import TARGET
 sys.path.insert(0, str(ROOT / "scripts"))
 from benchmark_device import sample, summarize
@@ -178,11 +178,85 @@ def observation_evidence(out, name, seconds, interval):
             "sha256": summary["sha256"]}
 
 
+def review_completed(out, expected_sha):
+    """Verify completed evidence without using any live PID or network probe."""
+    owned_directory(out)
+    owned_directory(out / "logs")
+    report = strict_json(read_private(out / "summary.json", 256 * 1024))
+    sha = report["commit_sha"]
+    if (report["schema_version"] != 1 or report["kind"] != "unattended_acceptance" or
+            sha != expected_sha or report["full_device_acceptance"] is not False or
+            report["release_authorized"] is not False or
+            timestamp(report["finished_at"]) < timestamp(report["started_at"])):
+        raise ValueError("invalid acceptance report")
+    auto = verify(out / "automatic", sha)
+    if auto != report["automatic"]:
+        raise ValueError("automatic summary mismatch")
+    results = {row["id"]: row["status"] for row in auto["step_statuses"]}
+    if (any(results.get(id) != "pass" for id in CORE_STEPS) or
+            any(state == "fail" for state in results.values())):
+        raise ValueError("core or host failure")
+    if report["manual_gates"] != [{"id": id, "status": "blocked" if id in BLOCKED_IDS else "review_required"}
+                                   for id in MANUAL_IDS]:
+        raise ValueError("manual gate mismatch")
+    markers = {"isolated_install": "NETGUARD_ISOLATED_INSTALL_OK bundles=2",
+               "isolated_lifecycle": "NETGUARD_LIFECYCLE_REHEARSAL_OK exchange rollback conflict quarantine synthetic-data"}
+    if set(report["steps"]) != set(markers):
+        raise ValueError("isolated step inventory mismatch")
+    for name, marker in markers.items():
+        row = report["steps"][name]
+        raw = read_private(out / "logs" / (name + ".log"), LIMIT)
+        if (row["id"] != name or row["status"] != "pass" or row["exit_code"] != 0 or
+                row["log"] != "logs/" + name + ".log" or
+                hashlib.sha256(raw).hexdigest() != row["log_sha256"] or marker.encode() not in raw.splitlines()):
+            raise ValueError("isolated step not demonstrated")
+    inventory = report["candidate_inventory"]
+    if (inventory["commit_sha"] != sha or inventory["release_authorized"] is not False or
+            inventory["full_device_acceptance"] is not False or set(inventory["bundles"]) != {"legacy", "module"} or
+            not report["matched_candidate_variants"] or
+            not set(report["matched_candidate_variants"]) <= set(inventory["bundles"])):
+        raise ValueError("candidate inventory mismatch")
+    seconds = report["soak_requested_seconds"]
+    if type(seconds) is not int or not 60 <= seconds <= TARGET:
+        raise ValueError("invalid soak duration")
+    expected = {"idle_" + str(i + 1): (PERFORMANCE_SECONDS, 5) for i in range(PERFORMANCE_WINDOWS)}
+    expected["soak"] = (seconds, SOAK_INTERVAL)
+    if set(report["observations"]) != set(expected):
+        raise ValueError("incomplete observation plan")
+    observations = {name: observation_evidence(out, name, *plan) for name, plan in expected.items()}
+    if observations != report["observations"]:
+        raise ValueError("observation summary mismatch")
+    failed = any(observations[name]["status"] != "numeric_target_met_review_required"
+                 for name in expected if name != "soak")
+    verdict = ("numeric_target_not_met" if failed else
+               "short_trial_only" if seconds != TARGET else "observations_complete_review_required")
+    if report["status"] != verdict:
+        raise ValueError("unattended verdict mismatch")
+    return {"commit_sha": sha, "status": verdict, "observations": observations,
+            "automatic": auto, "manual_gates": report["manual_gates"],
+            "full_device_acceptance": False, "release_authorized": False,
+            "integrity_scope": "local_consistency_only_not_authenticity"}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pid", type=int, help="Explicit running candidate PID; otherwise prompt once after build")
     parser.add_argument("--trial-seconds", type=int, help="Short soak rehearsal, never full acceptance")
+    parser.add_argument("--verify", type=Path, help="Review an existing completed private run instead of testing")
+    parser.add_argument("--expected-sha", help="Exact source SHA required for report review")
     args = parser.parse_args()
+    if args.verify is not None:
+        if not args.expected_sha or args.pid is not None or args.trial_seconds is not None:
+            parser.error("report review requires exact SHA and no execution options")
+        try:
+            result = review_completed(args.verify, args.expected_sha)
+            print(json.dumps(result, indent=2))
+            return 0 if result["status"] == "observations_complete_review_required" else 2
+        except (OSError, ValueError, TypeError, KeyError, IndexError, OverflowError):
+            print(json.dumps({"status": "invalid_or_incomplete_evidence", "full_device_acceptance": False}))
+            return 2
+    if args.expected_sha is not None:
+        parser.error("expected SHA is only for report review")
     if (platform.system() != "Darwin" or (args.pid is not None and args.pid <= 0) or
             (args.trial_seconds is not None and not 60 <= args.trial_seconds < TARGET)):
         parser.error("requires macOS, positive PID, and bounded short trial")
@@ -222,7 +296,9 @@ def main():
             ("isolated_lifecycle", [sys.executable, "scripts/verify_lifecycle_candidate.py",
                                     "--app", "build/NCHUTraffic.app"])):
             exact_checkout(sha)
-            result = run_step(out, name, argv, 180)
+            marker = ("NETGUARD_ISOLATED_INSTALL_OK bundles=2" if name == "isolated_install" else
+                      "NETGUARD_LIFECYCLE_REHEARSAL_OK exchange rollback conflict quarantine synthetic-data")
+            result = run_step(out, name, argv, 180, marker=marker)
             report["steps"][name] = result
             write_json(path, report)
             if result["status"] != "pass":
@@ -274,6 +350,13 @@ def main():
         write_json(path, report)
         print("Private acceptance summary: " + str(path.relative_to(ROOT)), flush=True)
         print("Result: " + report["status"] + "; full device acceptance not granted", flush=True)
+    if report["status"] == "observations_complete_review_required":
+        try:
+            review_completed(out, sha)
+        except (OSError, ValueError, TypeError, KeyError, IndexError, OverflowError):
+            report["status"] = "inconclusive"
+            write_json(path, report)
+            print("Final evidence review failed; no complete observation claim.", flush=True)
     return 0 if report["status"] == "observations_complete_review_required" else 2
 
 

@@ -52,3 +52,13 @@ class UnattendedTests(unittest.TestCase):
                 patch.object(runner, "describe", return_value={"sha256":"different"}):
             with self.assertRaises(ValueError):
                 runner.identity_of(123, {"bundles":{"legacy":{"sha256":"expected"}}})
+
+    def test_incomplete_report_never_becomes_complete(self):
+        with tempfile.TemporaryDirectory() as folder:
+            out = Path(folder)
+            (out / "logs").mkdir(mode=0o700)
+            runner.write_json(out / "summary.json", {"schema_version": 1, "kind": "unattended_acceptance",
+                "commit_sha": "a"*40, "full_device_acceptance": False, "release_authorized": False,
+                "started_at": runner.now(), "status": "observations_complete_review_required"})
+            with self.assertRaises((ValueError, KeyError)):
+                runner.review_completed(out, "a"*40)
