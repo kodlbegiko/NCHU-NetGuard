@@ -22,6 +22,16 @@ public struct ScopedInterfaceSample: Codable, Equatable, Sendable {
         !identity.isEmpty && identity.utf8.count <= 4096 &&
         !identity.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
     }
+    var hasValidCounterIdentity: Bool {
+        let id = counters.interfaceID
+        guard !id.isEmpty, id.utf8.count <= 128,
+              !id.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else { return false }
+        // Nil is supported by older counter sources, but an explicitly
+        // malformed generation must never establish a baseline.
+        guard let generation = counterGeneration else { return true }
+        return !generation.isEmpty && generation.utf8.count <= 128 &&
+            !generation.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+    }
 }
 
 public struct ScopedTrafficDelta: Equatable, Sendable {
@@ -59,11 +69,19 @@ public struct ScopedCounterAccumulator: Sendable {
         previousDay = day
         previousUptime = uptime
         let counts = Dictionary(grouping: samples, by: { $0.counters.interfaceID })
-        let deltas = accumulator.ingest(samples.map(\.counters))
+        // Reject the entire duplicate group, even if only one member has
+        // malformed metadata. Omitting it from ingest also drops its baseline.
+        let eligible = counts.values.compactMap { group -> InterfaceCounters? in
+            guard group.count == 1, let sample = group.first,
+                  sample.hasValidCounterIdentity else { return nil }
+            return sample.counters
+        }
+        let deltas = accumulator.ingest(eligible)
         var next: [String: ScopedInterfaceSample] = [:]
         var result = Dictionary(uniqueKeysWithValues: missing.map { ($0, invalid) })
         for (id, group) in counts {
-            guard group.count == 1, let sample = group.first, let delta = deltas[id] else {
+            guard group.count == 1, let sample = group.first, sample.hasValidCounterIdentity,
+                  let delta = deltas[id] else {
                 result[id] = ScopedTrafficDelta(scope: .unknown,
                     delta: TrafficDelta(received: 0, sent: 0, quality: .unknown))
                 continue
@@ -88,7 +106,8 @@ public struct ScopedCounterAccumulator: Sendable {
 public enum InterfaceScopeProjection {
     public static func scopes(_ samples: [ScopedInterfaceSample]) -> [String: NetworkScope] {
         Dictionary(grouping: samples, by: { $0.counters.interfaceID }).mapValues { group in
-            guard group.count == 1, let sample = group.first, sample.hasScopeIdentity else { return .unknown }
+            guard group.count == 1, let sample = group.first, sample.hasScopeIdentity,
+                  sample.hasValidCounterIdentity else { return .unknown }
             return sample.scope
         }
     }
@@ -197,11 +216,8 @@ public struct ManualScopeSelection: Equatable, Sendable {
     private let generation: String
 
     public init?(scope: NetworkScope, sample: ScopedInterfaceSample) {
-        guard scope != .unknown, sample.hasScopeIdentity,
-              !sample.counters.interfaceID.isEmpty,
-              let generation = sample.counterGeneration, !generation.isEmpty,
-              generation.utf8.count <= 128,
-              !generation.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else { return nil }
+        guard scope != .unknown, sample.hasScopeIdentity, sample.hasValidCounterIdentity,
+              let generation = sample.counterGeneration else { return nil }
         self.scope = scope
         self.interfaceID = sample.counters.interfaceID
         self.identity = sample.identity
@@ -209,7 +225,7 @@ public struct ManualScopeSelection: Equatable, Sendable {
     }
 
     public func matches(_ sample: ScopedInterfaceSample) -> Bool {
-        sample.hasScopeIdentity && sample.counters.interfaceID == interfaceID &&
+        sample.hasScopeIdentity && sample.hasValidCounterIdentity && sample.counters.interfaceID == interfaceID &&
         sample.identity == identity && sample.counterGeneration == generation
     }
 }

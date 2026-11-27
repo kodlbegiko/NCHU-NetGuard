@@ -142,6 +142,48 @@ final class TrafficModuleTests: XCTestCase {
     }
 
 
+    func testMalformedCounterIdentityDropsBaselineAndNeverProjectsScope() {
+        let day = "2026-11-27"
+        func sample(_ bytes: UInt64, _ generation: String?, id: String = "en0") -> ScopedInterfaceSample {
+            .init(counters: .init(interfaceID: id, received: bytes, sent: bytes),
+                  scope: .dorm, identity: "network", counterGeneration: generation)
+        }
+        for generation in ["", "\n", "a\u{0000}", String(repeating: "x", count: 129)] {
+            var engine = ScopedCounterAccumulator()
+            _ = engine.ingest([sample(10, "1")], day: day, uptime: 1)
+            for tick in [2, 3] {
+                let bad = sample(UInt64(tick * 10), generation)
+                let delta = engine.ingest([bad], day: day, uptime: Double(tick))["en0"]
+                XCTAssertEqual(delta, .init(scope: .unknown, delta: .init(received: 0, sent: 0, quality: .unknown)))
+                XCTAssertEqual(InterfaceScopeProjection.scopes([bad])["en0"], .unknown)
+            }
+            XCTAssertEqual(engine.ingest([sample(40, "1")], day: day, uptime: 4)["en0"]?.delta.quality, .unknown)
+            XCTAssertEqual(engine.ingest([sample(50, "1")], day: day, uptime: 5)["en0"]?.delta.received, 10)
+        }
+        for id in ["", "en0\n", String(repeating: "x", count: 129)] {
+            let bad = sample(1, "1", id: id)
+            XCTAssertEqual(InterfaceScopeProjection.scopes([bad])[id], .unknown)
+            XCTAssertNil(ManualScopeSelection(scope: .dorm, sample: bad))
+        }
+    }
+
+    func testDuplicateDisconnectGapAndMidnightRequireNewBaseline() {
+        var engine = ScopedCounterAccumulator()
+        func sample(_ bytes: UInt64, _ generation: String = "1") -> ScopedInterfaceSample {
+            .init(counters: .init(interfaceID: "en0", received: bytes, sent: bytes),
+                  scope: .dorm, identity: "network", counterGeneration: generation)
+        }
+        let day = "2026-11-27", tomorrow = "2026-11-28"
+        _ = engine.ingest([sample(10)], day: day, uptime: 1)
+        XCTAssertEqual(engine.ingest([sample(20), sample(30, "\n")], day: day, uptime: 2)["en0"]?.delta.quality, .unknown)
+        XCTAssertEqual(engine.ingest([sample(40)], day: day, uptime: 3)["en0"]?.delta.quality, .unknown)
+        XCTAssertEqual(engine.ingest([], day: day, uptime: 4)["en0"]?.delta.quality, .unknown)
+        XCTAssertEqual(engine.ingest([sample(50)], day: day, uptime: 5)["en0"]?.delta.quality, .unknown)
+        XCTAssertEqual(engine.ingest([sample(60)], day: day, uptime: 11)["en0"]?.delta.quality, .unknown)
+        XCTAssertEqual(engine.ingest([sample(70)], day: tomorrow, uptime: 12)["en0"]?.delta.quality, .unknown)
+        XCTAssertEqual(engine.ingest([sample(80)], day: tomorrow, uptime: 13)["en0"]?.delta.received, 10)
+    }
+
     func testManualScopeSelectionNeverFollowsChangedIdentityOrGeneration() throws {
         func sample(_ id: String = "en0", _ identity: String = "network-a",
                     _ generation: String? = "1", _ bytes: UInt64 = 0) -> ScopedInterfaceSample {
