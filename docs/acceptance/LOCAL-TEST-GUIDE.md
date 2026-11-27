@@ -67,3 +67,7 @@ python3 scripts/acceptance/manual_session.py verify test-results/manual-實際�
 ## 隔離生命週期演練
 
 `python3 scripts/verify_lifecycle_candidate.py --app build/NCHUTraffic.app` 使用工具自行建立的私有暫存目錄，對實際建置 App 的副本與合成舊版執行 Darwin 原子交換、失敗後回滾、身分衝突拒絕與非破壞性隔離移動，並比對合成歷史資料與來源內容。它不接受實際安裝目的地、不啟動程式、不修改登入項目或使用者資料。CI 閘門不等於真實跨版本遷移、斷電復原、授權升級或解除安裝驗收。
+
+## 候選產物身分紀錄
+
+雙版本建置後執行 `python3 scripts/candidate_inventory.py --expected-sha "$(git rev-parse HEAD)"`。需要乾淨、精確的 checkout；兩種 App 版本欄位必須一致，輸出分別為其 SHA-256 內容指紋及實際 plist 版本。這是內容比對證據，非簽章、建置因果證明、實機驗收或發布授權；輸出一律不宣告 release_authorized。既有 plist 3.0 未擅自改名或發行。
