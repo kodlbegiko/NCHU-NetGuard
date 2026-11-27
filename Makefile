@@ -22,8 +22,7 @@ smoke-module: build-module
 	python3 scripts/smoke_test.py --app build/module/NCHUTraffic.app
 
 install: build
-	mkdir -p "$(INSTALL_DIR)"
-	ditto "$(APP)" "$(INSTALL_DIR)/NCHUTraffic.app"
+	python3 scripts/install_bundle.py --source "$(APP)" --destination-dir "$(INSTALL_DIR)"
 
 test:
 	python3 -m unittest discover -s tests -p 'test_*.py' -v
