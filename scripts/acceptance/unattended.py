@@ -5,6 +5,8 @@ Never launches/restarts an app, changes sleep settings, modifies network routes,
 generates controlled traffic, or operates on the user's installation.
 """
 import argparse
+import datetime as dt
+import shlex
 import hashlib
 import json
 import math
@@ -84,6 +86,89 @@ def validate_transition(previous, current, allowed_gap):
     return max(mono, wall)
 
 
+HEALTH_MAX_AGE = 15
+HEALTH_COUNTS = ("tick_count", "sample_cycles", "measured_cycles", "save_successes")
+HEALTH_FLAGS = ("sleeping", "clock_held", "persistence_blocked", "accounting_overflow", "history_healthy")
+HEALTH_TIMES = ("wall_seconds", "max_tick_gap_seconds", "max_tick_duration_seconds",
+                "sample_age_seconds", "save_age_seconds")
+HEALTH_KEYS = {"schema_version", "day", "received", "sent", "busy_seconds",
+               *HEALTH_COUNTS, *HEALTH_FLAGS, *HEALTH_TIMES}
+
+
+def validate_health(health, wall):
+    if (not isinstance(health, dict) or set(health) != HEALTH_KEYS or
+            type(health["schema_version"]) is not int or health["schema_version"] != 1):
+        raise ValueError("heartbeat schema")
+    for key in HEALTH_COUNTS + ("received", "sent"):
+        if type(health[key]) is not int or not 0 <= health[key] <= 9_007_199_254_740_991:
+            raise ValueError("invalid heartbeat counter")
+    if (health["tick_count"] < 1 or health["sample_cycles"] > health["tick_count"] or
+            health["measured_cycles"] > health["sample_cycles"] or
+            health["received"] + health["sent"] > 9_007_199_254_740_991):
+        raise ValueError("heartbeat counter invariant")
+    for key in HEALTH_TIMES:
+        value = health[key]
+        if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+            raise ValueError("invalid or unavailable heartbeat timing")
+    if (type(wall) not in (int, float) or not math.isfinite(wall) or
+            not -2 <= wall - health["wall_seconds"] <= HEALTH_MAX_AGE or
+            health["max_tick_gap_seconds"] > 15 or health["max_tick_duration_seconds"] > 15 or
+            health["sample_age_seconds"] > 5 or health["save_age_seconds"] > 30):
+        raise ValueError("stalled heartbeat, sample or persistence")
+    if (any(type(health[key]) is not bool for key in HEALTH_FLAGS) or
+            any(health[key] for key in HEALTH_FLAGS[:-1]) or not health["history_healthy"]):
+        raise ValueError("app safety hold or persistence failure")
+    busy = health["busy_seconds"]
+    if (not isinstance(busy, dict) or set(busy) != {"route", "apps", "ping"} or
+            any(type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 60
+                for v in busy.values())):
+        raise ValueError("background probe stalled")
+    day = dt.date.fromisoformat(health["day"])
+    if day.isoformat() != health["day"]:
+        raise ValueError("invalid heartbeat day")
+    return health
+
+
+def read_health(directory, pid, wall):
+    owned_directory(directory)
+    value = strict_json(read_private(directory / "heartbeat.json", 16_384))
+    if not isinstance(value, dict) or type(value.get("pid")) is not int or value.pop("pid") != pid:
+        raise ValueError("heartbeat does not belong to selected PID")
+    return validate_health(value, wall)
+
+
+def health_transition(previous, current):
+    a, b = previous["health"], current["health"]
+    if (any(b[k] < a[k] for k in HEALTH_COUNTS) or b["day"] < a["day"] or
+            b["wall_seconds"] < a["wall_seconds"] or
+            b["max_tick_gap_seconds"] < a["max_tick_gap_seconds"] or
+            b["max_tick_duration_seconds"] < a["max_tick_duration_seconds"]):
+        raise ValueError("heartbeat rollback")
+    if b["tick_count"] == a["tick_count"] and b != a:
+        raise ValueError("heartbeat changed without new tick")
+    if b["day"] == a["day"] and any(b[k] < a[k] for k in ("received", "sent")):
+        raise ValueError("daily ledger regressed")
+    if current["elapsed_seconds"] - previous["elapsed_seconds"] >= 30:
+        if any(b[k] <= a[k] for k in ("tick_count", "sample_cycles", "save_successes")):
+            raise ValueError("main loop, sample or save progress stopped")
+
+
+def health_summary(rows):
+    first, last = rows[0]["health"], rows[-1]["health"]
+    if any(last[k] <= first[k] for k in ("tick_count", "sample_cycles", "save_successes")):
+        raise ValueError("no functional progress")
+    rollovers = sum(a["health"]["day"] != b["health"]["day"] for a,b in zip(rows, rows[1:]))
+    return {"ticks": last["tick_count"] - first["tick_count"],
+            "sample_cycles": last["sample_cycles"] - first["sample_cycles"],
+            "measured_cycles": last["measured_cycles"] - first["measured_cycles"],
+            "successful_saves": last["save_successes"] - first["save_successes"],
+            "observed_day_transitions": rollovers,
+            "max_tick_gap_seconds": last["max_tick_gap_seconds"],
+            "max_tick_duration_seconds": last["max_tick_duration_seconds"],
+            "measurement_evidence": ("observed" if last["measured_cycles"] > first["measured_cycles"]
+                                     else "no_measured_cycles_review_required")}
+
+
 def observe(out, name, pid, expected, sha, seconds, interval):
     """Write private streaming evidence; an interruption cannot be a pass."""
     path = out / (name + ".jsonl")
@@ -103,7 +188,10 @@ def observe(out, name, pid, expected, sha, seconds, interval):
                 if first is None:
                     first, first_wall = current, wall
                 row = sample_row(current, first, wall, first_wall)
+                row["sample_wall_seconds"] = wall
+                row["health"] = read_health(out / "health", pid, wall)
                 if previous is not None:
+                    health_transition(previous, row)
                     gap = validate_transition(previous, row, interval + (10 if interval == 5 else 15))
                     status["max_gap_seconds"] = max(status["max_gap_seconds"], gap)
                 else:
@@ -129,8 +217,9 @@ def observe(out, name, pid, expected, sha, seconds, interval):
                                 else "numeric_target_not_met")
         else:
             status["status"] = "duration_met_review_required" if seconds == TARGET else "short_trial_only"
-    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, ArithmeticError, KeyboardInterrupt):
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, ArithmeticError, KeyboardInterrupt, KeyError, TypeError) as error:
         status["status"] = "inconclusive"
+        status["failure_type"] = type(error).__name__
     finally:
         if path.exists():
             status["sha256"] = hashlib.sha256(read_private(path, LIMIT)).hexdigest()
@@ -138,7 +227,7 @@ def observe(out, name, pid, expected, sha, seconds, interval):
     return status
 
 
-def observation_evidence(out, name, seconds, interval):
+def observation_evidence(out, name, seconds, interval, *, require_health=False):
     """Recompute duration, gaps and numeric metrics from recorded samples."""
     summary = strict_json(read_private(out / (name + ".json"), 256 * 1024))
     raw = read_private(out / (name + ".jsonl"), LIMIT)
@@ -160,8 +249,15 @@ def observation_evidence(out, name, seconds, interval):
             gap != summary["max_gap_seconds"]):
         raise ValueError("duration or summary mismatch")
     cpu = 100 * rows[-1]["cpu_seconds_delta"] / elapsed
+    health = None
+    if require_health:
+        for row in rows:
+            validate_health(row["health"], row["sample_wall_seconds"])
+        for a,b in zip(rows, rows[1:]):
+            health_transition(a, b)
+        health = health_summary(rows)
     if interval == 5:
-        target = cpu < 0.5 and rss < 80_000_000
+        target = round(cpu, 4) < 0.5 and rss < 80_000_000
         metrics = summary.get("metrics") or {}
         if (not metrics.get("meets_observation_window") or
                 abs(metrics.get("cpu_percent_one_core", -1) - cpu) > 0.000051 or
@@ -173,9 +269,12 @@ def observation_evidence(out, name, seconds, interval):
         status = "duration_met_review_required" if seconds == TARGET else "short_trial_only"
     if summary["status"] != status:
         raise ValueError("observation verdict mismatch")
-    return {"status": status, "samples": len(rows), "elapsed_seconds": elapsed,
-            "average_cpu_percent_one_core": round(cpu, 4), "max_rss_bytes": rss, "max_gap_seconds": gap,
-            "sha256": summary["sha256"]}
+    result = {"status": status, "samples": len(rows), "elapsed_seconds": elapsed,
+              "average_cpu_percent_one_core": round(cpu, 4), "max_rss_bytes": rss, "max_gap_seconds": gap,
+              "sha256": summary["sha256"]}
+    if require_health:
+        result["functional_health"] = health
+    return result
 
 
 def review_completed(out, expected_sha):
@@ -223,7 +322,8 @@ def review_completed(out, expected_sha):
     expected["soak"] = (seconds, SOAK_INTERVAL)
     if set(report["observations"]) != set(expected):
         raise ValueError("incomplete observation plan")
-    observations = {name: observation_evidence(out, name, *plan) for name, plan in expected.items()}
+    observations = {name: observation_evidence(out, name, *plan, require_health=True)
+                    for name, plan in expected.items()}
     if observations != report["observations"]:
         raise ValueError("observation summary mismatch")
     failed = any(observations[name]["status"] != "numeric_target_met_review_required"
@@ -240,13 +340,12 @@ def review_completed(out, expected_sha):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--pid", type=int, help="Explicit running candidate PID; otherwise prompt once after build")
     parser.add_argument("--trial-seconds", type=int, help="Short soak rehearsal, never full acceptance")
     parser.add_argument("--verify", type=Path, help="Review an existing completed private run instead of testing")
     parser.add_argument("--expected-sha", help="Exact source SHA required for report review")
     args = parser.parse_args()
     if args.verify is not None:
-        if not args.expected_sha or args.pid is not None or args.trial_seconds is not None:
+        if not args.expected_sha or args.trial_seconds is not None:
             parser.error("report review requires exact SHA and no execution options")
         try:
             result = review_completed(args.verify, args.expected_sha)
@@ -257,7 +356,7 @@ def main():
             return 2
     if args.expected_sha is not None:
         parser.error("expected SHA is only for report review")
-    if (platform.system() != "Darwin" or (args.pid is not None and args.pid <= 0) or
+    if (platform.system() != "Darwin" or
             (args.trial_seconds is not None and not 60 <= args.trial_seconds < TARGET)):
         parser.error("requires macOS, positive PID, and bounded short trial")
     os.umask(0o077)
@@ -278,6 +377,8 @@ def main():
                                for id in MANUAL_IDS]}
     path = out / "summary.json"
     write_json(path, report)
+    health_directory = out / "health"
+    health_directory.mkdir(mode=0o700)
     print("Private acceptance directory: " + str(out.relative_to(ROOT)), flush=True)
     try:
         execute(SimpleNamespace(profile="host", pid=None, traffic_evidence=None,
@@ -306,12 +407,24 @@ def main():
         inventory = collect(sha)
         report["candidate_inventory"] = inventory
         write_json(path, report)
-        print("Builds ready. Open the reviewed candidate app yourself, close its panels, "
-              "and choose its PID from Activity Monitor.", flush=True)
-        pid = args.pid if args.pid is not None else int(input("Candidate PID: ").strip())
+        print("Builds ready. Quit any existing NetGuard normally. In a second terminal run:", flush=True)
+        print("/usr/bin/open -a " + shlex.quote(str(ROOT / "build/NCHUTraffic.app")) +
+              " --args --netguard-qa-health-dir " + shlex.quote(str(health_directory)), flush=True)
+        print("Wait for the candidate to start, close its panels, and find its PID in Activity Monitor.", flush=True)
+        pid = int(input("Candidate PID: ").strip())
         if pid <= 0:
             raise ValueError("invalid PID")
         expected = identity_of(pid, inventory)
+        # Allow the first periodic save and heartbeat to become available.
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                read_health(health_directory, pid, time.time())
+                break
+            except (OSError, ValueError, TypeError, KeyError):
+                if time.monotonic() >= deadline:
+                    raise ValueError("candidate heartbeat unavailable")
+                time.sleep(1)
         report["matched_candidate_variants"] = expected[3]
         report["binary_identity"] = "on_disk_content_and_ps_identity_only"
         write_json(path, report)
@@ -323,7 +436,7 @@ def main():
             write_json(path, report)
             if result["status"] == "inconclusive":
                 raise ValueError("idle observation interrupted")
-            report["observations"][name] = observation_evidence(out, name, PERFORMANCE_SECONDS, 5)
+            report["observations"][name] = observation_evidence(out, name, PERFORMANCE_SECONDS, 5, require_health=True)
             write_json(path, report)
         print("Starting continuous soak; leave the candidate running.", flush=True)
         result = observe(out, "soak", pid, expected, sha, seconds, SOAK_INTERVAL)
@@ -331,7 +444,7 @@ def main():
         write_json(path, report)
         if result["status"] == "inconclusive":
             raise ValueError("soak interrupted")
-        report["observations"]["soak"] = observation_evidence(out, "soak", seconds, SOAK_INTERVAL)
+        report["observations"]["soak"] = observation_evidence(out, "soak", seconds, SOAK_INTERVAL, require_health=True)
         exact_checkout(sha)
         check_process(pid, expected, sha)
         if collect(sha) != inventory:

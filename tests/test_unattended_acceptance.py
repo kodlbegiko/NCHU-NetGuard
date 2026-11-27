@@ -62,3 +62,36 @@ class UnattendedTests(unittest.TestCase):
                 "started_at": runner.now(), "status": "observations_complete_review_required"})
             with self.assertRaises((ValueError, KeyError)):
                 runner.review_completed(out, "a"*40)
+
+    def healthy(self, ticks=10, day="2026-11-28", received=100):
+        return dict(schema_version=1, wall_seconds=100, tick_count=ticks,
+                    sample_cycles=ticks, measured_cycles=ticks-1, save_successes=1,
+                    max_tick_gap_seconds=1.1, max_tick_duration_seconds=.01,
+                    sample_age_seconds=.01, save_age_seconds=2, day=day, received=received, sent=20,
+                    sleeping=False, clock_held=False, persistence_blocked=False,
+                    accounting_overflow=False, history_healthy=True,
+                    busy_seconds={"route":0, "apps":0, "ping":0})
+
+    def test_heartbeat_rejects_stale_or_stalled_function_and_safety_holds(self):
+        h = self.healthy()
+        self.assertEqual(runner.validate_health(h, 105), h)
+        for bad in (dict(h, sample_age_seconds=6), dict(h, save_age_seconds=31),
+                    dict(h, persistence_blocked=True), dict(h, max_tick_gap_seconds=16),
+                    dict(h, busy_seconds={"route":61, "apps":0, "ping":0}),
+                    dict(h, measured_cycles=11), dict(h, day="2026-02-30")):
+            with self.assertRaises(ValueError):
+                runner.validate_health(bad, 105)
+        with self.assertRaises(ValueError):
+            runner.validate_health(h, 116)
+
+    def test_health_transition_and_rollover(self):
+        a = dict(elapsed_seconds=0, health=self.healthy())
+        b = dict(elapsed_seconds=60, health=dict(self.healthy(70), save_successes=7, wall_seconds=160))
+        runner.health_transition(a, b)
+        with self.assertRaises(ValueError):
+            runner.health_transition(a, dict(b, health=a["health"]))
+        with self.assertRaises(ValueError):
+            runner.health_transition(a, dict(b, health=dict(b["health"], received=99)))
+        new_day = dict(b, health=dict(b["health"], day="2026-11-29", received=0))
+        runner.health_transition(a, new_day)
+        self.assertEqual(runner.health_summary([a,new_day])["observed_day_transitions"], 1)

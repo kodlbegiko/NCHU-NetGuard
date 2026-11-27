@@ -74,10 +74,14 @@ python3 scripts/acceptance/manual_session.py verify test-results/manual-實際�
 
 ## 一次設定後的無人值守驗收
 
-在乾淨、已審閱的候選 checkout 中執行 `caffeinate -i python3 scripts/acceptance/unattended.py`（或 `make acceptance-unattended`，但後者不抑制閒置睡眠）。先執行自動核心與 host 驗收、兩種 App 建置、隔離安裝/生命週期測試與候選指紋。依提示只需一次自行開啟候選 App、在活動監視器找到 PID，關閉 App 面板並輸入 PID；也可用 `--pid` 明確選擇已啟動且不會被建置覆寫的相同內容副本。必須可取得絕對執行檔路徑，且在磁碟上的整份 bundle 指紋吻合兩個建置產物之一；ps 路徑／啟動時間與磁碟內容比對並非已載入執行檔的簽章或密碼學證明。執行期間每次採樣核對 Git 版本、乾淨狀態及 bundle 內容；此會增加少量測試程序 CPU/I/O，效能數值只計目標程序。
+在乾淨、已審閱的候選 checkout 中執行 `caffeinate -i python3 scripts/acceptance/unattended.py`（或 `make acceptance-unattended`，但後者不抑制閒置睡眠）。先執行自動核心與 host 驗收、兩種 App 建置、隔離安裝/生命週期測試與候選指紋。依提示只需一次自行開啟候選 App、在活動監視器找到 PID，關閉 App 面板並輸入 PID；新版必須用工具顯示的 `open -a … --args --netguard-qa-health-dir …` 指令明確開啟候選 App；先正常退出舊 App，不接受普通已啟動的程序。必須可取得絕對執行檔路徑，且在磁碟上的整份 bundle 指紋吻合兩個建置產物之一；ps 路徑／啟動時間與磁碟內容比對並非已載入執行檔的簽章或密碼學證明。執行期間每次採樣核對 Git 版本、乾淨狀態及 bundle 內容；此會增加少量測試程序 CPU/I/O，效能數值只計目標程序。
 
 三輪各 300 秒的閒置 CPU/RSS 採樣完成後，連續觀測 168 小時，每 60 秒記錄 CPU 累積時間、RSS、相對單調與牆鐘時間，逐次 fsync 私有日誌並原子更新檢查點。任何版本、程序身分、時間或採樣缺口異常均停止，不自動重啟或補寫資料。`--trial-seconds 60` 只做短時 soak 演練（仍執行三輪效能）；不可能替代 168h。每項觀測於完成後重算日誌雜湊、時間、缺口及數值摘要。總報告 `test-results/unattended-*/summary.json`，內含獨立核心驗證摘要；尚未完成的觀測仍有自己的 JSON/JSONL。保持電源、上蓋開啟及終端執行，不更新 checkout 或候選 App。退出碼 0 僅表示完整長時間觀測及效能數值達標、仍需審查，2 為短試、未達門檻或不確定。Host 不確定項目保留，不視為通過。關閉程式後不能自動接續中斷區間。
 
 必須人工或外部驗證：校方政策及同邊界獨立流量參考、VPN/多網卡與 IPv4/IPv6 切換、睡眠/喚醒、VoiceOver 與新手操作、正式復原/升級授權及獨立安全審查。工具不擅自製造宿網流量、修改設定、執行系統網路操作或自動上傳日誌。`full_device_acceptance` 與 `release_authorized` 永遠為 false；無人值守數值與日誌只構成待審查證據。
 
 完成後可獨立重新驗證：`python3 scripts/acceptance/unattended.py --verify test-results/unattended-實際目錄 --expected-sha <實際驗收SHA>`（將角括號整段換成 40 位 SHA）。會核對核心報告、隔離測試 marker 與日誌雜湊、完整三輪效能及 soak 取樣、時距與摘要。輸出為可人工審查的摘要，不包含原始 PID、IP、程序路徑或原始日誌；不驗證已載入二進位簽章或外部證據真實性。
+
+### 內部功能健康閘門
+
+候選 App 僅在明確 QA 參數下於私有 health/heartbeat.json 每約 5 秒更新一次，內含 PID（僅即時比對，採樣日誌移除 PID）、主迴圈完成次數/最大間隔/耗時、計量週期、實際量測週期、成功儲存次數/時間、方向總帳與日期、三類背景探測持續時間和安全狀態。外部觀測拒絕心跳逾 15 秒、主迴圈間隔或耗時逾 15 秒、採樣逾 5 秒、成功儲存逾 30 秒、背景探測持續逾 60 秒及帳本倒退；睡眠、日期倒退保護與資料失敗均停止此連續 awake 驗收。這些是保守 QA 診斷門檻，並非正式功能效能規格。每輪及 soak 重算完整健康樣本、進度與跨日事件；零有效量測只記待審查，不證明流量精度。健康記錄本身會帶來少量 I/O，CPU/RSS 仍須另行驗證普通模式。歷史健康旗標不是完整 SQLite 檢查；真正跨日資料保存尚需比對歷史庫。
