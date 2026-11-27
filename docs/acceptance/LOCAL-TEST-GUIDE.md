@@ -62,4 +62,4 @@ python3 scripts/acceptance/manual_session.py verify test-results/manual-實際�
 依 [驗收矩陣](ACCEPTANCE-MATRIX.md) 逐項在有權限且不影響重要工作之環境測試。複製 MANUAL-RESULT.template.json 到私有 test-results 目錄，填寫實際結果及去識別證據；使用 record_manual.py 驗證紀錄結構（例如：python3 scripts/acceptance/record_manual.py test-results/manual.json）。不可把樣板當作測試結果，也不可執行仍被禁用的真實復原、擴充、升級/解除安裝。正式核准需整合負責人審查。原始紀錄留本地，分享前只提供去識別摘要。
 
 ## CI 與本機驗收的區別
-整合 PR 的 Foundation CI 檢查 PR head SHA 而非合併模擬 SHA，並將實際驗證的 SHA 記錄於 Actions 摘要。Hosted macOS CI 不替代你的 Mac 實機結果，也不代表合併後的內容已驗證。若整合 PR 關閉，需重新開 PR 或手動執行 workflow。手動工作階段只計算 ledger 引用的證據；磁碟寫入中斷可能留下未引用私有檔案，不代表新增有效觀察。
+整合 PR 的 Foundation CI 檢查 PR head SHA 而非合併模擬 SHA，並將實際驗證的 SHA 記錄於 Actions 摘要。Foundation CI 強制完整核心原始碼覆蓋率清單及至少 90% 行覆蓋率，並對兩種建置產物執行私有暫存目錄內的安裝、內容比對及拒絕覆寫驗證；不啟動 App、不安裝至使用者 Applications。Hosted macOS CI 不替代你的 Mac 實機結果，也不代表合併後的內容已驗證。若整合 PR 關閉，需重新開 PR 或手動執行 workflow。手動工作階段只計算 ledger 引用的證據；磁碟寫入中斷可能留下未引用私有檔案，不代表新增有效觀察。

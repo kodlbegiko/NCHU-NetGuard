@@ -34,7 +34,7 @@ jobs:
         run: swift test --enable-code-coverage
       - name: Core line coverage evidence
         run: |
-          python3 scripts/core_coverage.py --root "$PWD" --report "$(swift test --show-codecov-path)"
+          python3 scripts/core_coverage.py --root "$PWD" --report "$(swift test --show-codecov-path)" --require-target
       - name: Legacy app build (no launch)
         run: make build
       - name: Verify bundle
@@ -49,6 +49,10 @@ jobs:
 
       - name: SwiftPM native executable and fixture smoke
         run: make smoke-module
+
+      - name: Isolated built-bundle installation and identity checks
+        run: |
+          python3 scripts/verify_install_candidate.py --app build/NCHUTraffic.app --app build/module/NCHUTraffic.app
 
       - name: Host parser compatibility evidence (non-gating)
         run: |

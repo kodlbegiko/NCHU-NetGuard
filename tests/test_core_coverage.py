@@ -1,4 +1,7 @@
 import importlib.util
+import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -48,3 +51,30 @@ class CoverageTests(unittest.TestCase):
             self.assertEqual(result["verified_non_executable_sources"], ["Sources/NetGuardCore/ModuleCompatibility.swift"])
             alias.write_text(alias.read_text() + "\nfunc bypass() {}\n")
             self.assertFalse(coverage.summarize(root, report)["meets_target"])
+
+    def test_required_coverage_gate_rejects_missing_and_below_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "Sources"
+            source.mkdir()
+            a, b = source / "A.swift", source / "B.swift"
+            a.touch()
+            b.touch()
+            output = root / "coverage.json"
+            def row(path, count, covered):
+                return {"filename": str(path), "summary": {"lines": {"count": count, "covered": covered}}}
+            def run(rows, required=True):
+                output.write_text(json.dumps({"data": [{"files": rows}]}))
+                args = [sys.executable, coverage.__file__, "--root", str(root), "--report", str(output)]
+                if required:
+                    args.append("--require-target")
+                result = subprocess.run(args, capture_output=True, text=True, timeout=10)
+                return result.returncode, json.loads(result.stdout.splitlines()[0])
+            for rows in ([row(a, 100, 100)], [row(a, 50, 50), row(b, 50, 39)]):
+                code, summary = run(rows)
+                self.assertEqual(code, 1)
+                self.assertFalse(summary["meets_target"])
+                self.assertEqual(run(rows, required=False)[0], 0)
+            code, summary = run([row(a, 50, 50), row(b, 50, 40)])
+            self.assertEqual(code, 0)
+            self.assertTrue(summary["meets_target"])

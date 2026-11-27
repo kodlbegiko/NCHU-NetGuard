@@ -58,6 +58,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument("--require-target", action="store_true",
+                        help="Fail when complete production-source coverage >=90% is not demonstrated")
     args = parser.parse_args()
     try:
         if args.report.stat().st_size > 256 * 1024 * 1024:
@@ -70,6 +72,8 @@ def main():
     print(json.dumps(result, sort_keys=True))
     if not result["meets_target"]:
         print("::warning::Core coverage target not demonstrated; R5 release gate remains open.")
+        if args.require_target:
+            return 1
     return 0
 
 
