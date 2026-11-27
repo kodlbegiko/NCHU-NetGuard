@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import shutil
 from pathlib import Path
 import plistlib
 import sys
@@ -80,6 +81,43 @@ class InstallBundleTests(unittest.TestCase):
         with self.assertRaises(OSError):
             installer.install(self.source, link)
         self.assertEqual(list(self.destination.iterdir()), [])
+
+    def test_review_is_read_only_and_distinguishes_content(self):
+        before = installer.bundle_fingerprint(self.source)
+        self.assertEqual(installer.review(self.source, self.destination)["operation"], "fresh_install_candidate")
+        self.assertEqual(list(self.destination.iterdir()), [])
+        target = self.destination / installer.BUNDLE
+        shutil.copytree(self.source, target)
+        result = installer.review(self.source, self.destination)
+        self.assertEqual(result["operation"], "identical_content")
+        self.assertEqual(result["installed_sha256"], before)
+        self.assertFalse(result["mutation_authorized"])
+        (target / installer.REQUIRED[1]).write_bytes(b"different")
+        self.assertEqual(installer.review(self.source, self.destination)["operation"], "different_content_review_required")
+        self.assertEqual((target / installer.REQUIRED[1]).read_bytes(), b"different")
+        self.assertEqual(installer.bundle_fingerprint(self.source), before)
+
+    def test_copy_mismatch_never_publishes(self):
+        copy = shutil.copytree
+        def altered(source, target, *args, **kwargs):
+            result = copy(source, target, *args, **kwargs)
+            if Path(target).name == installer.BUNDLE:
+                (Path(target) / installer.REQUIRED[1]).write_bytes(b"altered")
+            return result
+        with patch.object(installer.shutil, "copytree", side_effect=altered), patch.object(installer, "publish_exclusive") as publish:
+            with self.assertRaises(ValueError):
+                installer.install(self.source, self.destination)
+            publish.assert_not_called()
+        self.assertEqual(list(self.destination.iterdir()), [])
+        self.assertEqual((self.source / installer.REQUIRED[1]).read_bytes(), b"fixture")
+
+    def test_rejects_nested_destination_and_oversized_bundle(self):
+        with self.assertRaises(ValueError):
+            installer.install(self.source, self.source / "Applications")
+        self.assertFalse((self.source / "Applications").exists())
+        with patch.object(installer, "MAX_BUNDLE_BYTES", 1):
+            with self.assertRaises(ValueError):
+                installer.bundle_fingerprint(self.source)
 
     @unittest.skipUnless(sys.platform == "darwin", "Darwin exclusive rename required")
     def test_real_fresh_publication_and_second_install_rejected(self):

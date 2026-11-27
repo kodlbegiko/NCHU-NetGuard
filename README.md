@@ -44,6 +44,14 @@ make smoke-module
 
 候選 `make install` 僅支援非 root 使用者的全新安裝：先複製至同目錄的私有暫存區、驗證應用程式結構，再以 macOS 排他性重新命名發布。若目的地已存在（包含連結），拒絕覆寫。預設路徑為 `~/Applications`；可明確指定 `INSTALL_DIR`。此流程不啟動 App、不修改網路、不執行升級或解除安裝。正式生命週期及實機驗收仍未完成；建議先建置與驗證候選版。
 
+可先進行唯讀安裝／版本內容比對（不會建立、覆寫或刪除 App）：
+
+```bash
+python3 scripts/install_bundle.py --source build/NCHUTraffic.app --destination-dir "$HOME/Applications" --review
+```
+
+比對雜湊涵蓋目錄、檔案內容和 owner-execute 狀態；不等於簽章、版本順序、Git SHA 或執行中程式身分。不同內容一律需審查，不授權升級。全新安裝也會檢查複製前後內容一致性。
+
 ## 本機完整驗收入口
 
 ```bash
