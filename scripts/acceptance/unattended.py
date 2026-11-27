@@ -7,6 +7,8 @@ generates controlled traffic, or operates on the user's installation.
 import argparse
 import datetime as dt
 import shlex
+import sqlite3
+import diagnostics
 import hashlib
 import json
 import math
@@ -180,6 +182,8 @@ def observe(out, name, pid, expected, sha, seconds, interval):
     first = previous = None
     first_wall = None
     readings = []
+    resource_at = history_at = None
+    previous_day = None
     try:
         with path.open("x", encoding="utf-8") as stream:
             while True:
@@ -197,6 +201,27 @@ def observe(out, name, pid, expected, sha, seconds, interval):
                 else:
                     if row["rss_bytes"] <= 0:
                         raise ValueError("invalid initial RSS")
+                # Extra probes only during soak, never the idle benchmark.
+                if interval == SOAK_INTERVAL:
+                    elapsed = row["elapsed_seconds"]
+                    rollover = previous_day is not None and previous_day["day"] != row["health"]["day"]
+                    if resource_at is None or elapsed - resource_at >= 300:
+                        row["resources"] = diagnostics.resources(pid)
+                        resource_at = elapsed
+                    if history_at is None or elapsed - history_at >= 3600 or rollover:
+                        row["persisted_state"] = diagnostics.inspect_state(Path.home() / ".nchu_traffic_state.json")
+                        days = [previous_day["day"]] if rollover else []
+                        try:
+                            row["history"] = diagnostics.inspect_history(
+                                Path.home() / "Library/Application Support/NCHU-NetGuard/history.sqlite", days)
+                        except sqlite3.OperationalError:
+                            row["history"] = {"status": "busy_or_unavailable_review_required", "days": {}, "database_bytes": None}
+                        if rollover:
+                            row["rollover"] = diagnostics.rollover_evidence(row["history"], previous_day)
+                            if row["rollover"] == "observed_lower_bound_mismatch":
+                                raise ValueError("finalized history lost observed bytes")
+                        history_at = elapsed
+                    previous_day = row["health"]
                 stream.write(json.dumps(row, allow_nan=False) + "\n")
                 stream.flush()
                 os.fsync(stream.fileno())
@@ -217,7 +242,7 @@ def observe(out, name, pid, expected, sha, seconds, interval):
                                 else "numeric_target_not_met")
         else:
             status["status"] = "duration_met_review_required" if seconds == TARGET else "short_trial_only"
-    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, ArithmeticError, KeyboardInterrupt, KeyError, TypeError) as error:
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, ArithmeticError, KeyboardInterrupt, KeyError, TypeError, sqlite3.Error) as error:
         status["status"] = "inconclusive"
         status["failure_type"] = type(error).__name__
     finally:
@@ -225,6 +250,59 @@ def observe(out, name, pid, expected, sha, seconds, interval):
             status["sha256"] = hashlib.sha256(read_private(path, LIMIT)).hexdigest()
         write_json(checkpoint, status)
     return status
+
+
+def diagnostic_summary(rows):
+    resources = []
+    history = []
+    rollovers = []
+    resource_at = history_at = None
+    previous = None
+    previous_state = None
+    for row in rows:
+        elapsed = row["elapsed_seconds"]
+        rollover = previous is not None and previous["day"] != row["health"]["day"]
+        if resource_at is None or elapsed - resource_at >= 300:
+            resources.append(diagnostics.validate_resources(row["resources"]))
+            resource_at = elapsed
+        elif "resources" in row:
+            raise ValueError("unexpected resource sample")
+        if history_at is None or elapsed - history_at >= 3600 or rollover:
+            state = row["persisted_state"]
+            diagnostics.canonical_day(state["day"])
+            if (diagnostics.byte_count(state["received"]) + diagnostics.byte_count(state["sent"]) !=
+                    diagnostics.byte_count(state["total"])):
+                raise ValueError("invalid persisted directional total")
+            diagnostics.byte_count(state["measured_samples"])
+            if previous_state is not None:
+                if (state["day"] < previous_state["day"] or (state["day"] == previous_state["day"] and
+                    any(state[k] < previous_state[k] for k in ("received","sent","measured_samples")))):
+                    raise ValueError("persisted state regressed")
+            previous_state = state
+            item = row["history"]
+            if item["status"] not in ("snapshot_validated", "not_present", "sidecar_present_review_required",
+                                      "busy_or_unavailable_review_required"):
+                raise ValueError("invalid history status")
+            size = item["database_bytes"]
+            if size is not None and (type(size) is not int or not 0 <= size <= diagnostics.MAX_BYTES):
+                raise ValueError("invalid database size")
+            history.append(item)
+            if rollover:
+                expected = diagnostics.rollover_evidence(item, previous)
+                if row["rollover"] != expected or expected == "observed_lower_bound_mismatch":
+                    raise ValueError("invalid rollover evidence")
+                rollovers.append(expected)
+            history_at = elapsed
+        elif any(k in row for k in ("history", "persisted_state", "rollover")):
+            raise ValueError("unexpected database sample")
+        previous = row["health"]
+    return {"resource_samples": len(resources),
+            "resources": {key: diagnostics.trend([r[key] for r in resources]) for key in resources[0]},
+            "rss_bytes": diagnostics.trend([r["rss_bytes"] for r in rows]),
+            "history_samples": len(history),
+            "history_validated_samples": sum(r["status"] == "snapshot_validated" for r in history),
+            "database_bytes": diagnostics.trend([r["database_bytes"] for r in history]),
+            "rollovers": rollovers, "interpretation": "sampled_trends_not_leak_or_full_integrity_proof"}
 
 
 def observation_evidence(out, name, seconds, interval, *, require_health=False):
@@ -274,6 +352,8 @@ def observation_evidence(out, name, seconds, interval, *, require_health=False):
               "sha256": summary["sha256"]}
     if require_health:
         result["functional_health"] = health
+        if interval == SOAK_INTERVAL:
+            result["periodic_diagnostics"] = diagnostic_summary(rows)
     return result
 
 
