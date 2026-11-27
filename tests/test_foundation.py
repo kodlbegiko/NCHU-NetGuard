@@ -125,7 +125,8 @@ class FoundationTests(unittest.TestCase):
             legacy.write_text('{"2026-11-24": 999}')
             with sqlite3.connect(db) as conn:
                 conn.execute("PRAGMA user_version=2")
-                conn.execute("CREATE TABLE history_days(day TEXT, total INTEGER, download INTEGER, upload INTEGER)")
+                conn.execute("CREATE TABLE history_days(day TEXT PRIMARY KEY, total INTEGER, download INTEGER, upload INTEGER)")
+                conn.execute("CREATE TABLE history_scopes(day TEXT, scope TEXT, download INTEGER, upload INTEGER, PRIMARY KEY(day,scope))")
                 conn.execute("INSERT INTO history_days VALUES('2026-11-24',15,10,5)")
             with patch.object(monitor, "HISTORY_DB", str(db)), patch.object(monitor, "HISTORY_FILE", str(legacy)):
                 self.assertEqual(monitor.load_history(), {"2026-11-24": {"total": 15, "dl": 10, "ul": 5}})
@@ -137,6 +138,50 @@ class FoundationTests(unittest.TestCase):
                 self.assertEqual(monitor.load_history(), {})
                 db.unlink()
                 self.assertEqual(monitor.load_history(), {"2026-11-24": 999})
+
+    def test_cli_history_rejects_unexpected_schema_without_fallback(self):
+        import sqlite3
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            root = pathlib.Path(root)
+            legacy = root / "legacy.json"
+            legacy.write_text('{"2026-11-24": 999}')
+            cases = [
+                ("CREATE TABLE foreign_table(x)", True),
+                ("CREATE VIEW foreign_view AS SELECT 1", True),
+                ("CREATE TRIGGER unexpected AFTER INSERT ON history_days BEGIN SELECT 1; END", True),
+                ("ALTER TABLE history_days ADD COLUMN hidden INTEGER GENERATED ALWAYS AS (total) VIRTUAL", True),
+                ("", False),
+            ]
+            for index, (extra, primary_key) in enumerate(cases):
+                with self.subTest(extra=extra, primary_key=primary_key):
+                    db = root / f"history-{index}.sqlite"
+                    with sqlite3.connect(db) as conn:
+                        conn.execute("PRAGMA user_version=1")
+                        key = " PRIMARY KEY" if primary_key else ""
+                        conn.execute(f"CREATE TABLE history_days(day TEXT{key}, total INTEGER, download INTEGER, upload INTEGER)")
+                        conn.execute("INSERT INTO history_days VALUES('2026-11-24',15,10,5)")
+                        if extra:
+                            conn.execute(extra)
+                    original = db.read_bytes()
+                    with patch.object(monitor, "HISTORY_DB", str(db)), patch.object(monitor, "HISTORY_FILE", str(legacy)):
+                        self.assertEqual(monitor.load_history(), {})
+                    self.assertEqual(db.read_bytes(), original)
+
+    def test_cli_history_accepts_valid_v1_and_rejects_missing_v2_scope_table(self):
+        import sqlite3
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            db = pathlib.Path(root) / "history.sqlite"
+            with sqlite3.connect(db) as conn:
+                conn.execute("PRAGMA user_version=1")
+                conn.execute("CREATE TABLE history_days(day TEXT PRIMARY KEY, total INTEGER, download INTEGER, upload INTEGER)")
+                conn.execute("INSERT INTO history_days VALUES('2026-11-24',15,10,5)")
+            with patch.object(monitor, "HISTORY_DB", str(db)):
+                self.assertEqual(monitor.load_history(), {"2026-11-24": {"total": 15, "dl": 10, "ul": 5}})
+                with sqlite3.connect(db) as conn:
+                    conn.execute("PRAGMA user_version=2")
+                self.assertEqual(monitor.load_history(), {})
 
     def test_cli_rejects_ambiguous_routes_and_wrong_address_family(self):
         bad = ["interface: en0\ninterface: en1", "interface: en0\ninterface: en0",
@@ -208,7 +253,8 @@ class FoundationTests(unittest.TestCase):
             target.write_text("unchanged")
             with sqlite3.connect(db) as conn:
                 conn.execute("PRAGMA user_version=2")
-                conn.execute("CREATE TABLE history_days(day TEXT, total INTEGER, download INTEGER, upload INTEGER)")
+                conn.execute("CREATE TABLE history_days(day TEXT PRIMARY KEY, total INTEGER, download INTEGER, upload INTEGER)")
+                conn.execute("CREATE TABLE history_scopes(day TEXT, scope TEXT, download INTEGER, upload INTEGER, PRIMARY KEY(day,scope))")
                 conn.execute("INSERT INTO history_days VALUES('2026-11-24',15,10,5)")
             with patch.object(monitor, "HISTORY_DB", str(db)):
                 for suffix in ("-wal", "-shm", "-journal"):

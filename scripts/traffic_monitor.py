@@ -146,12 +146,27 @@ def load_history():
         connection.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
         connection.execute("PRAGMA query_only=ON")
         connection.execute("PRAGMA trusted_schema=OFF")
+        # Schema checks and rows must refer to the same read snapshot.
+        connection.execute("BEGIN DEFERRED")
         version = connection.execute("PRAGMA user_version").fetchone()[0]
         if version not in (1, 2, 3):
             return {}
-        kind = connection.execute("SELECT type FROM sqlite_master WHERE name='history_days'").fetchone()
-        if kind != ("table",):
+        expected = {"history_days"} if version == 1 else {"history_days", "history_scopes"}
+        tables = {name for (name,) in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if tables != expected or connection.execute("SELECT 1 FROM sqlite_master WHERE type IN ('view','trigger') LIMIT 1").fetchone():
             return {}
+        ordinary = {name for (name,) in connection.execute("SELECT name FROM pragma_table_list WHERE schema='main' AND type='table'")}
+        if not expected.issubset(ordinary):
+            return {}
+        columns = {"history_days": [("day", "TEXT", 1), ("total", "INTEGER", 0),
+                                    ("download", "INTEGER", 0), ("upload", "INTEGER", 0)],
+                   "history_scopes": [("day", "TEXT", 1), ("scope", "TEXT", 2),
+                                      ("download", "INTEGER", 0), ("upload", "INTEGER", 0)]}
+        for table in sorted(expected):
+            # Table names come exclusively from the fixed expected set.
+            info = list(connection.execute(f"PRAGMA table_xinfo('{table}')"))
+            if any(row[6] != 0 for row in info) or [(row[1], row[2], row[5]) for row in info] != columns[table]:
+                return {}
         rows = connection.execute("SELECT day,total,download,upload FROM history_days ORDER BY day DESC LIMIT 366")
         history = {}
         for day, total, dl, ul in rows:
