@@ -99,6 +99,16 @@ final class PredictionPolicyTests: XCTestCase {
         XCTAssertEqual(assessment.limitingBudget, .upload)
         XCTAssertNil(LocalQuotaPolicy.assess(received: 0, sent: 0, receiveLimit: 0, sendLimit: 400, totalLimit: 1100))
     }
+    func testLedgerDoesNotReopenOnClockRollbackOrDisabledFutureDay() {
+        var ledger = QuotaAlertLedger()
+        let today = "2026-11-28"
+        XCTAssertTrue(ledger.shouldNotify(day: today, scope: .dorm, tier: .warning, enabled: true))
+        XCTAssertFalse(ledger.shouldNotify(day: "2026-11-27", scope: .dorm, tier: .critical, enabled: true))
+        XCTAssertFalse(ledger.shouldNotify(day: "2026-11-29", scope: .dorm, tier: .critical, enabled: false))
+        XCTAssertFalse(ledger.shouldNotify(day: "2026-11-29", scope: .unknown, tier: .critical, enabled: true))
+        XCTAssertFalse(ledger.shouldNotify(day: today, scope: .dorm, tier: .warning, enabled: true))
+        XCTAssertTrue(ledger.shouldNotify(day: today, scope: .dorm, tier: .high, enabled: true))
+    }
     func testLedgerIsPerScopeAndDay() {
         var ledger = QuotaAlertLedger()
         XCTAssertTrue(ledger.shouldNotify(day: "a", scope: .dorm, tier: .warning, enabled: true))

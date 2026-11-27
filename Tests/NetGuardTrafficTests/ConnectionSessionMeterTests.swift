@@ -2,8 +2,10 @@ import XCTest
 import NetGuardTraffic
 
 final class ConnectionSessionMeterTests: XCTestCase {
-    private func sample(_ identity: String = "a", scope: NetworkScope = .external) -> ScopedInterfaceSample {
-        .init(counters: .init(interfaceID: "en0", received: 100, sent: 50), scope: scope, identity: identity)
+    private func sample(_ identity: String = "a", scope: NetworkScope = .external,
+                        generation: String? = nil) -> ScopedInterfaceSample {
+        .init(counters: .init(interfaceID: "en0", received: 100, sent: 50), scope: scope,
+              identity: identity, counterGeneration: generation)
     }
     private func delta(_ scope: NetworkScope = .external, quality: SampleQuality = .measured, received: UInt64 = 10, sent: UInt64 = 5) -> [String: ScopedTrafficDelta] {
         ["en0": .init(scope: scope, delta: .init(received: received, sent: sent, quality: quality))]
@@ -39,6 +41,15 @@ final class ConnectionSessionMeterTests: XCTestCase {
         XCTAssertTrue(meter.begin(label: "A", gigabytes: 1, sample: sample()))
         meter.ingest(samples: [sample(), sample()], deltas: delta(), currentInterface: "en0", connectionKnown: true)
         XCTAssertEqual(meter.reading()?.stopped, true)
+    }
+    func testSameInterfaceAndAddressButDifferentGenerationStopsSession() {
+        var meter = ConnectionSessionMeter()
+        XCTAssertFalse(meter.begin(label: "A", gigabytes: 1, sample: sample(generation: "\n")))
+        XCTAssertTrue(meter.begin(label: "A", gigabytes: 1, sample: sample(generation: "1")))
+        meter.ingest(samples: [sample(generation: "1")], deltas: delta(), currentInterface: "en0", connectionKnown: true)
+        meter.ingest(samples: [sample(generation: "2")], deltas: delta(), currentInterface: "en0", connectionKnown: true)
+        XCTAssertEqual(meter.reading()?.stopped, true)
+        XCTAssertEqual(meter.reading()?.total, 0)
     }
     func testInvalidBudgetAndOverflowFailClosed() {
         var meter = ConnectionSessionMeter()

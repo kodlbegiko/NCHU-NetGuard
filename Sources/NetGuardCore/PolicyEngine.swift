@@ -62,9 +62,12 @@ public struct QuotaAlertLedger: Codable, Equatable, Sendable {
     /// Disabling alerts does not consume a notification tier.
     public mutating func shouldNotify(day: String, scope: NetworkScope,
                                       tier: LocalQuotaTier, enabled: Bool) -> Bool {
+        // Never reopen an older ledger after a clock rollback. Invalid or
+        // disabled observations cannot advance the current notification day.
+        guard enabled, !day.isEmpty, scope == .dorm || scope == .campusWifi,
+              tier > .normal, self.day.map({ day >= $0 }) ?? true else { return false }
         if self.day != day { self.day = day; notified = [:] }
-        guard enabled, scope == .dorm || scope == .campusWifi,
-              tier > .normal, tier > (notified[scope] ?? .normal) else { return false }
+        guard tier > (notified[scope] ?? .normal) else { return false }
         notified[scope] = tier
         return true
     }
