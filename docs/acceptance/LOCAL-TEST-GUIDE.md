@@ -93,3 +93,7 @@ python3 scripts/acceptance/manual_session.py verify test-results/manual-實際�
 ### 合成壓力、原生 fixture 耗時、定期回歸
 
 Swift 新增七天共 604,800 個合成計量週期的壓力測試：連續兩個計量來源、零流量、超過 4 GiB、遺失/重複樣本、世代重置、歸屬切換與跨日；以明確輸入推導期望值，不生成實際網路流量。雙 App fixture smoke 現在額外記錄四個原生介面的建構與排版耗時（不等於正式面板點擊至可操作的 300ms 指標）。Soak 自開始及每六小時重跑一次 Python 與已建置 Swift fixture 測試，以單一有限時 worker 執行；不在閒置 benchmark 執行，不重建 App 或啟動 production delegate。主採樣仍持續，任一回歸失敗、缺少預定輪次或證據不符不得完成驗收；中止時已開始的有限時測試命令可能先結束。完整 168h 預定 28 輪。報告提升為 schema v2，舊無心跳報告不能作為此新版完成證據。
+
+### 原生資源計數與崩潰索引
+
+每五分鐘嘗試 macOS 公開 `proc_pid_rusage(RUSAGE_INFO_V2)` 讀取選定程序磁碟實際讀寫累積位元組、physical footprint、package idle/interrupt wakeups（參考 Apple sys/resource.h），不取得 UUID、不用 sudo；不支援則 null，喚醒數不是能耗焦耳。保存區間 CPU 峰值（60 秒平均，不是瞬時峰值）。僅計數使用者 DiagnosticReports 中符合程式檔名前綴且在觀測開始後修改的常見崩潰/卡死報告，不讀內容或留名稱；不證明歸屬與完整性。背景心跳包含 provider/DNS busy 監控。資料庫檢查加上精確欄位及物件清單。

@@ -52,3 +52,13 @@ class DiagnosticTests(unittest.TestCase):
         self.assertEqual(diag.trend([None])["status"], "unavailable")
         self.assertEqual(diag.trend([10, None, 12])["net_change"], 2)
         self.assertEqual(diag.trend([10, 12])["status"], "review_required")
+
+    def test_diagnostic_report_index_never_reads_report_contents(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "NCHUTraffic-2026.ips").write_text("private fixture")
+            (root / "OtherApp-2026.ips").write_text("unrelated")
+            (root / "NetGuard-alias.crash").symlink_to(root / "NCHUTraffic-2026.ips")
+            self.assertEqual(diag.crash_report_count(root, 0), 1)
+            self.assertEqual(diag.crash_report_count(root, 10**12), 0)
+            self.assertIsNone(diag.crash_report_count(root / "missing", 0))

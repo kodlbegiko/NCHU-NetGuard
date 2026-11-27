@@ -209,7 +209,8 @@ private final class QAHealthReporter {
     func tick(start: TimeInterval, sampleUptime: TimeInterval?, day: String,
               received: UInt64, sent: UInt64, sleeping: Bool, clockHeld: Bool,
               persistenceBlocked: Bool, accountingOverflow: Bool, historyHealthy: Bool,
-              routeBusy: Bool, appsBusy: Bool, pingBusy: Bool) {
+              routeBusy: Bool, appsBusy: Bool, pingBusy: Bool,
+              providerBusy: Bool, dnsBusy: Bool) {
         guard !disabled else { return }
         let uptime = ProcessInfo.processInfo.systemUptime
         tickCount &+= 1
@@ -217,7 +218,8 @@ private final class QAHealthReporter {
         lastTick = start
         maxTickDuration = max(maxTickDuration, uptime - start)
         var ages: [String: Double] = [:]
-        for (name, busy) in [("route", routeBusy), ("apps", appsBusy), ("ping", pingBusy)] {
+        for (name, busy) in [("route", routeBusy), ("apps", appsBusy), ("ping", pingBusy),
+                             ("provider", providerBusy), ("dns", dnsBusy)] {
             if busy {
                 if busySince[name] == nil { busySince[name] = uptime }
                 ages[name] = uptime - (busySince[name] ?? uptime)
@@ -2637,7 +2639,8 @@ class RealtimeTrafficApp: NSObject, NSApplicationDelegate, WKNavigationDelegate 
                     sleeping: workflowPowerGuard.systemSleeping, clockHeld: clockHeld,
                     persistenceBlocked: persistenceBlocked, accountingOverflow: accountingOverflow,
                     historyHealthy: TrafficHistoryManager.shared.healthy,
-                    routeBusy: isDetectingNetwork, appsBusy: appProbeInFlight, pingBusy: pingInFlight)
+                    routeBusy: isDetectingNetwork, appsBusy: appProbeInFlight, pingBusy: pingInFlight,
+                    providerBusy: providerPollGate.isInFlight, dnsBusy: dnsInFlight)
             }
         }
         guard workflowPowerGuard.allowsSampling else { return }

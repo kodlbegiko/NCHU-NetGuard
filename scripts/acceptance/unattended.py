@@ -123,7 +123,7 @@ def validate_health(health, wall):
             any(health[key] for key in HEALTH_FLAGS[:-1]) or not health["history_healthy"]):
         raise ValueError("app safety hold or persistence failure")
     busy = health["busy_seconds"]
-    if (not isinstance(busy, dict) or set(busy) != {"route", "apps", "ping"} or
+    if (not isinstance(busy, dict) or set(busy) != {"route", "apps", "ping", "provider", "dns"} or
             any(type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 60
                 for v in busy.values())):
         raise ValueError("background probe stalled")
@@ -292,7 +292,7 @@ def observe(out, name, pid, expected, sha, seconds, interval):
                             raise ValueError("periodic regression exceeded schedule")
                     rollover = previous_day is not None and previous_day["day"] != row["health"]["day"]
                     if resource_at is None or elapsed - resource_at >= 300:
-                        row["resources"] = diagnostics.resources(pid)
+                        row["resources"] = diagnostics.resources(pid, first_wall)
                         resource_at = elapsed
                     if history_at is None or elapsed - history_at >= 3600 or rollover:
                         row["persisted_state"] = diagnostics.inspect_state(Path.home() / ".nchu_traffic_state.json")
@@ -393,7 +393,17 @@ def diagnostic_summary(rows):
         elif any(k in row for k in ("history", "persisted_state", "rollover")):
             raise ValueError("unexpected database sample")
         previous = row["health"]
+    counters = {}
+    for key in diagnostics.CUMULATIVE_RESOURCES:
+        values = [r[key] for r in resources if r[key] is not None]
+        if any(b < a for a,b in zip(values, values[1:])):
+            raise ValueError("native resource counter regressed")
+        counters[key] = values[-1] - values[0] if len(values) >= 2 else None
+    peak_cpu = max(100 * (b["cpu_seconds_delta"] - a["cpu_seconds_delta"]) /
+                   (b["elapsed_seconds"] - a["elapsed_seconds"]) for a,b in zip(rows, rows[1:]))
     return {"resource_samples": len(resources),
+            "peak_sample_interval_cpu_percent_one_core": round(peak_cpu, 4),
+            "native_counter_deltas": counters,
             "resources": {key: diagnostics.trend([r[key] for r in resources]) for key in resources[0]},
             "rss_bytes": diagnostics.trend([r["rss_bytes"] for r in rows]),
             "history_samples": len(history),

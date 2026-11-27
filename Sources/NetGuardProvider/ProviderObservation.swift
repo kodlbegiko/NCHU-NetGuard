@@ -114,6 +114,7 @@ public struct ProviderPollGate: Sendable {
     private var invalidated = false
     private var lastStart: TimeInterval?
     private var delay: TimeInterval = 60
+    public var isInFlight: Bool { active != nil }
     public init() {}
     public mutating func begin(at uptime: TimeInterval) -> UUID? {
         guard uptime.isFinite, uptime >= 0, active == nil else { return nil }
