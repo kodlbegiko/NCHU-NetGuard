@@ -60,6 +60,14 @@ make acceptance-local
 
 執行核心測試、覆蓋率、雙建置、fixture smoke、唯讀主機相容性與 TCP/UDP 觀測，生成私有、忽略於 Git 的本機報告。效能、獨立流量比對與 168 小時觀測另外提供明確參數；需人工或授權的測試不自動執行。見 [本機驗收指南](docs/acceptance/LOCAL-TEST-GUIDE.md) 與 [驗收矩陣](docs/acceptance/ACCEPTANCE-MATRIX.md)。
 
+## 無人值守候選驗收（一次人工啟動）
+
+```bash
+caffeinate -i python3 scripts/acceptance/unattended.py
+```
+
+先自動跑核心、雙建置、主機唯讀探測及隔離生命週期演練，接著依提示自行啟動候選 App、輸入 PID 並關閉其面板；之後自動量測三輪各 300 秒的閒置效能及 168 小時連續觀測。`caffeinate -i` 僅在命令執行期間抑制閒置系統睡眠，不修改永久設定，不保證闔蓋後維持執行。接上電源並保持上蓋開啟、終端機與 App 執行。報告留在私有 `test-results/unattended-*`，不自動上傳。完整實機與發布仍需人工及獨立證據；工具不自動修改網路或啟動、重啟、終止現有 App。
+
 ## CLI 本機觀測
 
 ```bash

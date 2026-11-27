@@ -71,3 +71,11 @@ python3 scripts/acceptance/manual_session.py verify test-results/manual-實際�
 ## 候選產物身分紀錄
 
 雙版本建置後執行 `python3 scripts/candidate_inventory.py --expected-sha "$(git rev-parse HEAD)"`。需要乾淨、精確的 checkout；兩種 App 版本欄位必須一致，輸出分別為其 SHA-256 內容指紋及實際 plist 版本。這是內容比對證據，非簽章、建置因果證明、實機驗收或發布授權；輸出一律不宣告 release_authorized。既有 plist 3.0 未擅自改名或發行。
+
+## 一次設定後的無人值守驗收
+
+在乾淨、已審閱的候選 checkout 中執行 `caffeinate -i python3 scripts/acceptance/unattended.py`（或 `make acceptance-unattended`，但後者不抑制閒置睡眠）。先執行自動核心與 host 驗收、兩種 App 建置、隔離安裝/生命週期測試與候選指紋。依提示只需一次自行開啟候選 App、在活動監視器找到 PID，關閉 App 面板並輸入 PID；也可用 `--pid` 明確選擇已啟動且不會被建置覆寫的相同內容副本。必須可取得絕對執行檔路徑，且在磁碟上的整份 bundle 指紋吻合兩個建置產物之一；ps 路徑／啟動時間與磁碟內容比對並非已載入執行檔的簽章或密碼學證明。執行期間每次採樣核對 Git 版本、乾淨狀態及 bundle 內容；此會增加少量測試程序 CPU/I/O，效能數值只計目標程序。
+
+三輪各 300 秒的閒置 CPU/RSS 採樣完成後，連續觀測 168 小時，每 60 秒記錄 CPU 累積時間、RSS、相對單調與牆鐘時間，逐次 fsync 私有日誌並原子更新檢查點。任何版本、程序身分、時間或採樣缺口異常均停止，不自動重啟或補寫資料。`--trial-seconds 60` 只做短時 soak 演練（仍執行三輪效能）；不可能替代 168h。每項觀測於完成後重算日誌雜湊、時間、缺口及數值摘要。總報告 `test-results/unattended-*/summary.json`，內含獨立核心驗證摘要；尚未完成的觀測仍有自己的 JSON/JSONL。保持電源、上蓋開啟及終端執行，不更新 checkout 或候選 App。退出碼 0 僅表示完整長時間觀測及效能數值達標、仍需審查，2 為短試、未達門檻或不確定。Host 不確定項目保留，不視為通過。關閉程式後不能自動接續中斷區間。
+
+必須人工或外部驗證：校方政策及同邊界獨立流量參考、VPN/多網卡與 IPv4/IPv6 切換、睡眠/喚醒、VoiceOver 與新手操作、正式復原/升級授權及獨立安全審查。工具不擅自製造宿網流量、修改設定、執行系統網路操作或自動上傳日誌。`full_device_acceptance` 與 `release_authorized` 永遠為 false；無人值守數值與日誌只構成待審查證據。
